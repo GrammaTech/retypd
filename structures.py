@@ -48,19 +48,20 @@ def parse_access(line):
     return RawAccess(Address(name, access_path), rw, int(size))
 
 
-def main(pack_dir, binary):
-    global_access_path = Path(pack_dir) / binary / GLOBAL_ACCESS
-    accesses = {}
-    try:
-        with open(global_access_path, 'r') as globs:
-            for glob in globs:
-                access = parse_access(glob)
-                accesses.setdefault(access.address, AccessData()).access(access.rw, access.size)
-            for address, data in accesses.items():
-                if len(data.sizes) > 1:
-                    print(f'{address}: {data.rws}; {data.sizes}')
-    except FileNotFoundError:
-        sys.exit(f'Unable to find file {global_access_path}')
+def main(pack_dir, binaries):
+    for binary in binaries:
+        global_access_path = Path(pack_dir) / binary / GLOBAL_ACCESS
+        accesses = {}
+        try:
+            with open(global_access_path, 'r') as globs:
+                for glob in globs:
+                    access = parse_access(glob)
+                    accesses.setdefault(access.address, AccessData()).access(access.rw, access.size)
+                for address, data in accesses.items():
+                    if len(data.sizes) > 1:
+                        print(f'{address}: {data.rws}; {data.sizes}')
+        except FileNotFoundError:
+            sys.exit(f'Unable to find file {global_access_path}')
 
 
 def usage():
@@ -70,4 +71,4 @@ def usage():
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         usage()
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2:])
