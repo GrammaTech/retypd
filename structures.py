@@ -17,6 +17,7 @@ PARAM_ACCESS = 'p.param_accesses.csv'
 
 Address = namedtuple('Address', ['name', 'path'])
 RawAccess = namedtuple('RawAccess', ['address', 'rw', 'size'])
+Suffix = namedtuple('Suffix', ['offset', 'size'])
 
 
 class AccessData:
@@ -34,6 +35,19 @@ class AccessData:
         self.sizes.add(size)
 
 
+class Structure:
+    '''TODO'''
+    def __init__(self, prefix, fields):
+        self.address = prefix
+        self.fields = fields
+
+    def gaps(self):
+        '''Find all of the gaps in the struct'''
+
+    def overlaps(self):
+        '''Find all of the fields that overlap'''
+
+
 def parse_chain(chain):
     if len(chain) < 2 or chain[0] != '[' or chain[-1] != ']':
         raise ValueError(f'Bad chain: {chain}')
@@ -48,24 +62,56 @@ def parse_access(line):
     return RawAccess(Address(name, access_path), rw, int(size))
 
 
-def main(pack_dir, binaries):
+def get_accesses(pack_dir, binaries):
     for binary in binaries:
         global_access_path = Path(pack_dir) / binary / GLOBAL_ACCESS
-        accesses = {}
+        accesses = []
         try:
             with open(global_access_path, 'r') as globs:
                 for glob in globs:
-                    access = parse_access(glob)
-                    accesses.setdefault(access.address, AccessData()).access(access.rw, access.size)
-                for address, data in accesses.items():
-                    if len(data.sizes) > 1:
-                        print(f'{address}: {data.rws}; {data.sizes}')
+                    try:
+                        accesses.append(parse_access(glob))
+                    except ValueError:
+                        print(f'Bad access record: {glob}')
+                        continue
         except FileNotFoundError:
             sys.exit(f'Unable to find file {global_access_path}')
+        return accesses
+
+
+def print_accesses(accesses):
+    accesses_by_address = {}
+    for access in accesses:
+        accesses_by_address.setdefault(access.address, AccessData()).access(access.rw, access.size)
+    for address, data in accesses_by_address.items():
+        if len(data.sizes) > 1:
+            print(f'{address}: {data.rws}; {data.sizes}')
+
+
+def get_structs(accesses):
+    groups = {}
+    for access in accesses:
+        if access.address.path:
+            prefix = Address(access.address.name, access.address.path[:-1])
+            suffix = Suffix(access.address.path[-1], access.size)
+            groups.setdefault(prefix, set()).add(suffix)
+    return [Structure(prefix, sorted(suffixes)) for prefix, suffixes in groups.items()]
 
 
 def usage():
     sys.exit('Usage: TODO')
+
+
+def main(pack_dir, binaries):
+    accesses = get_accesses(pack_dir, binaries)
+    print_accesses(accesses)
+
+    structs = get_structs(accesses)
+    for struct in structs:
+        if len(struct.fields) > 1:
+            print(struct.address)
+            for field in struct.fields:
+                print(f'\t{field}')
 
 
 if __name__ == '__main__':
