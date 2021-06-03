@@ -6,6 +6,7 @@ author: Peter Aldous
 '''
 
 from collections import namedtuple
+from os import linesep
 from pathlib import Path
 import sys
 
@@ -75,6 +76,31 @@ class Structure:
             last_field = field
         return gaps, reinterpretations, overlaps, padding
 
+    def __str__(self):
+        def stringify(label, empty_message, values):
+            if values:
+                all_values = linesep.join(map(lambda v: f'\t\t{v}', values))
+                return f'\t{label}:' + linesep + all_values
+            else:
+                return f'\t{empty_message}'
+        result = str(self.address) + linesep
+        gaps, reinterpretations, overlaps, padding = self.anomalies()
+        result += stringify('gaps', 'no gaps', gaps)
+        result += linesep
+        result += stringify('padding', 'no padding', padding)
+        result += linesep
+        result += stringify('overlaps', 'no overlaps', overlaps)
+        result += linesep
+        result += stringify('reinterpretations',
+                            'no reinterpretations',
+                            reinterpretations.items())
+        result += linesep
+        result += stringify('fields', 'no fields', self.fields)
+        return result
+
+    def __repr__(self):
+        return str(self)
+
 
 def parse_chain(chain):
     if len(chain) < 2 or chain[0] != '[' or chain[-1] != ']':
@@ -135,22 +161,9 @@ def main(pack_dir, binaries):
     print_accesses(accesses)
 
     structs = get_structs(accesses)
-    def maybe_print(label, empty_message, values):
-        if values:
-            print(f'\t{label}:')
-            for value in values:
-                print(f'\t\t{value}')
-        else:
-            print(f'\t{empty_message}')
     for struct in structs:
         if len(struct.fields) > 1:
-            print(struct.address)
-            gaps, reinterpretations, overlaps, padding = struct.anomalies()
-            maybe_print('gaps', 'no gaps', gaps)
-            maybe_print('padding', 'no padding', padding)
-            maybe_print('overlaps', 'no overlaps', overlaps)
-            maybe_print('reinterpretations', 'no reinterpretations', reinterpretations.items())
-            maybe_print('fields', 'no fields', struct.fields)
+            print(struct)
 
 
 if __name__ == '__main__':
