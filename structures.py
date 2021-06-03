@@ -1,8 +1,20 @@
 '''Binary structure analysis
 
-Using outputs from re_facts datalog, hypothesize about the structure of data in a binary.
+Using outputs from re_facts datalog, hypothesize about the structure of data in
+a binary.
 
 author: Peter Aldous
+
+
+
+Caveat emptor (from Drew DeHaas):
+
+(-1, -1, -1) can store a value (or an address) for params.  but (-1, -1, -1)
+must be an address for globals, and it is a fixed one (cannot be modified).
+
+I think it is unnecessary. Your inference should always infer that (-1, -1, -1)
+is a pointer for globals, which is fine (we can think of the address as being a
+fixed pointer).
 '''
 
 from collections import namedtuple
@@ -44,14 +56,15 @@ class Structure:
         self.address = prefix
         field_types = {type(f) for f in fields}
         if field_types != {Suffix}:
-            raise ValueError(f'fields must contain only Suffix objects; got these types: {field_types}')
+            raise ValueError('fields must contain only Suffix objects; '
+                             f'got these types: {field_types}')
         self.fields = sorted(fields)
 
     def anomalies(self, identify_padding=True):
         '''Find all of the gaps in the struct as well as fields that overlap'''
         last_field = None
         overlaps = []
-        reinterpretations = {}
+        reinterps = {}
         gaps = []
         padding = []
         for field in self.fields:
@@ -62,7 +75,7 @@ class Structure:
                 if disparity > 0:
                     overlap = (last_field, field, disparity)
                     if last_field.offset == field.offset:
-                        sizes = reinterpretations.setdefault(field.offset, set())
+                        sizes = reinterps.setdefault(field.offset, set())
                         sizes |= {last_field.size, field.size}
                     else:
                         overlaps.append(overlap)
@@ -74,50 +87,67 @@ class Structure:
                     else:
                         gaps.append(gap)
             last_field = field
-        return gaps, reinterpretations, overlaps, padding
+        return gaps, reinterps, overlaps, padding
+
+    def size(self):
+        if self.fields:
+            last_field = self.fields[-1]
+            return last_field.offset + last_field.size
+        return 0
 
     def __str__(self):
+
         def stringify(label, empty_message, values, formatter=str):
             if values:
-                all_values = linesep.join(map(lambda v: f'\t\t{formatter(v)}', values))
+                value_strings = map(lambda v: f'\t\t{formatter(v)}', values)
+                all_values = linesep.join(value_strings)
                 return f'{linesep}\t{label}:' + linesep + all_values
             else:
                 if empty_message:
                     return f'{linesep}\t{empty_message}'
                 else:
                     return ''
+
         def bytes_label(bytes):
             label = f'{bytes} bytes'
             if bytes == 1:
                 return label[:-1]
             return label
+
         def span_formatter(span):
             before, after, size = span
             return (f'{size} bytes between fields at offset {before.offset} '
                     f'({bytes_label(before.size)}) and offset {after.offset} '
                     f'({bytes_label(after.size)})')
+
         def field_formatter(field):
-            return f'field at offset {field.offset} ({bytes_label(field.size)})'
+            return (f'field at offset {field.offset} '
+                    f'({bytes_label(field.size)})')
+
         def reinterpretation_formatter(reinterpretation):
             offset, sizes = reinterpretation
             sizes = sorted(sizes)
             if len(sizes) == 2:
                 sizes_str = f'{sizes[0]} and {sizes[1]}'
             else:
-                sizes_str = ', '.join(map(str, sizes[:-1])) + f', and {sizes[-1]}'
+                others = sizes[:-1]
+                last = sizes[-1]
+                sizes_str = ', '.join(map(str, others)) + f', and {last}'
             return f'field at offset {offset} is read for {sizes_str} bytes'
+
         def address_formatter(address):
             path_str = ''.join(map(lambda offset: f'[{offset}]', address.path))
             return address.name + path_str
-        result = f'Struct at {address_formatter(self.address)}:'
-        gaps, reinterpretations, overlaps, padding = self.anomalies()
+        result = (f'Struct at {address_formatter(self.address)} '
+                  f'({bytes_label(self.size())}):')
+        gaps, reinterps, overlaps, padding = self.anomalies()
         result += stringify('fields', None, self.fields, field_formatter)
         result += stringify('gaps', None, gaps, span_formatter)
         result += stringify('padding', None, padding, span_formatter)
         result += stringify('overlaps', None, overlaps, span_formatter)
         result += stringify('reinterpretations',
                             None,
-                            reinterpretations.items(),
+                            reinterps.items(),
                             reinterpretation_formatter)
         return result
 
@@ -159,7 +189,8 @@ def get_accesses(pack_dir, binaries):
 def print_accesses(accesses):
     accesses_by_address = {}
     for access in accesses:
-        accesses_by_address.setdefault(access.address, AccessData()).access(access.rw, access.size)
+        accesses = accesses_by_address.setdefault(access.address, AccessData())
+        accesses.access(access.rw, access.size)
     for address, data in accesses_by_address.items():
         if len(data.sizes) > 1:
             print(f'{address}: {data.rws}; {data.sizes}')
