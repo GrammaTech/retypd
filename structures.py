@@ -46,22 +46,28 @@ class Structure:
             raise ValueError(f'fields must contain only Suffix objects; got these types: {field_types}')
         self.fields = sorted(fields)
 
-    def anomalies(self):
+    def anomalies(self, identify_padding=True):
         '''Find all of the gaps in the struct as well as fields that overlap'''
         last_field = None
         overlaps = []
         gaps = []
+        padding = []
         for field in self.fields:
             if last_field:
                 # upper_limit = (8 * last_field.offset) + last_field.size
                 upper_limit = last_field.offset + last_field.size
-                overlap = upper_limit - field.offset
-                if overlap > 0:
-                    overlaps.append((last_field, field, overlap))
-                if overlap < 0:
-                    gaps.append((last_field, field, -overlap))
+                disparity = upper_limit - field.offset
+                if disparity > 0:
+                    overlaps.append((last_field, field, disparity))
+                if disparity < 0:
+                    disparity = -disparity
+                    gap = (last_field, field, disparity)
+                    if identify_padding and (disparity < field.size):
+                        padding.append(gap)
+                    else:
+                        gaps.append(gap)
             last_field = field
-        return gaps, overlaps
+        return gaps, overlaps, padding
 
 
 def parse_chain(chain):
@@ -126,7 +132,7 @@ def main(pack_dir, binaries):
     for struct in structs:
         if len(struct.fields) > 1:
             print(struct.address)
-            gaps, overlaps = struct.anomalies()
+            gaps, overlaps, padding = struct.anomalies()
             if gaps:
                 print('\tgaps:')
                 for gap in gaps:
@@ -139,6 +145,12 @@ def main(pack_dir, binaries):
                     print(f'\t\t{overlap}')
             else:
                 print('\tno overlaps')
+            if padding:
+                print('\tpadding:')
+                for pad in padding:
+                    print(f'\t\t{pad}')
+            else:
+                print('\tno padding')
             print('\tfields:')
             for field in struct.fields:
                 print(f'\t\t{field}')
