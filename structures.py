@@ -50,6 +50,7 @@ class Structure:
         '''Find all of the gaps in the struct as well as fields that overlap'''
         last_field = None
         overlaps = []
+        reinterpretations = {}
         gaps = []
         padding = []
         for field in self.fields:
@@ -58,7 +59,12 @@ class Structure:
                 upper_limit = last_field.offset + last_field.size
                 disparity = upper_limit - field.offset
                 if disparity > 0:
-                    overlaps.append((last_field, field, disparity))
+                    overlap = (last_field, field, disparity)
+                    if last_field.offset == field.offset:
+                        sizes = reinterpretations.setdefault(field.offset, set())
+                        sizes |= {last_field.size, field.size}
+                    else:
+                        overlaps.append(overlap)
                 if disparity < 0:
                     disparity = -disparity
                     gap = (last_field, field, disparity)
@@ -67,7 +73,7 @@ class Structure:
                     else:
                         gaps.append(gap)
             last_field = field
-        return gaps, overlaps, padding
+        return gaps, reinterpretations, overlaps, padding
 
 
 def parse_chain(chain):
@@ -129,31 +135,22 @@ def main(pack_dir, binaries):
     print_accesses(accesses)
 
     structs = get_structs(accesses)
+    def maybe_print(label, empty_message, values):
+        if values:
+            print(f'\t{label}:')
+            for value in values:
+                print(f'\t\t{value}')
+        else:
+            print(f'\t{empty_message}')
     for struct in structs:
         if len(struct.fields) > 1:
             print(struct.address)
-            gaps, overlaps, padding = struct.anomalies()
-            if gaps:
-                print('\tgaps:')
-                for gap in gaps:
-                    print(f'\t\t{gap}')
-            else:
-                print('\tno gaps')
-            if overlaps:
-                print('\toverlaps:')
-                for overlap in overlaps:
-                    print(f'\t\t{overlap}')
-            else:
-                print('\tno overlaps')
-            if padding:
-                print('\tpadding:')
-                for pad in padding:
-                    print(f'\t\t{pad}')
-            else:
-                print('\tno padding')
-            print('\tfields:')
-            for field in struct.fields:
-                print(f'\t\t{field}')
+            gaps, reinterpretations, overlaps, padding = struct.anomalies()
+            maybe_print('gaps', 'no gaps', gaps)
+            maybe_print('padding', 'no padding', padding)
+            maybe_print('overlaps', 'no overlaps', overlaps)
+            maybe_print('reinterpretations', 'no reinterpretations', reinterpretations.items())
+            maybe_print('fields', 'no fields', struct.fields)
 
 
 if __name__ == '__main__':
