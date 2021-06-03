@@ -38,14 +38,30 @@ class AccessData:
 class Structure:
     '''TODO'''
     def __init__(self, prefix, fields):
+        if not isinstance(prefix, Address):
+            raise ValueError(f'prefix must be an Address; got {type(prefix)}')
         self.address = prefix
-        self.fields = fields
+        field_types = {type(f) for f in fields}
+        if field_types != {Suffix}:
+            raise ValueError(f'fields must contain only Suffix objects; got these types: {field_types}')
+        self.fields = sorted(fields)
 
-    def gaps(self):
-        '''Find all of the gaps in the struct'''
-
-    def overlaps(self):
-        '''Find all of the fields that overlap'''
+    def anomalies(self):
+        '''Find all of the gaps in the struct as well as fields that overlap'''
+        last_field = None
+        overlaps = []
+        gaps = []
+        for field in self.fields:
+            if last_field:
+                # upper_limit = (8 * last_field.offset) + last_field.size
+                upper_limit = last_field.offset + last_field.size
+                overlap = upper_limit - field.offset
+                if overlap > 0:
+                    overlaps.append((last_field, field, overlap))
+                if overlap < 0:
+                    gaps.append((last_field, field, -overlap))
+            last_field = field
+        return gaps, overlaps
 
 
 def parse_chain(chain):
@@ -95,7 +111,7 @@ def get_structs(accesses):
             prefix = Address(access.address.name, access.address.path[:-1])
             suffix = Suffix(access.address.path[-1], access.size)
             groups.setdefault(prefix, set()).add(suffix)
-    return [Structure(prefix, sorted(suffixes)) for prefix, suffixes in groups.items()]
+    return [Structure(prefix, suffixes) for prefix, suffixes in groups.items()]
 
 
 def usage():
@@ -110,8 +126,22 @@ def main(pack_dir, binaries):
     for struct in structs:
         if len(struct.fields) > 1:
             print(struct.address)
+            gaps, overlaps = struct.anomalies()
+            if gaps:
+                print('\tgaps:')
+                for gap in gaps:
+                    print(f'\t\t{gap}')
+            else:
+                print('\tno gaps')
+            if overlaps:
+                print('\toverlaps:')
+                for overlap in overlaps:
+                    print(f'\t\t{overlap}')
+            else:
+                print('\tno overlaps')
+            print('\tfields:')
             for field in struct.fields:
-                print(f'\t{field}')
+                print(f'\t\t{field}')
 
 
 if __name__ == '__main__':
