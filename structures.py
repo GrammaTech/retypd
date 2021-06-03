@@ -77,25 +77,48 @@ class Structure:
         return gaps, reinterpretations, overlaps, padding
 
     def __str__(self):
-        def stringify(label, empty_message, values):
+        def stringify(label, empty_message, values, formatter=str):
             if values:
-                all_values = linesep.join(map(lambda v: f'\t\t{v}', values))
-                return f'\t{label}:' + linesep + all_values
+                all_values = linesep.join(map(lambda v: f'\t\t{formatter(v)}', values))
+                return f'{linesep}\t{label}:' + linesep + all_values
             else:
-                return f'\t{empty_message}'
-        result = str(self.address) + linesep
+                if empty_message:
+                    return f'{linesep}\t{empty_message}'
+                else:
+                    return ''
+        def bytes_label(bytes):
+            label = f'{bytes} bytes'
+            if bytes == 1:
+                return label[:-1]
+            return label
+        def span_formatter(span):
+            before, after, size = span
+            return (f'{size} bytes between fields at offset {before.offset} '
+                    f'({bytes_label(before.size)}) and offset {after.offset} '
+                    f'({bytes_label(after.size)})')
+        def field_formatter(field):
+            return f'field at offset {field.offset} ({bytes_label(field.size)})'
+        def reinterpretation_formatter(reinterpretation):
+            offset, sizes = reinterpretation
+            sizes = sorted(sizes)
+            if len(sizes) == 2:
+                sizes_str = f'{sizes[0]} and {sizes[1]}'
+            else:
+                sizes_str = ', '.join(map(str, sizes[:-1])) + f', and {sizes[-1]}'
+            return f'field at offset {offset} is read for {sizes_str} bytes'
+        def address_formatter(address):
+            path_str = ''.join(map(lambda offset: f'[{offset}]', address.path))
+            return address.name + path_str
+        result = f'Struct at {address_formatter(self.address)}:'
         gaps, reinterpretations, overlaps, padding = self.anomalies()
-        result += stringify('gaps', 'no gaps', gaps)
-        result += linesep
-        result += stringify('padding', 'no padding', padding)
-        result += linesep
-        result += stringify('overlaps', 'no overlaps', overlaps)
-        result += linesep
+        result += stringify('fields', None, self.fields, field_formatter)
+        result += stringify('gaps', None, gaps, span_formatter)
+        result += stringify('padding', None, padding, span_formatter)
+        result += stringify('overlaps', None, overlaps, span_formatter)
         result += stringify('reinterpretations',
-                            'no reinterpretations',
-                            reinterpretations.items())
-        result += linesep
-        result += stringify('fields', 'no fields', self.fields)
+                            None,
+                            reinterpretations.items(),
+                            reinterpretation_formatter)
         return result
 
     def __repr__(self):
