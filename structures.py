@@ -196,14 +196,16 @@ def print_accesses(accesses):
             print(f'{address}: {data.rws}; {data.sizes}')
 
 
-def get_structs(accesses):
+def get_structs(accesses, include_reinterps=False):
     groups = {}
     for access in accesses:
         if access.address.path:
             prefix = Address(access.address.name, access.address.path[:-1])
             suffix = Suffix(access.address.path[-1], access.size)
             groups.setdefault(prefix, set()).add(suffix)
-    return [Structure(prefix, suffixes) for prefix, suffixes in groups.items()]
+    return [Structure(prefix, suffixes) for prefix, suffixes in groups.items()
+            if include_reinterps or
+               (len({suffix.offset for suffix in suffixes}) > 1)]
 
 
 def usage():
