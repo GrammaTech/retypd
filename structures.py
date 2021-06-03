@@ -49,7 +49,16 @@ class AccessData:
 
 
 class Structure:
-    '''TODO'''
+    '''A recovered data structure from the binary. Its address is an
+    :class:`Address` object, which specifies its name and access path. It also
+    contains a list of :class:`Suffix` objects which represent its fields.
+
+    :param prefix: The location of the structure.
+    :type prefix: class:`Address`
+    :param fields: A collection of :class:`Suffix` objects, each of which
+        identifies one of the structure's fields.
+    :type fields: iterable
+    '''
     def __init__(self, prefix, fields):
         if not isinstance(prefix, Address):
             raise ValueError(f'prefix must be an Address; got {type(prefix)}')
