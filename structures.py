@@ -195,13 +195,13 @@ def get_accesses(pack_dir, binaries):
         return accesses
 
 
-def print_accesses(accesses):
+def print_accesses(accesses, access_filter=None):
     accesses_by_address = {}
     for access in accesses:
         accesses = accesses_by_address.setdefault(access.address, AccessData())
         accesses.access(access.rw, access.size)
     for address, data in accesses_by_address.items():
-        if len(data.sizes) > 1:
+        if access_filter is None or access_filter(data):
             print(f'{address}: {data.rws}; {data.sizes}')
 
 
@@ -223,7 +223,8 @@ def usage():
 
 def main(pack_dir, binaries):
     accesses = get_accesses(pack_dir, binaries)
-    print_accesses(accesses)
+    print_accesses(accesses, lambda data: len(data.sizes) > 1)
+    print()
 
     structs = get_structs(accesses)
     for struct in structs:
