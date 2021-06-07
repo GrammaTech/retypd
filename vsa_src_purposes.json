@@ -1,0 +1,614 @@
+{
+    "roles": [
+        {
+            "name": "DirectoryName",
+            "kind": "buffer",
+            "refining": [ "char*", "LPCSTR", "LPSTR" ]
+        },
+        {
+            "name": "EnvironmentVar",
+            "kind": "buffer",
+            "refining": [ "char*", "LPCSTR", "LPSTR" ]
+        },
+        {
+            "name": "FileDescriptor",
+            "kind": "pod",
+            "refining": [ "int" ]
+        },
+        {
+            "name": "Filename",
+            "kind": "buffer",
+            "refining": [ "char*", "LPCSTR", "LPSTR" ]
+        },
+        {
+            "name": "RegistrySubkey",
+            "kind": "buffer",
+            "refining": [ "char*", "LPCSTR", "LPSTR" ]
+        },
+        {
+            "name": "Signal",
+            "kind": "pod",
+            "refining": [ "int" ]
+        },
+        {
+            "name": "InternetHostName",
+            "kind": "buffer",
+            "refining": [ "char*", "PCSTR", "LPCSTR" ]
+        },
+        {
+            "name": "InternetServiceName",
+            "kind": "buffer",
+            "refining": [ "char*", "PCSTR", "LPCSTR" ]
+        },
+        {
+            "name": "CheckErrno",
+            "kind": "pod",
+            "refining": [ "int" ]
+        }
+    ],
+    "sources": [
+        {
+            "source": [ "fseek" ],
+            "purposes": [ [ "return", "CheckErrno" ] ]
+        },
+        {
+            "source": [ "getaddrinfo" ],
+            "purposes": [ [ "param-1", "InternetHostName" ],
+                          [ "param-2", "InternetServiceName" ] ]
+        },
+        {
+            "source": [ "AddUsersToEncryptedFile" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "CheckNameLegalDOS8Dot3",
+                        "CheckNameLegalDOS8Dot3A",
+                        "CheckNameLegalDOS8Dot3W" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "CopyFile",
+                        "CopyFile2",
+                        "CopyFile2A",
+                        "CopyFile2W",
+                        "CopyFileA",
+                        "CopyFileEx",
+                        "CopyFileExA",
+                        "CopyFileExW",
+                        "CopyFileTransacted",
+                        "CopyFileTransactedA",
+                        "CopyFileTransactedW",
+                        "CopyFileW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "CreateFile",
+                        "CreateFile2",
+                        "CreateFile2A",
+                        "CreateFile2W",
+                        "CreateFileA",
+                        "CreateFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "CreateHardLink",
+                        "CreateHardLinkA",
+                        "CreateHardLinkEx",
+                        "CreateHardLinkExA",
+                        "CreateHardLinkExW",
+                        "CreateHardLinkW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "CreateSymbolicLink",
+                        "CreateSymbolicLinkA",
+                        "CreateSymbolicLinkEx",
+                        "CreateSymbolicLinkExA",
+                        "CreateSymbolicLinkExW",
+                        "CreateSymbolicLinkW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "DecryptFile",
+                        "DecryptFileA",
+                        "DecryptFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "DeleteFile",
+                        "DeleteFileA",
+                        "DeleteFileEx",
+                        "DeleteFileExA",
+                        "DeleteFileExW",
+                        "DeleteFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "DuplicateEncryptionInfoFile",
+                        "DuplicateEncryptionInfoFileA",
+                        "DuplicateEncryptionInfoFileW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "EncryptFile",
+                        "EncryptFileA",
+                        "EncryptFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "EncryptionDisable" ],
+            "purposes": [ [ "param-1", "DirectoryName"] ]
+        },
+        {
+            "source": [ "FileEncryptionStatus",
+                        "FileEncryptionStatusA",
+                        "FileEncryptionStatusW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "FindFirstFile",
+                        "FindFirstFileA",
+                        "FindFirstFileEx",
+                        "FindFirstFileExA",
+                        "FindFirstFileExW",
+                        "FindFirstFileTransacted",
+                        "FindFirstFileTransactedA",
+                        "FindFirstFileTransactedW",
+                        "FindFirstFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "FindFirstStream",
+                        "FindFirstStreamA",
+                        "FindFirstStreamEx",
+                        "FindFirstStreamExA",
+                        "FindFirstStreamExW",
+                        "FindFirstStreamTransacted",
+                        "FindFirstStreamTransactedA",
+                        "FindFirstStreamTransactedW",
+                        "FindFirstStreamW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "GetBinaryType",
+                        "GetBinaryTypeA",
+                        "GetBinaryTypeW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "GetCompressedFileSize",
+                        "GetCompressedFileSizeA",
+                        "GetCompressedFileSizeEx",
+                        "GetCompressedFileSizeExA",
+                        "GetCompressedFileSizeExW",
+                        "GetCompressedFileSizeW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "GetExpandedName",
+                        "GetExpandedNameA",
+                        "GetExpandedNameW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "GetFileAttributes",
+                        "GetFileAttributesA",
+                        "GetFileAttributesEx",
+                        "GetFileAttributesExA",
+                        "GetFileAttributesExW",
+                        "GetFileAttributesW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "GetFinalPathNameByHandle",
+                        "GetFinalPathNameByHandleA",
+                        "GetFinalPathNameByHandleW" ],
+            "purposes": [ [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "GetFullPathName",
+                        "GetFullPathNameA",
+                        "GetFullPathNameEx",
+                        "GetFullPathNameExA",
+                        "GetFullPathNameExW",
+                        "GetFullPathNameW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-3", "Filename"] ]
+        },
+        {
+            "source": [ "GetShortPathName",
+                        "GetShortPathNameA",
+                        "GetShortPathNameEx",
+                        "GetShortPathNameExA",
+                        "GetShortPathNameExW",
+                        "GetShortPathNameW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "GetTempFileName",
+                        "GetTempFileNameA",
+                        "GetTempFileNameW" ],
+            "purposes": [ [ "param-1", "DirectoryName"],
+                          [ "param-2", "DirectoryName"],
+                          [ "param-4", "Filename"] ]
+        },
+        {
+            "source": [ "LZOpenFile",
+                        "LZOpenFileA",
+                        "LZOpenFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "MoveFile",
+                        "MoveFileA",
+                        "MoveFileEx",
+                        "MoveFileExA",
+                        "MoveFileExW",
+                        "MoveFileTransacted",
+                        "MoveFileTransactedA",
+                        "MoveFileTransactedW",
+                        "MoveFileW",
+                        "MoveFileWithProgress",
+                        "MoveFileWithProgressA",
+                        "MoveFileWithProgressW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "OpenEncryptedFileRaw",
+                        "OpenEncryptedFileRawA",
+                        "OpenEncryptedFileRawW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "OpenFile",
+                        "OpenFileA",
+                        "OpenFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "QueryRecoveryAgentsOnEncryptedFile",
+                        "QueryRecoveryAgentsOnEncryptedFileA",
+                        "QueryRecoveryAgentsOnEncryptedFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "QueryUsersOnEncryptedFile",
+                        "QueryUsersOnEncryptedFileA",
+                        "QueryUsersOnEncryptedFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "RegCopyTree",
+                        "RegCopyTreeA",
+                        "RegCopyTreeW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegCreateKey",
+                        "RegCreateKeyA",
+                        "RegCreateKeyEx",
+                        "RegCreateKeyExA",
+                        "RegCreateKeyExW",
+                        "RegCreateKeyTransacted",
+                        "RegCreateKeyTransactedA",
+                        "RegCreateKeyTransactedW",
+                        "RegCreateKeyW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegDeleteKey",
+                        "RegDeleteKeyA",
+                        "RegDeleteKeyEx",
+                        "RegDeleteKeyExA",
+                        "RegDeleteKeyExW",
+                        "RegDeleteKeyTransacted",
+                        "RegDeleteKeyTransactedA",
+                        "RegDeleteKeyTransactedW",
+                        "RegDeleteKeyValue",
+                        "RegDeleteKeyValueA",
+                        "RegDeleteKeyValueW",
+                        "RegDeleteKeyW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegDeleteValue",
+                        "RegDeleteValueA",
+                        "RegDeleteValueW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegEnumKey",
+                        "RegEnumKeyA",
+                        "RegEnumKeyTransacted",
+                        "RegEnumKeyTransactedA",
+                        "RegEnumKeyTransactedW",
+                        "RegEnumKeyW" ],
+            "purposes": [ [ "param-3", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegGetValue",
+                        "RegGetValueA",
+                        "RegGetValueW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegLoadAppKey",
+                        "RegLoadAppKeyA",
+                        "RegLoadAppKeyW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "RegLoadKey",
+                        "RegLoadKeyA",
+                        "RegLoadKeyW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"],
+                          [ "param-3", "Filename"] ]
+        },
+        {
+            "source": [ "RegOpenKey",
+                        "RegOpenKeyA",
+                        "RegOpenKeyEx",
+                        "RegOpenKeyExA",
+                        "RegOpenKeyExW",
+                        "RegOpenKeyTransacted",
+                        "RegOpenKeyTransactedA",
+                        "RegOpenKeyTransactedW",
+                        "RegOpenKeyW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegQueryValue",
+                        "RegQueryValueA",
+                        "RegQueryValueTransacted",
+                        "RegQueryValueTransactedA",
+                        "RegQueryValueTransactedW",
+                        "RegQueryValueW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegReplaceKey",
+                        "RegReplaceKeyA",
+                        "RegReplaceKeyW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"],
+                          [ "param-3", "Filename"],
+                          [ "param-4", "Filename"] ]
+        },
+        {
+            "source": [ "RegRestoreKey",
+                        "RegRestoreKeyA",
+                        "RegRestoreKeyW" ],
+            "purposes": [ [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "RegSaveKey",
+                        "RegSaveKeyA",
+                        "RegSaveKeyTransacted",
+                        "RegSaveKeyTransactedA",
+                        "RegSaveKeyTransactedW",
+                        "RegSaveKeyW" ],
+            "purposes": [ [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "RegSetKeyValue",
+                        "RegSetKeyValueA",
+                        "RegSetKeyValueW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegSetValue",
+                        "RegSetValueA",
+                        "RegSetValueTransacted",
+                        "RegSetValueTransactedA",
+                        "RegSetValueTransactedW",
+                        "RegSetValueW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RegUnLoadKey",
+                        "RegUnLoadKeyA",
+                        "RegUnLoadKeyW" ],
+            "purposes": [ [ "param-2", "RegistrySubkey"] ]
+        },
+        {
+            "source": [ "RemoveUsersFromEncryptedFile",
+                        "RemoveUsersFromEncryptedFileA",
+                        "RemoveUsersFromEncryptedFileW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "ReplaceFile",
+                        "ReplaceFileA",
+                        "ReplaceFileW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"],
+                          [ "param-3", "Filename"] ]
+        },
+        {
+            "source": [ "SearchPath",
+                        "SearchPathA",
+                        "SearchPathW" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"],
+                          [ "param-3", "Filename"],
+                          [ "param-5", "Filename"] ]
+        },
+        {
+            "source": [ "SetFileAttributes",
+                        "SetFileAttributesA",
+                        "SetFileAttributesEx",
+                        "SetFileAttributesExA",
+                        "SetFileAttributesExW",
+                        "SetFileAttributesW" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "SetFileShortName",
+                        "SetFileShortNameA",
+                        "SetFileShortNameW" ],
+            "purposes": [ [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "_fchown32" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "_fstat64" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "_ftruncate64" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "_lstat64" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "_open64" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "_stat64" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "chmod" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "chown",
+                        "fchown" ],
+            "purposes": [ [ "param-1", "FileDescriptor"],
+                          [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "close" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "creat" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "dup" ],
+            "purposes": [ [ "param-1", "FileDescriptor"],
+                          [ "param-2", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "fchmod" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "fopen",
+                        "_fopen",
+                        "_fopen64",
+                        "open" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "fopendir" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "fstat" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "ftruncate" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "getc" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "getenv" ],
+            "purposes": [ [ "param-1", "EnvironmentVar"] ]
+        },
+        {
+            "source": [ "isatty" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "kill" ],
+            "purposes": [ [ "param-2", "Signal"] ]
+        },
+        {
+            "source": [ "lchown" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "mktemp", "_mktemp" ],
+            "purposes": [ [ "return", "Filename"] ]
+        },
+        {
+            "source": [ "opendir" ],
+            "purposes": [ [ "param-1", "DirectoryName"] ]
+        },
+        {
+            "source": [ "putc" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "raise" ],
+            "purposes": [ [ "param-1", "Signal"] ]
+        },
+        {
+            "source": [ "read" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        },
+        {
+            "source": [ "rename" ],
+            "purposes": [ [ "param-1", "Filename"],
+                          [ "param-2", "Filename"] ]
+        },
+        {
+            "source": [ "rmdir" ],
+            "purposes": [ [ "param-1", "DirectoryName"] ]
+        },
+        {
+            "source": [ "sigaction" ],
+            "purposes": [ [ "param-1", "Signal"] ]
+        },
+        {
+            "source": [ "sigaddset" ],
+            "purposes": [ [ "param-2", "Signal"] ]
+        },
+        {
+            "source": [ "sigdelset" ],
+            "purposes": [ [ "param-2", "Signal"] ]
+        },
+        {
+            "source": [ "sigismember" ],
+            "purposes": [ [ "param-2", "Signal"] ]
+        },
+        {
+            "source": [ "signal" ],
+            "purposes": [ [ "param-1", "Signal"] ]
+        },
+        {
+            "source": [ "lstat",
+                        "stat" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "truncate" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "unlink" ],
+            "purposes": [ [ "param-1", "Filename"] ]
+        },
+        {
+            "source": [ "write" ],
+            "purposes": [ [ "param-1", "FileDescriptor"] ]
+        }
+    ]
+}

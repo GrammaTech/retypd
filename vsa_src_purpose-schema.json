@@ -1,0 +1,46 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "description": "Schema for purpose metadata models",
+    "type": "object",
+    "required": ["roles", "sources"],
+    "properties": {
+        "roles":  {
+            "type": "array",
+            "items": { 
+                "type": "object",
+                "required": [ "name", "kind", "refining" ],
+                "properties": {
+                    "name": { "type": "string" },
+                    "kind": { "enum": [ "pod", "buffer" ] },
+                    "refining": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 1
+                    }
+                }
+            }
+        },
+        "sources": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [ "source", "purposes" ],
+                "properties": {
+                    "source": {
+                        "type" : "array",
+                        "items": { "type" : "string" },
+                        "minItems": 1
+                    },
+                    "purposes": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "minItems": 2
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
