@@ -166,7 +166,7 @@ class DerefLabel(AccessPathLabel):
 class DerivedTypeVariable:
     '''A _derived_ type variable, per Definition 3.1. Immutable (by convention).
     '''
-    def __init__(self, type_var: str, path: Sequence[AccessPathLabel]) -> None:
+    def __init__(self, type_var: str, path: Optional[Sequence[AccessPathLabel]] = None) -> None:
         self.base = type_var
         if path is None:
             self.path: Sequence[AccessPathLabel] = ()
@@ -592,8 +592,15 @@ def run_basic_tests():
     '''Run a suite of simple tests.
     '''
     unfixed = ConstraintSet()
-    unfixed.add_existence(DerivedTypeVariable('a', [LoadLabel.instance()]))
-    unfixed.add_existence(DerivedTypeVariable('a', [StoreLabel.instance()]))
+    p = DerivedTypeVariable('p')
+    q = DerivedTypeVariable('q')
+    x = DerivedTypeVariable('x')
+    y = DerivedTypeVariable('y')
+    q_store = DerivedTypeVariable('q', [StoreLabel.instance(), DerefLabel(4, 0)])
+    p_load = DerivedTypeVariable('p', [LoadLabel.instance(), DerefLabel(4, 0)])
+    unfixed.add_subtype(p, q)
+    unfixed.add_subtype(x, q_store)
+    unfixed.add_subtype(p_load, y)
     print(unfixed)
     fixed = unfixed.fix()
     print(fixed)
