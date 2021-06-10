@@ -1,15 +1,17 @@
-'''Data types for an implementation of retypd analysis.
-See `Link the paper <https://arxiv.org/pdf/1603.05495v1.pdf>` and `Link the
-slides
-<https://raw.githubusercontent.com/emeryberger/PLDI-2016/master/presentations/pldi16-presentation241.pdf>`
+'''Data types for an implementation of retypd analysis. See `Link the paper
+<https://arxiv.org/pdf/1603.05495v1.pdf>`, `Link the slides
+<https://raw.githubusercontent.com/emeryberger/PLDI-2016/master/presentations/pldi16-presentation241.pdf>`,
+and `Link the notes
+<https://git.grammatech.com/reverse-engineering/common/re_facts/-/blob/paldous/type-recovery/docs/how-to/type-recovery.rst>`
 for details
 
 author: Peter Aldous
 '''
 
 from abc import ABC
-from typing import Iterable, List, Optional, Sequence, Set
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
 import os
+from networkx import DiGraph
 
 
 class AccessPathLabel(ABC):
@@ -162,14 +164,16 @@ class DerefLabel(AccessPathLabel):
 
 
 class DerivedTypeVariable:
-    '''A _derived_ type variable, per Definition 3.1
+    '''A _derived_ type variable, per Definition 3.1. Immutable (by convention).
     '''
     def __init__(self, type_var: str, path: Sequence[AccessPathLabel]) -> None:
         self.base = type_var
         if path is None:
             self.path: Sequence[AccessPathLabel] = ()
+            self._str = self.base
         else:
             self.path = tuple(path)
+            self._str = f'{self.base}.{".".join(map(str, self.path))}'
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, DerivedTypeVariable) and
@@ -183,6 +187,14 @@ class DerivedTypeVariable:
 
     def __hash__(self) -> int:
         return hash(self.base) ^ hash(self.path)
+
+    def largest_prefix(self) -> Optional['DerivedTypeVariable']:
+        '''Return the prefix obtained by removing the last item from the type variable's path. If
+        there is no path, return None.
+        '''
+        if self.path:
+            return DerivedTypeVariable(self.base, self.path[:-1])
+        return None
 
     def prefixes(self) -> Set['ExistenceConstraint']:
         '''Retrieve all prefixes of the derived type variable as a set.
@@ -240,9 +252,7 @@ class DerivedTypeVariable:
         return is_covariant
 
     def __str__(self) -> str:
-        if self.path:
-            return f'{self.base}.{".".join(map(str, self.path))}'
-        return self.base
+        return self._str
 
 
 class ExistenceConstraint:
@@ -393,6 +403,180 @@ class ConstraintSet:
         return (f'ConstraintSet:{nt}{nt.join(map(str, self.existence))}'
                 f'{os.linesep}{nt}{nt.join(map(str,self.subtype))}')
 
+    def generate_graph(self) -> 'ConstraintGraph':
+        '''Produce a graph from the set of constraints. This corresponds to step 3 in the notes.
+        '''
+        graph = ConstraintGraph()
+        for ex in self.existence:
+            var = ex.var
+            graph.add_node(var)
+        for sub_constraint in self.subtype:
+            graph.add_edge(sub_constraint.left, sub_constraint.right)
+        return graph
+
+
+class Vertex:
+    '''A vertex in the graph of constraints. Vertex objects are immutable (by convention).
+    '''
+    def __init__(self, base: DerivedTypeVariable, suffix_variance: bool) -> None:
+        self.base = base
+        self.suffix_variance = suffix_variance
+        if suffix_variance:
+            variance = '.⊕'
+        else:
+            variance = '.⊖'
+        self._str = str(self.base) + variance
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, Vertex) and
+                self.base == other.base and
+                self.suffix_variance == other.suffix_variance)
+
+    def __hash__(self) -> int:
+        return hash(self.base) ^ hash(self.suffix_variance)
+
+    def forget_once(self) -> Optional['Vertex']:
+        '''"Forget" the last element in the access path, creating a new Vertex. The new Vertex has
+        variance that reflects this change.
+        '''
+        prefix = self.base.largest_prefix()
+        if prefix:
+            last = self.base.path[-1]
+            return Vertex(prefix, last.is_covariant() == self.suffix_variance)
+        return None
+
+    def _replace_last(self, label: AccessPathLabel) -> 'Vertex':
+        '''Create a new Vertex whose access path's last label has been replaced by :param:`label`.
+        Does not change variance.
+        '''
+        path = list(self.base.path[:-1])
+        path.append(label)
+        return Vertex(DerivedTypeVariable(self.base.base, path), self.suffix_variance)
+
+    def implicit_target(self) -> Optional['Vertex']:
+        '''If there is a lazily instantiated store/load edge from this node, find its target.
+        '''
+        if self.base.path:
+            last = self.base.path[-1]
+            if last is StoreLabel.instance() and self.suffix_variance:
+                return self._replace_last(LoadLabel.instance())
+            if last is LoadLabel.instance() and not self.suffix_variance:
+                return self._replace_last(StoreLabel.instance())
+        return None
+
+    def __str__(self) -> str:
+        return self._str
+
+
+class DFS:
+    '''A depth-first search computation.
+    '''
+    def __init__(self,
+                 graph: 'ConstraintGraph',
+                 process: Callable[[Vertex, Dict[str, AccessPathLabel]], bool]) -> None:
+        self.process = process
+        self.graph = graph
+        self.seen: Set[Vertex] = set()
+
+    def __call__(self, node: Vertex) -> None:
+        if node in self.seen:
+            return
+        self.seen.add(node)
+        for neighbor, attributes in self.graph.graph[node].items():
+            if self.process(neighbor, attributes):
+                self(neighbor)
+
+
+class ConstraintGraph:
+    '''Represents the constraint graph in the slides. Essentially the same as the transducer from
+    Appendix D. Edge weights use the formulation from the paper.
+    '''
+    def __init__(self) -> None:
+        self.graph = DiGraph()
+
+    def add_node(self, node: DerivedTypeVariable) -> None:
+        '''Add a node with covariant and contravariant suffixes to the graph.
+        '''
+        self.graph.add_node(Vertex(node, True))
+        self.graph.add_node(Vertex(node, False))
+
+    def add_edge(self, sub: DerivedTypeVariable, sup: DerivedTypeVariable) -> None:
+        '''Add an edge to the underlying graph. Also add its reverse with reversed variance.
+        '''
+        self.graph.add_edge(Vertex(sub, True), Vertex(sup, True))
+        self.graph.add_edge(Vertex(sup, False), Vertex(sub, False))
+
+    def add_forget_recall(self) -> None:
+        '''Add forget and recall nodes to the graph. Step 4 in the notes.
+        '''
+        existing_nodes = set(self.graph.nodes)
+        for node in existing_nodes:
+            prefix = node.forget_once()
+            while prefix:
+                forgotten = node.base.path[-1]
+                self.graph.add_edge(node, prefix, forget=forgotten)
+                self.graph.add_edge(prefix, node, recall=forgotten)
+                node = prefix
+                prefix = node.forget_once()
+
+    def saturate(self) -> None:
+        '''Add "shortcut" edges, per step 5 in the notes.
+        '''
+        # TODO this is almost certainly suboptimal
+        changed = True
+        while changed:
+            changed = False
+            nodes = list(self.graph.nodes)
+            for node in nodes:
+                forgets: Dict[Vertex, AccessPathLabel] = {}
+                def process_forget(neighbor: Vertex, atts: Dict[str, AccessPathLabel]) -> bool:
+                    nonlocal forgets
+                    if 'forget' in atts:
+                        if 'recall' in atts:
+                            raise ValueError
+                        if neighbor in forgets:
+                            raise NotImplementedError
+                        forgets[neighbor] = atts['forget']
+                    return not atts
+                forget_dfs = DFS(self, process_forget)
+                forget_dfs(node)
+                for mid, label in forgets.items():
+                    recalls = set()
+                    def process_recall(neighbor: Vertex, atts: Dict[str, AccessPathLabel]) -> bool:
+                        nonlocal recalls
+                        if atts.get('recall') == label:
+                            recalls.add(neighbor)
+                        return not atts
+                    recall_dfs = DFS(self, process_recall)
+                    recall_dfs.seen = forget_dfs.seen
+                    recall_dfs(mid)
+                    for end in recalls:
+                        if end not in self.graph[node]:
+                            changed = True
+                            self.graph.add_edge(node, end)
+
+    def edge_to_str(self, edge: [Vertex, Vertex]) -> str:
+        '''A helper for __str__ that formats an edge
+        '''
+        width = 2 + max(map(lambda v: len(str(v)), self.graph.nodes))
+        (sub, sup) = edge
+        atts = self.graph[sub][sup]
+        edge_str = f'{str(sub):<{width}}→  {str(sup):<{width}}'
+        if atts:
+            if len(atts) > 1:
+                raise ValueError
+            action = next(iter(atts))
+            capability = atts[action]
+            return edge_str + f' ({action} {capability})'
+        else:
+            return edge_str
+
+    def __str__(self) -> str:
+        nt = os.linesep + '\t'
+        return (f'ConstraintGraph:{nt}{nt.join(map(str, self.graph.nodes))}'
+                f'{os.linesep}{nt}{nt.join(map(self.edge_to_str,self.graph.edges))}')
+
+
 
 def run_basic_tests():
     '''Run a suite of simple tests.
@@ -403,6 +587,15 @@ def run_basic_tests():
     print(unfixed)
     fixed = unfixed.fix()
     print(fixed)
+    print()
+    graph = fixed.generate_graph()
+    print(graph)
+    print()
+    graph.add_forget_recall()
+    print(graph)
+    print()
+    graph.saturate()
+    print(graph)
 
 if __name__ == '__main__':
     run_basic_tests()
