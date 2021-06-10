@@ -475,16 +475,24 @@ class DFS:
     '''
     def __init__(self,
                  graph: 'ConstraintGraph',
-                 process: Callable[[Vertex, Dict[str, AccessPathLabel]], bool]) -> None:
+                 process: Callable[[Vertex, Dict[str, AccessPathLabel]], bool],
+                 saturation: bool = False) -> None:
         self.process = process
         self.graph = graph
+        self.saturation = saturation
         self.seen: Set[Vertex] = set()
 
     def __call__(self, node: Vertex) -> None:
         if node in self.seen:
             return
         self.seen.add(node)
-        for neighbor, attributes in self.graph.graph[node].items():
+        edges = self.graph.graph[node].items()
+        if self.saturation:
+            implicit_dest = node.implicit_target()
+            if implicit_dest:
+                edges = list(edges)
+                edges.append((implicit_dest, {}))
+        for neighbor, attributes in edges:
             if self.process(neighbor, attributes):
                 self(neighbor)
 
@@ -540,7 +548,7 @@ class ConstraintGraph:
                             raise NotImplementedError
                         forgets[neighbor] = atts['forget']
                     return not atts
-                forget_dfs = DFS(self, process_forget)
+                forget_dfs = DFS(self, process_forget, True)
                 forget_dfs(node)
                 for mid, label in forgets.items():
                     recalls = set()
@@ -549,7 +557,7 @@ class ConstraintGraph:
                         if atts.get('recall') == label:
                             recalls.add(neighbor)
                         return not atts
-                    recall_dfs = DFS(self, process_recall)
+                    recall_dfs = DFS(self, process_recall, True)
                     recall_dfs.seen = forget_dfs.seen
                     recall_dfs(mid)
                     for end in recalls:
