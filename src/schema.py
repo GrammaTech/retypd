@@ -9,7 +9,8 @@ author: Peter Aldous
 '''
 
 from abc import ABC
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, TypeVar
+import logging
 import os
 from networkx import DiGraph
 
@@ -173,9 +174,9 @@ class DerivedTypeVariable:
         else:
             self.path = tuple(path)
         if self.path:
-            self._str = f'{self.base}.{".".join(map(str, self.path))}'
+            self._str: str = f'{self.base}.{".".join(map(str, self.path))}'
         else:
-            self._str = self.base
+            self._str: str = self.base
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, DerivedTypeVariable) and
@@ -217,24 +218,23 @@ class DerivedTypeVariable:
             return self.path[-1]
         return None
 
-    def add_suffix(self, suffix: Sequence[AccessPathLabel]) -> 'DerivedTypeVariable':
+    def add_suffix(self, suffix: AccessPathLabel) -> 'DerivedTypeVariable':
         '''Create a new :py:class:`DerivedTypeVariable` identical to :param:`self` (which is
         unchanged) but with suffix appended to its path.
         '''
         path: List[AccessPathLabel] = list(self.path)
-        path.extend(suffix)
+        path.append(suffix)
         return DerivedTypeVariable(self.base, path)
 
-    def get_suffix(self, prefix: 'DerivedTypeVariable') -> Optional[Sequence[AccessPathLabel]]:
-        '''If :param:`prefix` is a prefix of :param:`self`, return the remainder of :param:`self`.
-        If not, return `None`.
+    def get_single_suffix(self, prefix: 'DerivedTypeVariable') -> Optional[AccessPathLabel]:
+        '''If :param:`prefix` is a prefix of :param:`self` with exactly one additional
+        :py:class:`AccessPathLabel`, return the additional label. If not, return `None`.
         '''
-        prefix_length = len(prefix.path)
         if (self.base != prefix.base or
-                len(self.path) <= prefix_length or
-                self.path[:prefix_length] != prefix.path):
+                len(self.path) != (len(prefix.path) + 1) or
+                self.path[:-1] != prefix.path):
             return None
-        return self.path[prefix_length:]
+        return self.tail()
 
     def path_is_covariant(self):
         '''Determine if the access path is covariant or contravariant. This is a special case of
@@ -315,6 +315,7 @@ class ConstraintSet:
             self.subtype = set(subtype)
         else:
             self.subtype = set()
+        self.logger = logging.getLogger('ConstraintSet')
 
     def add_subtype(self, left: DerivedTypeVariable, right: DerivedTypeVariable) -> bool:
         '''Add a subtype constraint
@@ -338,28 +339,54 @@ class ConstraintSet:
         '''Compute and return a fixed point on self's constraints. Does not
         mutate self; returns a new object. See Figure 3.
         '''
-        new_existence: Optional[Set[ExistenceConstraint]] = None
-        new_subtype: Optional[Set[SubtypeConstraint]] = None
         existence = set(self.existence)
         subtype = set(self.subtype)
+        dirty = True
 
-        while (new_existence is None or
-               new_subtype is None or
-               not (new_existence <= existence and
-                    new_subtype <= subtype)):
-            if new_existence is not None:
-                existence |= new_existence
-            if new_subtype is not None:
-                subtype |= new_subtype
-            new_existence = set()
-            new_subtype = set()
+        Constraint = TypeVar('Constraint', ExistenceConstraint, SubtypeConstraint)
+
+        while dirty:
+            dirty = False
+            new_existence: Set[ExistenceConstraint] = set()
+            new_subtype: Set[SubtypeConstraint] = set()
+
+            def get_constraint_data(constraint: Constraint) -> Optional[Set[Constraint]]:
+                '''Look up the set in which to store a new constraint, if any.
+                '''
+                if isinstance(constraint, ExistenceConstraint):
+                    if constraint not in new_existence and constraint not in existence:
+                        return new_existence
+                    return None
+                if isinstance(constraint, SubtypeConstraint):
+                    if constraint not in new_subtype and constraint not in subtype:
+                        return new_subtype
+                    return None
+                raise ValueError
+
+            def add_constraint(constraint: Constraint, tag: str, evidence: str) -> None:
+                '''Add a constraint to the appropriate set.
+
+                :param constraint: The constraint to add
+                :param tag: A string identifying the inference rule. Used for logging.
+                :param evidence: A string describing the data used to infer the new constraint. Used
+                    for logging.
+                '''
+                nonlocal dirty
+
+                dest = get_constraint_data(constraint)
+                if dest is not None:
+                    message = f'Adding {constraint} (from {tag} on {evidence})'
+                    self.logger.debug(message)
+                    dirty = True
+                    dest.add(constraint)
 
             for ex in existence:
                 var = ex.var
                 # S-Refl
-                new_subtype.add(SubtypeConstraint(var, var))
+                add_constraint(SubtypeConstraint(var, var), 'S-Refl', f'{var}')
                 # T-Prefix
-                new_existence |= var.prefixes()
+                for prefix in var.prefixes():
+                    add_constraint(prefix, 'T-Prefix', f'{var}')
                 # S-Pointer
                 if var.tail() == LoadLabel.instance():
                     s_path = list(var.path[:-1])
@@ -367,37 +394,47 @@ class ConstraintSet:
                     s_var = DerivedTypeVariable(var.base, s_path)
                     store = ExistenceConstraint(s_var)
                     if store in existence:
-                        new_subtype.add(SubtypeConstraint(store.var, var))
+                        add_constraint(SubtypeConstraint(store.var, var),
+                                       'S-Pointer',
+                                       f'{var} and {store}')
             for sub_constraint in subtype:
                 left = sub_constraint.left
                 right = sub_constraint.right
                 # T-Left
-                new_existence.add(ExistenceConstraint(left))
+                add_constraint(ExistenceConstraint(left), 'T-Left', f'{sub_constraint}')
                 # T-Right
-                new_existence.add(ExistenceConstraint(right))
+                add_constraint(ExistenceConstraint(right), 'T-Right', f'{sub_constraint}')
                 for ex in existence:
                     var = ex.var
                     # T-InheritL
-                    l_suffix = var.get_suffix(left)
+                    l_suffix = var.get_single_suffix(left)
                     if l_suffix:
-                        new_existence.add(ExistenceConstraint(right.add_suffix(l_suffix)))
-                    r_suffix = var.get_suffix(right)
+                        add_constraint(ExistenceConstraint(right.add_suffix(l_suffix)),
+                                       'T-InheritL',
+                                       f'{sub_constraint} and {var}')
+                    r_suffix = var.get_single_suffix(right)
                     if r_suffix:
                         l_with_suffix = left.add_suffix(r_suffix)
                         # T-InheritR
-                        new_existence.add(ExistenceConstraint(l_with_suffix))
-                        if DerivedTypeVariable.suffix_is_covariant(r_suffix):
+                        add_constraint(ExistenceConstraint(l_with_suffix),
+                                       'T-InheritR',
+                                       f'{sub_constraint} and {var}')
+                        if r_suffix.is_covariant():
                             # S-Field⊕
                             forwards = SubtypeConstraint(l_with_suffix, var)
-                            new_subtype.add(forwards)
+                            add_constraint(forwards, 'S-Field⊕', f'{sub_constraint} and {var}')
                         else:
                             # S-Field⊖
                             backwards = SubtypeConstraint(var, l_with_suffix)
-                            new_subtype.add(backwards)
+                            add_constraint(backwards, 'S-Field⊖', f'{sub_constraint} and {var}')
                 for sub in subtype:
                     # S-Trans
                     if sub.left == right:
-                        new_subtype.add(SubtypeConstraint(left, sub.right))
+                        add_constraint(SubtypeConstraint(left, sub.right),
+                                       'S-Trans',
+                                       f'{sub_constraint} and {sub}')
+            existence |= new_existence
+            subtype |= new_subtype
         return ConstraintSet(existence, subtype)
 
     def __str__(self) -> str:
@@ -565,7 +602,7 @@ class ConstraintGraph:
                             changed = True
                             self.graph.add_edge(node, end)
 
-    def edge_to_str(self, edge: [Vertex, Vertex]) -> str:
+    def edge_to_str(self, edge: Tuple[Vertex, Vertex]) -> str:
         '''A helper for __str__ that formats an edge
         '''
         width = 2 + max(map(lambda v: len(str(v)), self.graph.nodes))
@@ -591,6 +628,8 @@ class ConstraintGraph:
 def run_basic_tests():
     '''Run a suite of simple tests.
     '''
+    logging.basicConfig()
+
     unfixed = ConstraintSet()
     p = DerivedTypeVariable('p')
     q = DerivedTypeVariable('q')
