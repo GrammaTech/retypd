@@ -170,10 +170,12 @@ class DerivedTypeVariable:
         self.base = type_var
         if path is None:
             self.path: Sequence[AccessPathLabel] = ()
-            self._str = self.base
         else:
             self.path = tuple(path)
+        if self.path:
             self._str = f'{self.base}.{".".join(map(str, self.path))}'
+        else:
+            self._str = self.base
 
     def __eq__(self, other) -> bool:
         return (isinstance(other, DerivedTypeVariable) and
