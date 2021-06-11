@@ -603,7 +603,9 @@ class ConstraintGraph:
                     recall_dfs.seen = forget_dfs.seen
                     recall_dfs(mid)
                     for end in recalls:
-                        if end not in self.graph[node]:
+                        # It is conceivable that I'm missing something subtle here, but preventing
+                        # self-loops should make the graph smaller and not affect correctness
+                        if end not in self.graph[node] and node != end:
                             changed = True
                             self.graph.add_edge(node, end)
 
