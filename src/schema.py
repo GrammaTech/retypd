@@ -15,6 +15,9 @@ import os
 from networkx import DiGraph
 
 
+logging.basicConfig()
+
+
 class AccessPathLabel(ABC):
     '''Abstract class for capabilities that can be part of a path. See Table 1.
 
@@ -622,36 +625,3 @@ class ConstraintGraph:
         nt = os.linesep + '\t'
         return (f'ConstraintGraph:{nt}{nt.join(map(str, self.graph.nodes))}'
                 f'{os.linesep}{nt}{nt.join(map(self.edge_to_str,self.graph.edges))}')
-
-
-
-def run_basic_tests():
-    '''Run a suite of simple tests.
-    '''
-    logging.basicConfig()
-
-    unfixed = ConstraintSet()
-    p = DerivedTypeVariable('p')
-    q = DerivedTypeVariable('q')
-    x = DerivedTypeVariable('x')
-    y = DerivedTypeVariable('y')
-    q_store = DerivedTypeVariable('q', [StoreLabel.instance(), DerefLabel(4, 0)])
-    p_load = DerivedTypeVariable('p', [LoadLabel.instance(), DerefLabel(4, 0)])
-    unfixed.add_subtype(p, q)
-    unfixed.add_subtype(x, q_store)
-    unfixed.add_subtype(p_load, y)
-    print(unfixed)
-    fixed = unfixed.fix()
-    print(fixed)
-    print()
-    graph = fixed.generate_graph()
-    print(graph)
-    print()
-    graph.add_forget_recall()
-    print(graph)
-    print()
-    graph.saturate()
-    print(graph)
-
-if __name__ == '__main__':
-    run_basic_tests()
