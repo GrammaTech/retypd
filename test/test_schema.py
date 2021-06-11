@@ -1,3 +1,4 @@
+from abc import ABC
 import re
 import sys
 import unittest
@@ -81,8 +82,8 @@ class SchemaTestHelper:
             graph[(f, t)] = atts
         return graph
 
-class BasicSchemaTest(unittest.TestCase):
 
+class SchemaTest(ABC):
     def graphs_are_equal(self, graph, edge_set) -> bool:
         edges = graph.edges()
         self.assertEqual(len(edges), len(edge_set))
@@ -90,6 +91,9 @@ class BasicSchemaTest(unittest.TestCase):
             (f, t) = edge
             self.assertTrue(edge in edge_set)
             self.assertEqual(graph[f][t], edge_set[edge])
+
+
+class BasicSchemaTest(SchemaTest, unittest.TestCase):
 
     def test_simple_constraints(self):
         '''A simple test from the paper. This one has no recursive data structures, so the fixed
@@ -338,6 +342,106 @@ class BasicSchemaTest(unittest.TestCase):
         graph.saturate()
         self.graphs_are_equal(graph.graph, forget_recall_graph)
 
+
+class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
+    def test_recursive(self):
+        constraints = ConstraintSet()
+        F = DerivedTypeVariable('F')
+        δ = DerivedTypeVariable('δ')
+        φ = DerivedTypeVariable('φ')
+        α = DerivedTypeVariable('α')
+        α_prime = DerivedTypeVariable("α'")
+        close = DerivedTypeVariable('close')
+        close_in = DerivedTypeVariable('close', [InLabel(0)])
+        close_out = DerivedTypeVariable('close', [OutLabel.instance()])
+        F_in = DerivedTypeVariable('F', [InLabel(0)])
+        F_out = DerivedTypeVariable('F', [OutLabel.instance()])
+        φ_load_0 = DerivedTypeVariable('φ', [LoadLabel.instance(), DerefLabel(4, 0)])
+        φ_load_4 = DerivedTypeVariable('φ', [LoadLabel.instance(), DerefLabel(4, 4)])
+        FileDescriptor = DerivedTypeVariable('#FileDescriptor')
+        SuccessZ = DerivedTypeVariable('#SuccessZ')
+        constraints.add_subtype(F_in, δ)
+        constraints.add_subtype(α, φ)
+        constraints.add_subtype(δ, φ)
+        constraints.add_subtype(φ_load_0, α)
+        constraints.add_subtype(φ_load_4, α_prime)
+        constraints.add_subtype(α_prime, close_in)
+        constraints.add_subtype(close_out, F_out)
+        constraints.add_subtype(close_in, FileDescriptor)
+        constraints.add_subtype(SuccessZ, close_out)
+
+        graph = constraints.generate_graph()
+        just_constraints = ["close.in_0.⊕       →  #FileDescriptor.⊕",
+                            "close.in_0.⊖       →  α'.⊖",
+                            "close.out.⊕        →  F.out.⊕",
+                            "close.out.⊖        →  #SuccessZ.⊖",
+                            "#FileDescriptor.⊖  →  close.in_0.⊖",
+                            "F.in_0.⊕           →  δ.⊕",
+                            "F.out.⊖            →  close.out.⊖",
+                            "#SuccessZ.⊕        →  close.out.⊕",
+                            "α'.⊕               →  close.in_0.⊕",
+                            "α.⊕                →  φ.⊕",
+                            "α.⊖                →  φ.load.σ4@0.⊖",
+                            "α'.⊖               →  φ.load.σ4@4.⊖",
+                            "δ.⊖                →  F.in_0.⊖",
+                            "δ.⊕                →  φ.⊕",
+                            "φ.load.σ4@0.⊕      →  α.⊕",
+                            "φ.load.σ4@4.⊕      →  α'.⊕",
+                            "φ.⊖                →  α.⊖",
+                            "φ.⊖                →  δ.⊖"]
+
+        self.graphs_are_equal(graph.graph, SchemaTestHelper.edges_to_dict(just_constraints))
+
+        graph.add_forget_recall()
+        forget_recall = ["close.⊖            →  close.in_0.⊕        (recall in_0)",
+                         "close.⊕            →  close.in_0.⊖        (recall in_0)",
+                         "close.⊖            →  close.out.⊖         (recall out)",
+                         "close.⊕            →  close.out.⊕         (recall out)",
+                         "close.in_0.⊕       →  close.⊖             (forget in_0)",
+                         "close.in_0.⊖       →  close.⊕             (forget in_0)",
+                         "close.in_0.⊕       →  #FileDescriptor.⊕",
+                         "close.in_0.⊖       →  α'.⊖",
+                         "close.out.⊕        →  close.⊕             (forget out)",
+                         "close.out.⊖        →  close.⊖             (forget out)",
+                         "close.out.⊕        →  F.out.⊕",
+                         "close.out.⊖        →  #SuccessZ.⊖",
+                         "F.⊖                →  F.in_0.⊕            (recall in_0)",
+                         "F.⊕                →  F.in_0.⊖            (recall in_0)",
+                         "F.⊖                →  F.out.⊖             (recall out)",
+                         "F.⊕                →  F.out.⊕             (recall out)",
+                         "#FileDescriptor.⊖  →  close.in_0.⊖",
+                         "F.in_0.⊕           →  F.⊖                 (forget in_0)",
+                         "F.in_0.⊖           →  F.⊕                 (forget in_0)",
+                         "F.in_0.⊕           →  δ.⊕",
+                         "F.out.⊖            →  close.out.⊖",
+                         "F.out.⊕            →  F.⊕                 (forget out)",
+                         "F.out.⊖            →  F.⊖                 (forget out)",
+                         "#SuccessZ.⊕        →  close.out.⊕",
+                         "α'.⊕               →  close.in_0.⊕",
+                         "α.⊕                →  φ.⊕",
+                         "α.⊖                →  φ.load.σ4@0.⊖",
+                         "α'.⊖               →  φ.load.σ4@4.⊖",
+                         "δ.⊖                →  F.in_0.⊖",
+                         "δ.⊕                →  φ.⊕",
+                         "φ.load.σ4@0.⊕      →  α.⊕",
+                         "φ.load.σ4@0.⊕      →  φ.load.⊕            (forget σ4@0)",
+                         "φ.load.σ4@0.⊖      →  φ.load.⊖            (forget σ4@0)",
+                         "φ.load.σ4@4.⊕      →  α'.⊕",
+                         "φ.load.σ4@4.⊕      →  φ.load.⊕            (forget σ4@4)",
+                         "φ.load.σ4@4.⊖      →  φ.load.⊖            (forget σ4@4)",
+                         "φ.load.⊕           →  φ.⊕                 (forget load)",
+                         "φ.load.⊖           →  φ.⊖                 (forget load)",
+                         "φ.load.⊕           →  φ.load.σ4@0.⊕       (recall σ4@0)",
+                         "φ.load.⊖           →  φ.load.σ4@0.⊖       (recall σ4@0)",
+                         "φ.load.⊕           →  φ.load.σ4@4.⊕       (recall σ4@4)",
+                         "φ.load.⊖           →  φ.load.σ4@4.⊖       (recall σ4@4)",
+                         "φ.⊖                →  α.⊖",
+                         "φ.⊖                →  δ.⊖",
+                         "φ.⊕                →  φ.load.⊕            (recall load)",
+                         "φ.⊖                →  φ.load.⊖            (recall load)"]
+        self.graphs_are_equal(graph.graph, SchemaTestHelper.edges_to_dict(forget_recall))
+
+        graph.saturate()
 
 if __name__ == '__main__':
     unittest.main()

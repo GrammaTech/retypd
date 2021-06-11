@@ -526,7 +526,9 @@ class DFS:
         if node in self.seen:
             return
         self.seen.add(node)
-        edges = self.graph.graph[node].items()
+        edges = []
+        if node in self.graph.graph:
+            edges = self.graph.graph[node].items()
         if self.saturation:
             implicit_dest = node.implicit_target()
             if implicit_dest:
