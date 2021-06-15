@@ -3,11 +3,8 @@ import re
 import sys
 import unittest
 
-sys.path.append('src')
-
-# from type_inference import ConstraintSet, DerefLabel, DerivedTypeVariable, LoadLabel, StoreLabel
-from schema import ConstraintSet, DerefLabel, DerivedTypeVariable, ExistenceConstraint, InLabel, \
-        LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Vertex
+from type_inference import ConstraintSet, DerefLabel, DerivedTypeVariable, ExistenceConstraint, \
+        InLabel, LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Vertex
 
 class SchemaTestHelper:
     '''Static helper functions for Schema tests. Since this parsing code is unlikely to be useful in
