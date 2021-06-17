@@ -1,0 +1,130 @@
+# .flake8
+#
+# DESCRIPTION
+#     Configuration file for the python linter flake8.
+#
+#     This configuration is based on the generic
+#     configuration published on GitHub.
+#
+# AUTHOR
+#     krnd
+#
+# VERSION
+#     1.0
+#
+# SEE ALSO
+#     http://flake8.pycqa.org/en/latest/user/options.html
+#     http://flake8.pycqa.org/en/latest/user/error-codes.html
+#     https://pycodestyle.readthedocs.io/en/latest/intro.html#error-codes
+#     https://gist.github.com/krnd
+#
+
+
+[flake8]
+
+################### PROGRAM ################################
+
+# Specify the number of subprocesses that Flake8 will use to run checks in parallel.
+jobs = auto
+
+
+################### OUTPUT #################################
+
+########## VERBOSITY ##########
+
+# Increase the verbosity of Flake8's output.
+verbose = 0
+# Decrease the verbosity of Flake8's output.
+quiet = 0
+
+
+########## FORMATTING ##########
+
+# Select the formatter used to display errors to the user.
+format = default
+
+# Print the total number of errors.
+count = True
+# Print the source code generating the error/warning in question.
+show-source = True
+# Count the number of occurrences of each error/warning code and print a report.
+statistics = True
+
+
+########## TARGETS ##########
+
+# Redirect all output to the specified file.
+output-file = .flake8.log
+# Also print output to stdout if output-file has been configured.
+tee = True
+
+
+################### FILE PATTERNS ##########################
+
+# Provide a comma-separated list of glob patterns to exclude from checks.
+exclude =
+    # git folder
+    .git,
+    # python cache
+    __pycache__,
+    # These files typically just have unused imports
+    __init__.py,
+# Provide a comma-separate list of glob patterns to include for checks.
+filename =
+    *.py
+
+
+################### LINTING ################################
+
+########## ENVIRONMENT ##########
+
+# Provide a custom list of builtin functions, objects, names, etc.
+builtins =
+
+
+########## OPTIONS ##########
+
+# Report all errors, even if it is on the same line as a `# NOQA` comment.
+disable-noqa = False
+
+# Set the maximum length that any line (with some exceptions) may be.
+max-line-length = 100
+# Set the maximum allowed McCabe complexity value for a block of code.
+max-complexity = 10
+# Toggle whether pycodestyle should enforce matching the indentation of the opening bracket's line.
+# incluences E131 and E133
+hang-closing = True
+
+
+########## RULES ##########
+
+# ERROR CODES
+#
+# E/W  - PEP8 errors/warnings (pycodestyle)
+# F    - linting errors (pyflakes)
+# C    - McCabe complexity error (mccabe)
+
+# Specify a list of codes to ignore.
+ignore = D4
+# Specify the list of error codes you wish Flake8 to report.
+# For now we only use the pyflakes errors, but in the future we may want to add
+# more (too noisy right now)
+select = F, E9
+# Enable off-by-default extensions.
+enable-extensions =
+
+
+########## DOCSTRING ##########
+
+# Enable PyFlakes syntax checking of doctests in docstrings.
+doctests = False
+
+# Specify which files are checked by PyFlakes for doctest syntax.
+include-in-doctest =
+# Specify which files are not to be checked by PyFlakes for doctest syntax.
+exclude-in-doctest =
+
+# tell flake8-rst-docstrings plugin to ignore some custom roles
+# this prevents FP RST303 and RST304
+rst-roles = py:meth, py:class, py:obj
+

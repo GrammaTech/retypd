@@ -1,0 +1,6 @@
+.*.sw?
+*~
+__pycache__
+.mypy_cache
+.flake8.log
+build
