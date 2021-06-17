@@ -9,7 +9,7 @@ author: Peter Aldous
 '''
 
 from abc import ABC
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, TypeVar
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, TypeVar
 import logging
 import os
 from networkx import DiGraph
@@ -59,7 +59,7 @@ class LoadLabel(AccessPathLabel):
             cls._instance = cls.__new__(cls)
         return cls._instance
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return self is other
 
     def __hash__(self) -> int:
@@ -83,7 +83,7 @@ class StoreLabel(AccessPathLabel):
             cls._instance = cls.__new__(cls)
         return cls._instance
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return self is other
 
     def __hash__(self) -> int:
@@ -102,7 +102,7 @@ class InLabel(AccessPathLabel):
     def __init__(self, index: int) -> None:
         self.index = index
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return isinstance(other, InLabel) and self.index == other.index
 
     def _less_than(self, other: 'InLabel') -> bool:
@@ -132,7 +132,7 @@ class OutLabel(AccessPathLabel):
             cls._instance = cls.__new__(cls)
         return cls._instance
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return self is other
 
     def __hash__(self) -> int:
@@ -150,7 +150,7 @@ class DerefLabel(AccessPathLabel):
         self.size = size
         self.offset = offset
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return (isinstance(other, DerefLabel) and
                 self.size == other.size and
                 self.offset == other.offset)
@@ -181,7 +181,7 @@ class DerivedTypeVariable:
         else:
             self._str: str = self.base
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return (isinstance(other, DerivedTypeVariable) and
                 self.base == other.base and
                 self.path == other.path)
@@ -266,7 +266,7 @@ class ExistenceConstraint:
     def __init__(self, var: DerivedTypeVariable) -> None:
         self.var = var
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return (isinstance(other, ExistenceConstraint) and
                 self.var == other.var)
 
@@ -287,7 +287,7 @@ class SubtypeConstraint:
         self.left = left
         self.right = right
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return (isinstance(other, SubtypeConstraint) and
                 self.left == other.left and
                 self.right == other.right)
@@ -469,7 +469,7 @@ class Vertex:
             variance = '.⊖'
         self._str = str(self.base) + variance
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return (isinstance(other, Vertex) and
                 self.base == other.base and
                 self.suffix_variance == other.suffix_variance)
@@ -629,3 +629,75 @@ class ConstraintGraph:
         nt = os.linesep + '\t'
         return (f'ConstraintGraph:{nt}{nt.join(map(str, self.graph.nodes))}'
                 f'{os.linesep}{nt}{nt.join(map(self.edge_to_str,self.graph.edges))}')
+
+
+class RecallVertex:
+    '''A Vertex downstream from a recall edge. Otherwise indistinguishable from a Vertex.
+    '''
+    def __init__(self, v: Vertex) -> None:
+        self.base = v.base
+        self.suffix_variance = v.suffix_variance
+
+    def __eq__(self, other: Any) -> bool:
+        return (isinstance(other, RecallVertex) and self.base == other.base and
+                self.suffix_variance = other.suffix_variance)
+
+    def __hash__(self) -> int:
+        return ~hash(self.base) ^ hash(self.suffix_variance)
+
+    def dual(self) -> Vertex:
+        return Vertex(self.base, self.suffix_variance)
+
+
+class Solver:
+    '''Takes a saturated constraint graph and a set of interesting variables and generates subtype
+    constraints.
+    '''
+    def __init__(self, graph: ConstraintGraph, interesting: Set[DerivedTypeVariable]) -> None:
+        self.graph = DiGraph()
+        self.graph.add_edges_from(graph.graph.edges)
+        self.interesting = interesting
+
+    # TODO memoize
+    def _recall_vertex(self, v: Vertex) -> RecallVertex:
+        result = RecallVertex(v)
+        if v in self.interesting:
+            self.interesting.add(result)
+        return result
+
+    def _forget_recall_transform(self):
+        '''Transform the graph so that no paths can be found such that a forget edge succeeds a
+        recall edge.
+        '''
+        edges = set(self.graph.edges)
+        for head, tail in edges:
+            if 'forget' in self.graph[head][tail]:
+                continue
+            recall_head = self._recall_vertex(head)
+            recall_tail = self._recall_vertex(tail)
+            atts = self.graph[head][tail]
+            if 'recall' in self.graph[head][tail]:
+                capability = self.graph[head][tail]['recall']
+                self.graph.remove_edge(head, tail)
+                self.graph.add_edge(head, recall_tail)
+            self.graph.add_edge(recall_head, recall_tail, atts)
+
+    def _add_interesting(self, v: Union[Vertex, RecallVertex]) -> None:
+        if isinstance(v, Vertex):
+            dual = RecallVertex(v)
+        else:
+            dual = v.dual()
+        self.interesting.update([v, dual])
+
+
+    def __call__(self) -> Set[SubtypeConstraint]:
+        self._forget_recall_transform()
+        # identify SCCs
+        # - in each SCC, identify incoming and outgoing edges and the SCC vertices incident to them
+        # - generate a type variable for each of these vertices
+        # - generate type constraints to relate each of these vertices to the others
+        # - break the cycle by dropping all edges between the vertices
+        # - add the vertices to the set of interesting vertices
+        # no loops; just find paths and generate constraints
+        pass
+
