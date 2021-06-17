@@ -8,11 +8,11 @@ for details
 author: Peter Aldous
 '''
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, TypeVar
 import logging
 import os
-from networkx import DiGraph
+import networkx
 
 
 logging.basicConfig()
@@ -457,6 +457,12 @@ class ConstraintSet:
         return graph
 
 
+class AbstractVertex(ABC):
+    @abstractmethod
+    def dual(self) -> 'AbstractVertex':
+        return self
+
+
 class Vertex:
     '''A vertex in the graph of constraints. Vertex objects are immutable (by convention).
     '''
@@ -509,15 +515,81 @@ class Vertex:
     def __str__(self) -> str:
         return self._str
 
+    def dual(self) -> 'RecallVertex':
+        return RecallVertex(self)
+
+
+class RecallVertex:
+    '''A Vertex downstream from a recall edge. Otherwise indistinguishable from a Vertex.
+    '''
+    def __init__(self, v: Vertex) -> None:
+        self.base = v.base
+        self.suffix_variance = v.suffix_variance
+
+    def __eq__(self, other: Any) -> bool:
+        return (isinstance(other, RecallVertex) and
+                self.base == other.base and
+                self.suffix_variance == other.suffix_variance)
+
+    def __hash__(self) -> int:
+        return ~hash(self.base) ^ hash(self.suffix_variance)
+
+    def __str__(self) -> str:
+        return f'R:{str(self.dual())}'
+
+    def dual(self) -> Vertex:
+        return Vertex(self.base, self.suffix_variance)
+
+
+class ForgetLabel:
+    '''A forget label in the graph.
+    '''
+    def __init__(self, capability: AccessPathLabel) -> None:
+        self.capability = capability
+
+    def is_forget(self) -> bool:
+        return True
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, ForgetLabel) and self.capability == other.capability
+
+    def __hash__(self) -> int:
+        return hash(self.capability)
+
+    def __str__(self) -> str:
+        return f'forget {self.capability}'
+
+
+class RecallLabel:
+    '''A recall label in the graph.
+    '''
+    def __init__(self, capability: AccessPathLabel) -> None:
+        self.capability = capability
+
+    def is_forget(self) -> bool:
+        return False
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, RecallLabel) and self.capability == other.capability
+
+    def __hash__(self) -> int:
+        return ~hash(self.capability)
+
+    def __str__(self) -> str:
+        return f'recall {self.capability}'
+
+
+EdgeLabel = TypeVar('EdgeLabel', ForgetLabel, RecallLabel)
+
 
 class DFS:
     '''A depth-first search computation.
     '''
     def __init__(self,
                  graph: 'ConstraintGraph',
-                 process: Callable[[Vertex, Dict[str, AccessPathLabel]], bool],
+                 process: Callable[[Vertex, Optional[EdgeLabel]], bool],
                  saturation: bool = False) -> None:
-        self.process = process
+        self.process: Callable[[Vertex, Optional[EdgeLabel]], bool] = process
         self.graph = graph
         self.saturation = saturation
         self.seen: Set[Vertex] = set()
@@ -526,16 +598,17 @@ class DFS:
         if node in self.seen:
             return
         self.seen.add(node)
-        edges = []
+        edges: Iterable[Tuple[Vertex, Optional[EdgeLabel]]] = []
         if node in self.graph.graph:
-            edges = self.graph.graph[node].items()
+            edges = map(lambda dest: (dest, self.graph.graph[node][dest].get('label')),
+                    self.graph.graph[node])
         if self.saturation:
             implicit_dest = node.implicit_target()
             if implicit_dest:
                 edges = list(edges)
-                edges.append((implicit_dest, {}))
-        for neighbor, attributes in edges:
-            if self.process(neighbor, attributes):
+                edges.append((implicit_dest, None))
+        for neighbor, label in edges:
+            if self.process(neighbor, label):
                 self(neighbor)
 
 
@@ -544,7 +617,7 @@ class ConstraintGraph:
     Appendix D. Edge weights use the formulation from the paper.
     '''
     def __init__(self) -> None:
-        self.graph = DiGraph()
+        self.graph = networkx.DiGraph()
 
     def add_node(self, node: DerivedTypeVariable) -> None:
         '''Add a node with covariant and contravariant suffixes to the graph.
@@ -566,8 +639,8 @@ class ConstraintGraph:
             prefix = node.forget_once()
             while prefix:
                 forgotten = node.base.path[-1]
-                self.graph.add_edge(node, prefix, forget=forgotten)
-                self.graph.add_edge(prefix, node, recall=forgotten)
+                self.graph.add_edge(node, prefix, label=ForgetLabel(forgotten))
+                self.graph.add_edge(prefix, node, label=RecallLabel(forgotten))
                 node = prefix
                 prefix = node.forget_once()
 
@@ -581,24 +654,20 @@ class ConstraintGraph:
             nodes = list(self.graph.nodes)
             for node in nodes:
                 forgets: Dict[Vertex, AccessPathLabel] = {}
-                def process_forget(neighbor: Vertex, atts: Dict[str, AccessPathLabel]) -> bool:
+                def process_forget(neighbor: Vertex, label: Optional[EdgeLabel]) -> bool:
                     nonlocal forgets
-                    if 'forget' in atts:
-                        if 'recall' in atts:
-                            raise ValueError
-                        if neighbor in forgets:
-                            raise NotImplementedError
-                        forgets[neighbor] = atts['forget']
-                    return not atts
+                    if label and label.is_forget():
+                        forgets[neighbor] = label.capability
+                    return not label
                 forget_dfs = DFS(self, process_forget, True)
                 forget_dfs(node)
-                for mid, label in forgets.items():
-                    recalls = set()
-                    def process_recall(neighbor: Vertex, atts: Dict[str, AccessPathLabel]) -> bool:
+                for mid, capability in forgets.items():
+                    recalls: Set[RecallLabel] = set()
+                    def process_recall(neighbor: Vertex, label: Optional[EdgeLabel]) -> bool:
                         nonlocal recalls
-                        if atts.get('recall') == label:
+                        if label and not label.is_forget() and label.capability == capability:
                             recalls.add(neighbor)
-                        return not atts
+                        return not label
                     recall_dfs = DFS(self, process_recall, True)
                     recall_dfs.seen = forget_dfs.seen
                     recall_dfs(mid)
@@ -609,44 +678,29 @@ class ConstraintGraph:
                             changed = True
                             self.graph.add_edge(node, end)
 
-    def edge_to_str(self, edge: Tuple[Vertex, Vertex]) -> str:
+    @staticmethod
+    def edge_to_str(graph, edge: Tuple[Vertex, Vertex]) -> str:
         '''A helper for __str__ that formats an edge
         '''
-        width = 2 + max(map(lambda v: len(str(v)), self.graph.nodes))
+        width = 2 + max(map(lambda v: len(str(v)), graph.nodes))
         (sub, sup) = edge
-        atts = self.graph[sub][sup]
+        label = graph[sub][sup].get('label')
         edge_str = f'{str(sub):<{width}}→  {str(sup):<{width}}'
-        if atts:
-            if len(atts) > 1:
-                raise ValueError
-            action = next(iter(atts))
-            capability = atts[action]
-            return edge_str + f' ({action} {capability})'
+        if label:
+            return edge_str + f' ({label})'
         else:
             return edge_str
 
+    @staticmethod
+    def graph_to_str(graph: networkx.DiGraph) -> str:
+        nt = os.linesep + '\t'
+        edge_to_str = lambda edge: ConstraintGraph.edge_to_str(graph, edge)
+        return (f'{nt.join(map(str, graph.nodes))}{os.linesep}'
+                f'{nt}{nt.join(map(edge_to_str, graph.edges))}')
+
     def __str__(self) -> str:
         nt = os.linesep + '\t'
-        return (f'ConstraintGraph:{nt}{nt.join(map(str, self.graph.nodes))}'
-                f'{os.linesep}{nt}{nt.join(map(self.edge_to_str,self.graph.edges))}')
-
-
-class RecallVertex:
-    '''A Vertex downstream from a recall edge. Otherwise indistinguishable from a Vertex.
-    '''
-    def __init__(self, v: Vertex) -> None:
-        self.base = v.base
-        self.suffix_variance = v.suffix_variance
-
-    def __eq__(self, other: Any) -> bool:
-        return (isinstance(other, RecallVertex) and self.base == other.base and
-                self.suffix_variance = other.suffix_variance)
-
-    def __hash__(self) -> int:
-        return ~hash(self.base) ^ hash(self.suffix_variance)
-
-    def dual(self) -> Vertex:
-        return Vertex(self.base, self.suffix_variance)
+        return f'ConstraintGraph:{nt}{ConstraintGraph.graph_to_str(self.graph)}'
 
 
 class Solver:
@@ -654,15 +708,18 @@ class Solver:
     constraints.
     '''
     def __init__(self, graph: ConstraintGraph, interesting: Set[DerivedTypeVariable]) -> None:
-        self.graph = DiGraph()
+        self.graph = networkx.DiGraph()
+        # TODO add_edges_from doesn't copy attributes
         self.graph.add_edges_from(graph.graph.edges)
         self.interesting = interesting
+        self.next = 0
+        self.constraints = set()
+        self._type_vars = {}
+        self._vertices = {}
 
     # TODO memoize
     def _recall_vertex(self, v: Vertex) -> RecallVertex:
         result = RecallVertex(v)
-        if v in self.interesting:
-            self.interesting.add(result)
         return result
 
     def _forget_recall_transform(self):
@@ -671,33 +728,115 @@ class Solver:
         '''
         edges = set(self.graph.edges)
         for head, tail in edges:
-            if 'forget' in self.graph[head][tail]:
+            label = self.graph[head][tail].get('label')
+            if label and label.is_forget():
                 continue
             recall_head = self._recall_vertex(head)
             recall_tail = self._recall_vertex(tail)
             atts = self.graph[head][tail]
-            if 'recall' in self.graph[head][tail]:
-                capability = self.graph[head][tail]['recall']
+            if label and not label.is_forget():
+                capability = label.capability
                 self.graph.remove_edge(head, tail)
-                self.graph.add_edge(head, recall_tail)
-            self.graph.add_edge(recall_head, recall_tail, atts)
+                self.graph.add_edge(head, recall_tail, **atts)
+            self.graph.add_edge(recall_head, recall_tail, **atts)
 
-    def _add_interesting(self, v: Union[Vertex, RecallVertex]) -> None:
-        if isinstance(v, Vertex):
-            dual = RecallVertex(v)
-        else:
-            dual = v.dual()
-        self.interesting.update([v, dual])
+    def _get_type_var(self, v: AbstractVertex) -> DerivedTypeVariable:
+        '''Retrieve or generate a type variable. Automatically adds this variable to the set of
+        interesting variables.
+        '''
+        if v in self._type_vars:
+            return self._type_vars[v]
+        result = DerivedTypeVariable(f'type_{self.next}')
+        self._type_vars[v] = result
+        self._vertices[result] = v
+        self.interesting.add(result)
+        self.next += 1
+        return result
 
+    def _maybe_get_type_var(self, v: AbstractVertex) -> DerivedTypeVariable:
+        if v in self._type_vars:
+            return self._type_vars[v]
+        return v.base
+
+    def _get_vertex(self, var: DerivedTypeVariable) -> Optional[AbstractVertex]:
+        return self._vertices.get(var)
+
+    def _find_paths(self,
+                    origin: AbstractVertex,
+                    destinations: Set[AbstractVertex],
+                    within: Optional[Set[AbstractVertex]] = None,
+                    path: List[AbstractVertex] = []) -> \
+                        List[Tuple[List[EdgeLabel], AbstractVertex]]:
+        '''Find all paths from origin to nodes in destinations. If within is specified, only include
+        paths whose vertices are all members of within. Does not check for cycles.
+        '''
+        if origin in path:
+            return []
+        path = list(path)
+        path.append(origin)
+        if origin in destinations:
+            return [([], origin)]
+        if within and origin not in within:
+            return []
+        all_paths = []
+        for succ in self.graph[origin]:
+            paths = self._find_paths(succ, destinations, within, path)
+            if 'label' in self.graph[origin][succ]:
+                label = self.graph[origin][succ]
+                for string, _ in paths:
+                    string.append(label)
+            all_paths += paths
+        return all_paths
+
+    def _add_constraint(self,
+                        origin: DerivedTypeVariable,
+                        dest: DerivedTypeVariable,
+                        string: List[EdgeLabel]) -> None:
+        lhs = origin
+        rhs = dest
+        for label in string:
+            if label.is_forget():
+                rhs = rhs.add_suffix(label.capability)
+            else:
+                lhs = lhs.add_suffix(label.capability)
+        if lhs != rhs:
+            self.constraints.add(SubtypeConstraint(lhs, rhs))
 
     def __call__(self) -> Set[SubtypeConstraint]:
         self._forget_recall_transform()
-        # identify SCCs
-        # - in each SCC, identify incoming and outgoing edges and the SCC vertices incident to them
-        # - generate a type variable for each of these vertices
-        # - generate type constraints to relate each of these vertices to the others
-        # - break the cycle by dropping all edges between the vertices
-        # - add the vertices to the set of interesting vertices
-        # no loops; just find paths and generate constraints
-        pass
+        reverse = networkx.reverse_view(self.graph)
+        for scc in networkx.strongly_connected_components(self.graph):
+            if len(scc) == 1:
+                node = next(iter(scc))
+                if node not in self.graph[node]:
+                    # Every node is in a SCC, but singletons may not loop to themselves. For this
+                    # portion of the algorithm, we only want _cyclic_ SCCs.
+                    continue
+            # - in each SCC, identify sources and sinks:
+            # sources are members of the SCC with incoming edges from outside the SCC
+            # sinks are nodes in the SCC with edges that leave the SCC
+            source_sinks = filter(lambda n: (set(self.graph[n]) | set(reverse[n])) - scc, scc)
+            # - generate type constraints to relate each of these vertices to the others
+            for node in source_sinks:
+                paths = self._find_paths(origin=node, destinations=source_sinks, within=scc)
+                for string, dest in paths:
+                    self._add_constraint(self._get_type_var(node), self._get_type_var(dest), string)
+            # - break the cycle by dropping all edges between the vertices
+            self.graph.remove_edges_from({(head, tail) for head in source_sinks
+                                                for tail in source_sinks})
+        # There are no more loops; just find paths and generate constraints
+        nodes = set()
+        for var in self.interesting:
+            t = Vertex(var, True)
+            f = Vertex(var, False)
+            nodes.add(t)
+            nodes.add(f)
+            nodes.add(t.dual())
+            nodes.add(f.dual())
+        for origin in nodes:
+            for string, dest in self._find_paths(origin, nodes):
+                origin_var: DerivedTypeVariable = self._maybe_get_type_var(origin)
+                dest_var: DerivedTypeVariable = self._maybe_get_type_var(dest)
+                self._add_constraint(origin_var, dest_var, string)
+        return self.constraints
 

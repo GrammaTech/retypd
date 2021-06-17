@@ -4,7 +4,8 @@ import sys
 import unittest
 
 from type_inference import ConstraintSet, DerefLabel, DerivedTypeVariable, ExistenceConstraint, \
-        InLabel, LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Vertex
+        ForgetLabel, InLabel, LoadLabel, OutLabel, RecallLabel, Solver, StoreLabel, \
+        SubtypeConstraint, Vertex
 
 class SchemaTestHelper:
     '''Static helper functions for Schema tests. Since this parsing code is unlikely to be useful in
@@ -66,8 +67,14 @@ class SchemaTestHelper:
             sup = SchemaTestHelper.parse_node(edge_match.group(2))
             atts = {}
             if edge_match.group(3):
-                label = SchemaTestHelper.parse_label(edge_match.group(5))
-                atts[edge_match.group(4)] = label
+                capability = SchemaTestHelper.parse_label(edge_match.group(5))
+                if edge_match.group(4) == 'forget':
+                    label = ForgetLabel(capability)
+                elif edge_match.group(4) == 'recall':
+                    label = RecallLabel(capability)
+                else:
+                    raise ValueError
+                atts['label'] = label
             return (sub, sup, atts)
         raise ValueError
 
@@ -339,6 +346,11 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
         graph.saturate()
         self.graphs_are_equal(graph.graph, forget_recall_graph)
 
+        solver = Solver(graph, {x, y})
+        constraints = solver()
+
+        self.assertTrue(SubtypeConstraint(x, y) in constraints)
+
 
 class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
     def test_recursive(self):
@@ -492,6 +504,12 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
                      "φ.⊖                →  φ.load.σ4@0.⊖",
                      "φ.⊖                →  φ.load.⊖            (recall load)"]
         self.graphs_are_equal(graph.graph, SchemaTestHelper.edges_to_dict(saturated))
+
+        solver = Solver(graph, {F, FileDescriptor, SuccessZ})
+        constraints = solver()
+
+        self.assertTrue(SubtypeConstraint(SuccessZ, F_out) in constraints)
+        self.assertTrue(SubtypeConstraint(F_in, next(iter(solver._type_vars))) in constraints)
 
 if __name__ == '__main__':
     unittest.main()
