@@ -1,11 +1,10 @@
 from abc import ABC
 import re
-import sys
 import unittest
 
 from type_inference import ConstraintSet, DerefLabel, DerivedTypeVariable, ExistenceConstraint, \
         ForgetLabel, InLabel, LoadLabel, OutLabel, RecallLabel, Solver, StoreLabel, \
-        SubtypeConstraint, Vertex
+        SubtypeConstraint, Vertex, ConstraintGraph
 
 class SchemaTestHelper:
     '''Static helper functions for Schema tests. Since this parsing code is unlikely to be useful in
@@ -100,256 +99,88 @@ class SchemaTest(ABC):
 class BasicSchemaTest(SchemaTest, unittest.TestCase):
 
     def test_simple_constraints(self):
-        '''A simple test from the paper. This one has no recursive data structures, so the fixed
-        point contains "x ⊑ y", the constraint that this particular analysis hopes to generate.
+        '''A simple test from the paper. This one has no recursive data structures; as such, the
+        fixed point would suffice. However, we compute type constraints in the same way as in the
+        presence of recursion.
         '''
 
-        unfixed = ConstraintSet()
+        constraints = ConstraintSet()
         p = DerivedTypeVariable('p')
         q = DerivedTypeVariable('q')
         x = DerivedTypeVariable('x')
         y = DerivedTypeVariable('y')
         q_store = DerivedTypeVariable('q', [StoreLabel.instance(), DerefLabel(4, 0)])
         p_load = DerivedTypeVariable('p', [LoadLabel.instance(), DerefLabel(4, 0)])
-        unfixed.add_subtype(p, q)
-        unfixed.add_subtype(x, q_store)
-        unfixed.add_subtype(p_load, y)
-        fixed = unfixed.fix()
+        constraints.add_subtype(p, q)
+        constraints.add_subtype(x, q_store)
+        constraints.add_subtype(p_load, y)
 
-        fixed_existence = ['VAR p',
-                           'VAR p.load',
-                           'VAR p.load.σ4@0',
-                           'VAR p.store',
-                           'VAR p.store.σ4@0',
-                           'VAR q',
-                           'VAR q.load',
-                           'VAR q.load.σ4@0',
-                           'VAR q.store',
-                           'VAR q.store.σ4@0',
-                           'VAR x',
-                           'VAR y']
-
-        fixed_subtype = ['p.load ⊑ p.load',
-                         'p.load ⊑ q.load',
-                         'p.load.σ4@0 ⊑ p.load.σ4@0',
-                         'p.load.σ4@0 ⊑ q.load.σ4@0',
-                         'p.load.σ4@0 ⊑ y',
-                         'p ⊑ p',
-                         'p ⊑ q',
-                         'p.store ⊑ p.load',
-                         'p.store ⊑ p.store',
-                         'p.store ⊑ q.load',
-                         'p.store.σ4@0 ⊑ p.load.σ4@0',
-                         'p.store.σ4@0 ⊑ p.store.σ4@0',
-                         'p.store.σ4@0 ⊑ q.load.σ4@0',
-                         'p.store.σ4@0 ⊑ y',
-                         'q.load ⊑ q.load',
-                         'q.load.σ4@0 ⊑ q.load.σ4@0',
-                         'q ⊑ q',
-                         'q.store ⊑ p.load',
-                         'q.store ⊑ p.store',
-                         'q.store ⊑ q.load',
-                         'q.store ⊑ q.store',
-                         'q.store.σ4@0 ⊑ p.load.σ4@0',
-                         'q.store.σ4@0 ⊑ p.store.σ4@0',
-                         'q.store.σ4@0 ⊑ q.load.σ4@0',
-                         'q.store.σ4@0 ⊑ q.store.σ4@0',
-                         'q.store.σ4@0 ⊑ y',
-                         'x ⊑ p.load.σ4@0',
-                         'x ⊑ p.store.σ4@0',
-                         'x ⊑ q.load.σ4@0',
-                         'x ⊑ q.store.σ4@0',
-                         'x ⊑ x',
-                         'x ⊑ y',
-                         'y ⊑ y']
-
-        self.assertEqual(fixed.existence,
-                         set(map(SchemaTestHelper.parse_constraint, fixed_existence)))
-        self.assertEqual(fixed.subtype,
-                         set(map(SchemaTestHelper.parse_constraint, fixed_subtype)))
-
-        graph = fixed.generate_graph()
-
-        simple_graph = ['p.load.⊕        →  p.load.⊕',
-                        'p.load.⊖        →  p.load.⊖',
-                        'p.load.⊖        →  p.store.⊖',
-                        'p.load.⊕        →  q.load.⊕',
-                        'p.load.⊖        →  q.store.⊖',
-                        'p.load.σ4@0.⊕   →  p.load.σ4@0.⊕',
-                        'p.load.σ4@0.⊖   →  p.load.σ4@0.⊖',
-                        'p.load.σ4@0.⊖   →  p.store.σ4@0.⊖',
-                        'p.load.σ4@0.⊕   →  q.load.σ4@0.⊕',
-                        'p.load.σ4@0.⊖   →  q.store.σ4@0.⊖',
-                        'p.load.σ4@0.⊖   →  x.⊖',
-                        'p.load.σ4@0.⊕   →  y.⊕',
-                        'p.⊕             →  p.⊕',
-                        'p.⊖             →  p.⊖',
-                        'p.⊕             →  q.⊕',
-                        'p.store.⊕       →  p.load.⊕',
-                        'p.store.⊕       →  p.store.⊕',
-                        'p.store.⊖       →  p.store.⊖',
-                        'p.store.⊕       →  q.load.⊕',
-                        'p.store.⊖       →  q.store.⊖',
-                        'p.store.σ4@0.⊕  →  p.load.σ4@0.⊕',
-                        'p.store.σ4@0.⊕  →  p.store.σ4@0.⊕',
-                        'p.store.σ4@0.⊖  →  p.store.σ4@0.⊖',
-                        'p.store.σ4@0.⊕  →  q.load.σ4@0.⊕',
-                        'p.store.σ4@0.⊖  →  q.store.σ4@0.⊖',
-                        'p.store.σ4@0.⊖  →  x.⊖',
-                        'p.store.σ4@0.⊕  →  y.⊕',
-                        'q.load.⊖        →  p.load.⊖',
-                        'q.load.⊖        →  p.store.⊖',
-                        'q.load.⊕        →  q.load.⊕',
-                        'q.load.⊖        →  q.load.⊖',
-                        'q.load.⊖        →  q.store.⊖',
-                        'q.load.σ4@0.⊖   →  p.load.σ4@0.⊖',
-                        'q.load.σ4@0.⊖   →  p.store.σ4@0.⊖',
-                        'q.load.σ4@0.⊕   →  q.load.σ4@0.⊕',
-                        'q.load.σ4@0.⊖   →  q.load.σ4@0.⊖',
-                        'q.load.σ4@0.⊖   →  q.store.σ4@0.⊖',
-                        'q.load.σ4@0.⊖   →  x.⊖',
-                        'q.⊖             →  p.⊖',
-                        'q.⊕             →  q.⊕',
-                        'q.⊖             →  q.⊖',
-                        'q.store.⊕       →  p.load.⊕',
-                        'q.store.⊕       →  p.store.⊕',
-                        'q.store.⊕       →  q.load.⊕',
-                        'q.store.⊕       →  q.store.⊕',
-                        'q.store.⊖       →  q.store.⊖',
-                        'q.store.σ4@0.⊕  →  p.load.σ4@0.⊕',
-                        'q.store.σ4@0.⊕  →  p.store.σ4@0.⊕',
-                        'q.store.σ4@0.⊕  →  q.load.σ4@0.⊕',
-                        'q.store.σ4@0.⊕  →  q.store.σ4@0.⊕',
-                        'q.store.σ4@0.⊖  →  q.store.σ4@0.⊖',
-                        'q.store.σ4@0.⊖  →  x.⊖',
-                        'q.store.σ4@0.⊕  →  y.⊕',
-                        'x.⊕             →  p.load.σ4@0.⊕',
-                        'x.⊕             →  p.store.σ4@0.⊕',
-                        'x.⊕             →  q.load.σ4@0.⊕',
-                        'x.⊕             →  q.store.σ4@0.⊕',
-                        'x.⊕             →  x.⊕',
-                        'x.⊖             →  x.⊖',
-                        'x.⊕             →  y.⊕',
-                        'y.⊖             →  p.load.σ4@0.⊖',
-                        'y.⊖             →  p.store.σ4@0.⊖',
-                        'y.⊖             →  q.store.σ4@0.⊖',
-                        'y.⊖             →  x.⊖',
-                        'y.⊕             →  y.⊕',
-                        'y.⊖             →  y.⊖']
-
-        self.graphs_are_equal(graph.graph, SchemaTestHelper.edges_to_dict(simple_graph))
+        graph = constraints.generate_graph()
 
         graph.add_forget_recall()
 
-        forget_recall = ['p.load.⊕        →  p.⊕              (forget load)',
-                         'p.load.⊖        →  p.⊖              (forget load)',
-                         'p.load.⊕        →  p.load.⊕',
-                         'p.load.⊖        →  p.load.⊖',
+        forget_recall = ['p.load.⊖        →  p.⊖              (forget load)',
+                         'p.load.⊕        →  p.⊕              (forget load)',
                          'p.load.⊕        →  p.load.σ4@0.⊕    (recall σ4@0)',
                          'p.load.⊖        →  p.load.σ4@0.⊖    (recall σ4@0)',
-                         'p.load.⊖        →  p.store.⊖',
-                         'p.load.⊕        →  q.load.⊕',
-                         'p.load.⊖        →  q.store.⊖',
                          'p.load.σ4@0.⊕   →  p.load.⊕         (forget σ4@0)',
                          'p.load.σ4@0.⊖   →  p.load.⊖         (forget σ4@0)',
-                         'p.load.σ4@0.⊕   →  p.load.σ4@0.⊕',
-                         'p.load.σ4@0.⊖   →  p.load.σ4@0.⊖',
-                         'p.load.σ4@0.⊖   →  p.store.σ4@0.⊖',
-                         'p.load.σ4@0.⊕   →  q.load.σ4@0.⊕',
-                         'p.load.σ4@0.⊖   →  q.store.σ4@0.⊖',
-                         'p.load.σ4@0.⊖   →  x.⊖',
                          'p.load.σ4@0.⊕   →  y.⊕',
-                         'p.⊕             →  p.⊕',
-                         'p.⊖             →  p.⊖',
                          'p.⊕             →  p.load.⊕         (recall load)',
                          'p.⊖             →  p.load.⊖         (recall load)',
-                         'p.⊕             →  p.store.⊖        (recall store)',
-                         'p.⊖             →  p.store.⊕        (recall store)',
                          'p.⊕             →  q.⊕',
-                         'p.store.⊕       →  p.⊖              (forget store)',
-                         'p.store.⊖       →  p.⊕              (forget store)',
-                         'p.store.⊕       →  p.load.⊕',
-                         'p.store.⊕       →  p.store.⊕',
-                         'p.store.⊖       →  p.store.⊖',
-                         'p.store.⊕       →  p.store.σ4@0.⊕   (recall σ4@0)',
-                         'p.store.⊖       →  p.store.σ4@0.⊖   (recall σ4@0)',
-                         'p.store.⊕       →  q.load.⊕',
-                         'p.store.⊖       →  q.store.⊖',
-                         'p.store.σ4@0.⊕  →  p.load.σ4@0.⊕',
-                         'p.store.σ4@0.⊕  →  p.store.⊕        (forget σ4@0)',
-                         'p.store.σ4@0.⊖  →  p.store.⊖        (forget σ4@0)',
-                         'p.store.σ4@0.⊕  →  p.store.σ4@0.⊕',
-                         'p.store.σ4@0.⊖  →  p.store.σ4@0.⊖',
-                         'p.store.σ4@0.⊕  →  q.load.σ4@0.⊕',
-                         'p.store.σ4@0.⊖  →  q.store.σ4@0.⊖',
-                         'p.store.σ4@0.⊖  →  x.⊖',
-                         'p.store.σ4@0.⊕  →  y.⊕',
-                         'q.load.⊖        →  p.load.⊖',
-                         'q.load.⊖        →  p.store.⊖',
-                         'q.load.⊕        →  q.⊕              (forget load)',
-                         'q.load.⊖        →  q.⊖              (forget load)',
-                         'q.load.⊕        →  q.load.⊕',
-                         'q.load.⊖        →  q.load.⊖',
-                         'q.load.⊕        →  q.load.σ4@0.⊕    (recall σ4@0)',
-                         'q.load.⊖        →  q.load.σ4@0.⊖    (recall σ4@0)',
-                         'q.load.⊖        →  q.store.⊖',
-                         'q.load.σ4@0.⊖   →  p.load.σ4@0.⊖',
-                         'q.load.σ4@0.⊖   →  p.store.σ4@0.⊖',
-                         'q.load.σ4@0.⊕   →  q.load.⊕         (forget σ4@0)',
-                         'q.load.σ4@0.⊖   →  q.load.⊖         (forget σ4@0)',
-                         'q.load.σ4@0.⊕   →  q.load.σ4@0.⊕',
-                         'q.load.σ4@0.⊖   →  q.load.σ4@0.⊖',
-                         'q.load.σ4@0.⊖   →  q.store.σ4@0.⊖',
-                         'q.load.σ4@0.⊖   →  x.⊖',
                          'q.⊖             →  p.⊖',
-                         'q.⊕             →  q.⊕',
-                         'q.⊖             →  q.⊖',
-                         'q.⊕             →  q.load.⊕         (recall load)',
-                         'q.⊖             →  q.load.⊖         (recall load)',
                          'q.⊕             →  q.store.⊖        (recall store)',
                          'q.⊖             →  q.store.⊕        (recall store)',
-                         'q.store.⊕       →  p.load.⊕',
-                         'q.store.⊕       →  p.store.⊕',
                          'q.store.⊕       →  q.⊖              (forget store)',
                          'q.store.⊖       →  q.⊕              (forget store)',
-                         'q.store.⊕       →  q.load.⊕',
-                         'q.store.⊕       →  q.store.⊕',
-                         'q.store.⊖       →  q.store.⊖',
                          'q.store.⊕       →  q.store.σ4@0.⊕   (recall σ4@0)',
                          'q.store.⊖       →  q.store.σ4@0.⊖   (recall σ4@0)',
-                         'q.store.σ4@0.⊕  →  p.load.σ4@0.⊕',
-                         'q.store.σ4@0.⊕  →  p.store.σ4@0.⊕',
-                         'q.store.σ4@0.⊕  →  q.load.σ4@0.⊕',
                          'q.store.σ4@0.⊕  →  q.store.⊕        (forget σ4@0)',
                          'q.store.σ4@0.⊖  →  q.store.⊖        (forget σ4@0)',
-                         'q.store.σ4@0.⊕  →  q.store.σ4@0.⊕',
-                         'q.store.σ4@0.⊖  →  q.store.σ4@0.⊖',
                          'q.store.σ4@0.⊖  →  x.⊖',
-                         'q.store.σ4@0.⊕  →  y.⊕',
-                         'x.⊕             →  p.load.σ4@0.⊕',
-                         'x.⊕             →  p.store.σ4@0.⊕',
-                         'x.⊕             →  q.load.σ4@0.⊕',
                          'x.⊕             →  q.store.σ4@0.⊕',
-                         'x.⊕             →  x.⊕',
-                         'x.⊖             →  x.⊖',
-                         'x.⊕             →  y.⊕',
-                         'y.⊖             →  p.load.σ4@0.⊖',
-                         'y.⊖             →  p.store.σ4@0.⊖',
-                         'y.⊖             →  q.store.σ4@0.⊖',
-                         'y.⊖             →  x.⊖',
-                         'y.⊕             →  y.⊕',
-                         'y.⊖             →  y.⊖']
+                         'y.⊖             →  p.load.σ4@0.⊖']
 
         forget_recall_graph = SchemaTestHelper.edges_to_dict(forget_recall)
         self.graphs_are_equal(graph.graph, forget_recall_graph)
 
         graph.saturate()
-        self.graphs_are_equal(graph.graph, forget_recall_graph)
+
+        saturated = ['p.load.⊕        →  p.⊕              (forget load)',
+                     'p.load.⊖        →  p.⊖              (forget load)',
+                     'p.load.⊕        →  p.load.σ4@0.⊕    (recall σ4@0)',
+                     'p.load.⊖        →  p.load.σ4@0.⊖    (recall σ4@0)',
+                     'p.load.σ4@0.⊕   →  p.load.⊕         (forget σ4@0)',
+                     'p.load.σ4@0.⊖   →  p.load.⊖         (forget σ4@0)',
+                     'p.load.σ4@0.⊕   →  y.⊕',
+                     'p.⊕             →  p.load.⊕         (recall load)',
+                     'p.⊖             →  p.load.⊖         (recall load)',
+                     'p.⊕             →  q.⊕',
+                     'q.⊖             →  p.⊖',
+                     'q.⊕             →  q.store.⊖        (recall store)',
+                     'q.⊖             →  q.store.⊕        (recall store)',
+                     'q.store.⊖       →  q.⊕              (forget store)',
+                     'q.store.⊕       →  q.⊖              (forget store)',
+                     'q.store.⊖       →  q.store.σ4@0.⊖   (recall σ4@0)',
+                     'q.store.⊕       →  q.store.σ4@0.⊕   (recall σ4@0)',
+                     'q.store.σ4@0.⊕  →  q.store.⊕        (forget σ4@0)',
+                     'q.store.σ4@0.⊖  →  q.store.⊖        (forget σ4@0)',
+                     'q.store.σ4@0.⊖  →  x.⊖',
+                     'x.⊕             →  q.store.σ4@0.⊕',
+                     'y.⊖             →  p.load.σ4@0.⊖']
+
+        saturated_graph = SchemaTestHelper.edges_to_dict(saturated)
+        self.graphs_are_equal(graph.graph, saturated_graph)
 
         solver = Solver(graph, {x, y})
-        constraints = solver()
+        final_constraints = solver()
 
-        self.assertTrue(SubtypeConstraint(x, y) in constraints)
+        print('Simple test constraints:')
+        for constraint in final_constraints:
+            print(f'\t{constraint}')
+
+        self.assertTrue(SubtypeConstraint(x, y) in final_constraints)
 
 
 class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
@@ -360,7 +191,6 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
         φ = DerivedTypeVariable('φ')
         α = DerivedTypeVariable('α')
         α_prime = DerivedTypeVariable("α'")
-        close = DerivedTypeVariable('close')
         close_in = DerivedTypeVariable('close', [InLabel(0)])
         close_out = DerivedTypeVariable('close', [OutLabel.instance()])
         F_in = DerivedTypeVariable('F', [InLabel(0)])
@@ -450,6 +280,7 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
                          "φ.⊖                →  φ.load.⊖            (recall load)"]
         self.graphs_are_equal(graph.graph, SchemaTestHelper.edges_to_dict(forget_recall))
 
+
         graph.saturate()
         saturated = ["#FileDescriptor.⊖  →  close.in_0.⊖",
                      "#FileDescriptor.⊖  →  φ.load.σ4@4.⊖",
@@ -505,11 +336,17 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
                      "φ.⊖                →  φ.load.⊖            (recall load)"]
         self.graphs_are_equal(graph.graph, SchemaTestHelper.edges_to_dict(saturated))
 
-        solver = Solver(graph, {F, FileDescriptor, SuccessZ})
-        constraints = solver()
 
-        self.assertTrue(SubtypeConstraint(SuccessZ, F_out) in constraints)
-        self.assertTrue(SubtypeConstraint(F_in, next(iter(solver._type_vars))) in constraints)
+        solver = Solver(graph, {F, FileDescriptor, SuccessZ})
+        final_constraints = solver()
+
+        print('Recursive test constraints:')
+        for constraint in final_constraints:
+            print(f'\t{constraint}')
+
+        self.assertTrue(SubtypeConstraint(SuccessZ, F_out) in final_constraints)
+        tv = solver._get_type_var(Vertex(φ, True, True))
+        self.assertTrue(SubtypeConstraint(F_in, tv) in final_constraints)
 
 if __name__ == '__main__':
     unittest.main()
