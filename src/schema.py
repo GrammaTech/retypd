@@ -774,14 +774,14 @@ class Solver:
                     path: List[Vertex] = [],
                     string: List[EdgeLabel] = []) -> \
                         List[Tuple[List[EdgeLabel], Vertex]]:
-        '''Find all paths from origin to nodes in destinations. If within is specified, only include
-        paths whose vertices are all members of within.
+        '''Find all non-empty paths from origin to nodes in destinations. If within is specified,
+        only include paths whose vertices are all members of within.
         '''
         if origin in path:
             return []
         path = list(path)
         path.append(origin)
-        if origin in destinations:
+        if origin in destinations and len(path) > 1:
             return [(string, origin)]
         if within and origin not in within:
             return []
@@ -789,10 +789,10 @@ class Solver:
         if origin in self.graph:
             for succ in self.graph[origin]:
                 label = self.graph[origin][succ].get('label')
+                new_string = list(string)
                 if label:
-                    string = list(string)
-                    string.append(label)
-                all_paths += self._find_paths(succ, destinations, within, path, string)
+                    new_string.append(label)
+                all_paths += self._find_paths(succ, destinations, within, path, new_string)
         return all_paths
 
     def _add_constraint(self,
@@ -858,8 +858,7 @@ class Solver:
             nodes.add(t.dual())
             nodes.add(f.dual())
         for origin in nodes:
-            destinations = nodes - {origin, origin.dual(), origin.inverse(), origin.inverse().dual()}
-            for string, dest in self._find_paths(origin, destinations):
+            for string, dest in self._find_paths(origin, nodes):
                 self._add_constraint(origin, dest, string)
         return self.constraints
 

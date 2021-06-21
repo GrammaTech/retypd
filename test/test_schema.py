@@ -340,10 +340,6 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
         solver = Solver(graph, {F, FileDescriptor, SuccessZ})
         final_constraints = solver()
 
-        print('Recursive test constraints:')
-        for constraint in final_constraints:
-            print(f'\t{constraint}')
-
         self.assertTrue(SubtypeConstraint(SuccessZ, F_out) in final_constraints)
         tv = solver._get_type_var(Vertex(φ, True, True))
         self.assertTrue(SubtypeConstraint(F_in, tv) in final_constraints)
