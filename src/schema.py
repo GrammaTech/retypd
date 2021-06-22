@@ -346,7 +346,7 @@ class ConstraintSet:
         subtype = set(self.subtype)
         dirty = True
 
-        Constraint = TypeVar('Constraint', ExistenceConstraint, SubtypeConstraint)
+        Constraint = Union[ExistenceConstraint, SubtypeConstraint]
 
         while dirty:
             dirty = False
@@ -378,8 +378,7 @@ class ConstraintSet:
 
                 dest = get_constraint_data(constraint)
                 if dest is not None:
-                    message = f'Adding {constraint} (from {tag} on {evidence})'
-                    self.logger.debug(message)
+                    self.logger.debug(f'Adding {constraint} (from {tag} on {evidence})')
                     dirty = True
                     dest.add(constraint)
 
