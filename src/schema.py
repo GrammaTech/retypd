@@ -338,107 +338,6 @@ class ConstraintSet:
         self.existence.add(ex)
         return True
 
-    def fix(self) -> 'ConstraintSet':
-        '''Compute and return a fixed point on self's constraints. Does not
-        mutate self; returns a new object. See Figure 3.
-        '''
-        existence = set(self.existence)
-        subtype = set(self.subtype)
-        dirty = True
-
-        Constraint = Union[ExistenceConstraint, SubtypeConstraint]
-
-        while dirty:
-            dirty = False
-            new_existence: Set[ExistenceConstraint] = set()
-            new_subtype: Set[SubtypeConstraint] = set()
-
-            def get_constraint_data(constraint: Constraint) -> Optional[Set[Constraint]]:
-                '''Look up the set in which to store a new constraint, if any.
-                '''
-                if isinstance(constraint, ExistenceConstraint):
-                    if constraint not in new_existence and constraint not in existence:
-                        return new_existence
-                    return None
-                if isinstance(constraint, SubtypeConstraint):
-                    if constraint not in new_subtype and constraint not in subtype:
-                        return new_subtype
-                    return None
-                raise ValueError
-
-            def add_constraint(constraint: Constraint, tag: str, evidence: str) -> None:
-                '''Add a constraint to the appropriate set.
-
-                :param constraint: The constraint to add
-                :param tag: A string identifying the inference rule. Used for logging.
-                :param evidence: A string describing the data used to infer the new constraint. Used
-                    for logging.
-                '''
-                nonlocal dirty
-
-                dest = get_constraint_data(constraint)
-                if dest is not None:
-                    self.logger.debug(f'Adding {constraint} (from {tag} on {evidence})')
-                    dirty = True
-                    dest.add(constraint)
-
-            for ex in existence:
-                var = ex.var
-                # S-Refl
-                add_constraint(SubtypeConstraint(var, var), 'S-Refl', f'{var}')
-                # T-Prefix
-                for prefix in var.prefixes():
-                    add_constraint(prefix, 'T-Prefix', f'{var}')
-                # S-Pointer
-                if var.tail() == LoadLabel.instance():
-                    s_path = list(var.path[:-1])
-                    s_path.append(StoreLabel.instance())
-                    s_var = DerivedTypeVariable(var.base, s_path)
-                    store = ExistenceConstraint(s_var)
-                    if store in existence:
-                        add_constraint(SubtypeConstraint(store.var, var),
-                                       'S-Pointer',
-                                       f'{var} and {store}')
-            for sub_constraint in subtype:
-                left = sub_constraint.left
-                right = sub_constraint.right
-                # T-Left
-                add_constraint(ExistenceConstraint(left), 'T-Left', f'{sub_constraint}')
-                # T-Right
-                add_constraint(ExistenceConstraint(right), 'T-Right', f'{sub_constraint}')
-                for ex in existence:
-                    var = ex.var
-                    # T-InheritL
-                    l_suffix = var.get_single_suffix(left)
-                    if l_suffix:
-                        add_constraint(ExistenceConstraint(right.add_suffix(l_suffix)),
-                                       'T-InheritL',
-                                       f'{sub_constraint} and {var}')
-                    r_suffix = var.get_single_suffix(right)
-                    if r_suffix:
-                        l_with_suffix = left.add_suffix(r_suffix)
-                        # T-InheritR
-                        add_constraint(ExistenceConstraint(l_with_suffix),
-                                       'T-InheritR',
-                                       f'{sub_constraint} and {var}')
-                        if r_suffix.is_covariant():
-                            # S-Field⊕
-                            forwards = SubtypeConstraint(l_with_suffix, var)
-                            add_constraint(forwards, 'S-Field⊕', f'{sub_constraint} and {var}')
-                        else:
-                            # S-Field⊖
-                            backwards = SubtypeConstraint(var, l_with_suffix)
-                            add_constraint(backwards, 'S-Field⊖', f'{sub_constraint} and {var}')
-                for sub in subtype:
-                    # S-Trans
-                    if sub.left == right:
-                        add_constraint(SubtypeConstraint(left, sub.right),
-                                       'S-Trans',
-                                       f'{sub_constraint} and {sub}')
-            existence |= new_existence
-            subtype |= new_subtype
-        return ConstraintSet(existence, subtype)
-
     def __str__(self) -> str:
         nt = os.linesep + '\t'
         return (f'ConstraintSet:{nt}{nt.join(map(str, self.existence))}'
@@ -452,7 +351,7 @@ class ConstraintSet:
             var = ex.var
             graph.add_node(var)
         for sub_constraint in self.subtype:
-            graph.add_edge(sub_constraint.left, sub_constraint.right)
+            graph.add_edges(sub_constraint.left, sub_constraint.right)
         return graph
 
 
@@ -574,38 +473,6 @@ class RecallLabel:
 EdgeLabel = Union[ForgetLabel, RecallLabel]
 
 
-class DFS:
-    '''A depth-first search computation.
-    '''
-    def __init__(self,
-                 graph: 'ConstraintGraph',
-                 process: Callable[[Vertex, Optional[EdgeLabel]], bool],
-                 saturation: bool = False) -> None:
-        self.process: Callable[[Vertex, Optional[EdgeLabel]], bool] = process
-        self.graph = graph
-        self.saturation = saturation
-        self.seen: Set[Vertex] = set()
-
-    def __call__(self, node: Vertex) -> None:
-        if node in self.seen:
-            return
-        self.seen.add(node)
-        edges: Iterable[Tuple[Vertex, Optional[EdgeLabel]]] = []
-        if node in self.graph.graph:
-            edges = map(lambda dest: (dest, self.graph.graph[node][dest].get('label')),
-                    self.graph.graph[node])
-        if self.saturation:
-            implicit_dest = node.implicit_target()
-            if implicit_dest:
-                edges = list(edges)
-                edges.append((implicit_dest, None))
-        neighbor: Vertex
-        label: Optional[EdgeLabel]
-        for neighbor, label in edges:
-            if self.process(neighbor, label):
-                self(neighbor)
-
-
 class ConstraintGraph:
     '''Represents the constraint graph in the slides. Essentially the same as the transducer from
     Appendix D. Edge weights use the formulation from the paper.
@@ -619,11 +486,23 @@ class ConstraintGraph:
         self.graph.add_node(Vertex(node, True))
         self.graph.add_node(Vertex(node, False))
 
-    def add_edge(self, sub: DerivedTypeVariable, sup: DerivedTypeVariable) -> None:
+    def add_edge(self, head: Vertex, tail: Vertex, **atts) -> bool:
+        if head not in self.graph or tail not in self.graph[head]:
+            self.graph.add_edge(head, tail, **atts)
+            return True
+        return False
+
+    def add_edges(self, sub: DerivedTypeVariable, sup: DerivedTypeVariable, **atts) -> bool:
         '''Add an edge to the underlying graph. Also add its reverse with reversed variance.
         '''
-        self.graph.add_edge(Vertex(sub, True), Vertex(sup, True))
-        self.graph.add_edge(Vertex(sup, False), Vertex(sub, False))
+        changed = False
+        forward_from = Vertex(sub, True)
+        forward_to = Vertex(sup, True)
+        changed = self.add_edge(forward_from, forward_to, **atts) or changed
+        backward_from = forward_to.inverse()
+        backward_to = forward_from.inverse()
+        changed = self.add_edge(backward_from, backward_to, **atts) or changed
+        return changed
 
     def add_forget_recall(self) -> None:
         '''Add forget and recall nodes to the graph. Step 4 in the notes.
@@ -639,38 +518,49 @@ class ConstraintGraph:
                 prefix = node.forget_once()
 
     def saturate(self) -> None:
-        '''Add "shortcut" edges, per step 5 in the notes.
+        '''Add "shortcut" edges, per algorithm D.2 in the paper.
         '''
-        # TODO this is almost certainly suboptimal
-        changed = True
+        changed = False
+        reaching_R: Dict[Vertex, Set[Tuple[AccessPathLabel, Vertex]]] = {}
+
+        def add_forgets(dest: Vertex, forgets: Set[Tuple[AccessPathLabel, Vertex]]):
+            nonlocal changed
+            if dest not in reaching_R or not (forgets <= reaching_R[dest]):
+                changed = True
+                reaching_R.setdefault(dest, set()).update(forgets)
+
+        def add_edge(origin: Vertex, dest: Vertex):
+            nonlocal changed
+            changed = self.add_edge(origin, dest) or changed
+
+        for head_x, tail_y in self.graph.edges:
+            label = self.graph[head_x][tail_y].get('label')
+            if isinstance(label, ForgetLabel):
+                add_forgets(tail_y, {(label.capability, head_x)})
         while changed:
             changed = False
-            nodes = list(self.graph.nodes)
-            for node in nodes:
-                forgets: Dict[Vertex, AccessPathLabel] = {}
-                def process_forget(neighbor: Vertex, label: Optional[EdgeLabel]) -> bool:
-                    nonlocal forgets
-                    if label and label.is_forget():
-                        forgets[neighbor] = label.capability
-                    return not label
-                forget_dfs = DFS(self, process_forget, True)
-                forget_dfs(node)
-                for mid, capability in forgets.items():
-                    recalls: Set[Vertex] = set()
-                    def process_recall(neighbor: Vertex, label: Optional[EdgeLabel]) -> bool:
-                        nonlocal recalls
-                        if label and not label.is_forget() and label.capability == capability:
-                            recalls.add(neighbor)
-                        return not label
-                    recall_dfs = DFS(self, process_recall, True)
-                    recall_dfs.seen = forget_dfs.seen
-                    recall_dfs(mid)
-                    for end in recalls:
-                        # It is conceivable that I'm missing something subtle here, but preventing
-                        # self-loops should make the graph smaller and not affect correctness
-                        if end not in self.graph[node] and node != end:
-                            changed = True
-                            self.graph.add_edge(node, end)
+            for head_x, tail_y in self.graph.edges:
+                if not self.graph[head_x][tail_y].get('label'):
+                    add_forgets(tail_y, reaching_R.get(head_x, set()))
+            existing_edges = list(self.graph.edges)
+            for head_x, tail_y in existing_edges:
+                label = self.graph[head_x][tail_y].get('label')
+                if isinstance(label, RecallLabel):
+                    capability_l = label.capability
+                    for (label, origin_z) in reaching_R.get(head_x, set()):
+                        if label == capability_l:
+                            add_edge(origin_z, tail_y)
+            contravariant_vars = list(filter(lambda v: not v.suffix_variance, self.graph.nodes))
+            for x in contravariant_vars:
+                for (capability_l, origin_z) in reaching_R.get(x, set()):
+                    label = None
+                    if capability_l == StoreLabel.instance():
+                        label = LoadLabel.instance()
+                    if capability_l == LoadLabel.instance():
+                        label = StoreLabel.instance()
+                    if label:
+                        add_forgets(x.inverse(), {(label, origin_z)})
+
 
     @staticmethod
     def edge_to_str(graph, edge: Tuple[Vertex, Vertex]) -> str:
