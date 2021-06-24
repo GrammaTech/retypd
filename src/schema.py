@@ -635,11 +635,10 @@ class Solver:
                 self.graph.add_edge(head, recall_tail, **atts)
             self.graph.add_edge(recall_head, recall_tail, **atts)
 
-    def _make_type_var(self, v: Vertex) -> None:
+    def _make_type_var(self, base: DerivedTypeVariable) -> None:
         '''Retrieve or generate a type variable. Automatically adds this variable to the set of
         interesting variables.
         '''
-        base = v.base
         if base in self._type_vars:
             return
         var = DerivedTypeVariable(f'τ_{self.next}')
@@ -692,7 +691,7 @@ class Solver:
         rhs_var = self._get_type_var(rhs)
         constraint = SubtypeConstraint(lhs_var, rhs_var)
         # print(f'Maybe adding constraint: {constraint}')
-        if lhs != rhs and lhs.suffix_variance and rhs.suffix_variance:
+        if lhs_var != rhs_var and lhs.suffix_variance and rhs.suffix_variance:
             # print('\tdoing it')
             self.constraints.add(constraint)
 
@@ -721,7 +720,7 @@ class Solver:
                     for predecessor in self.graph.predecessors(node):
                         scc_index = condensation.graph['mapping'][predecessor]
                         if scc_index not in visited:
-                            self._make_type_var(node)
+                            self._make_type_var(node.base)
 
     def _generate_cyclical_constraints(self) -> None:
         condensation = networkx.condensation(self.graph)
