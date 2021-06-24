@@ -295,8 +295,6 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
 
         graph.saturate()
 
-        ConstraintGraph.write_to_dot('saturated', graph.graph)
-
         saturated = []
 
         saturated_graph = SchemaTestHelper.edges_to_dict(saturated)

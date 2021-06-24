@@ -535,7 +535,7 @@ class ConstraintGraph:
 
         for head_x, tail_y in self.graph.edges:
             label = self.graph[head_x][tail_y].get('label')
-            if isinstance(label, ForgetLabel):
+            if label and label.is_forget():
                 add_forgets(tail_y, {(label.capability, head_x)})
         while changed:
             changed = False
@@ -545,7 +545,7 @@ class ConstraintGraph:
             existing_edges = list(self.graph.edges)
             for head_x, tail_y in existing_edges:
                 label = self.graph[head_x][tail_y].get('label')
-                if isinstance(label, RecallLabel):
+                if label and not label.is_forget():
                     capability_l = label.capability
                     for (label, origin_z) in reaching_R.get(head_x, set()):
                         if label == capability_l:
@@ -616,8 +616,7 @@ class Solver:
         self.interesting = interesting
         self.next = 0
         self.constraints: Set[SubtypeConstraint] = set()
-        self._type_vars: Dict[Vertex, DerivedTypeVariable] = {}
-        self._vertices: Dict[DerivedTypeVariable, Vertex] = {}
+        self._type_vars: Dict[DerivedTypeVariable, DerivedTypeVariable] = {}
 
     def _forget_recall_transform(self):
         '''Transform the graph so that no paths can be found such that a forget edge succeeds a
@@ -640,40 +639,34 @@ class Solver:
         '''Retrieve or generate a type variable. Automatically adds this variable to the set of
         interesting variables.
         '''
-        if v in self._type_vars:
+        base = v.base
+        if base in self._type_vars:
             return
-        var = DerivedTypeVariable(f'type_{self.next}')
-        self._type_vars[v] = var
-        self._vertices[var] = v
-        self.interesting.add(var)
+        var = DerivedTypeVariable(f'τ_{self.next}')
+        self._type_vars[base] = var
+        self.interesting.add(base)
         self.next += 1
 
     def _get_type_var(self, v: Vertex) -> DerivedTypeVariable:
-        if v in self._type_vars:
-            return self._type_vars[v]
-        return v.base
-
-    def _get_vertex(self, var: DerivedTypeVariable) -> Vertex:
-        return self._vertices.get(var, Vertex(var, True))
+        var = v.base
+        if var in self._type_vars:
+            return self._type_vars[var]
+        return var
 
     def _find_paths(self,
                     origin: Vertex,
-                    destinations: Iterable[Vertex],
-                    within: Optional[Set[Vertex]] = None,
                     path: List[Vertex] = [],
                     string: List[EdgeLabel] = []) -> \
                         List[Tuple[List[EdgeLabel], Vertex]]:
-        '''Find all non-empty paths from origin to nodes in destinations. If within is specified,
-        only include paths whose vertices are all members of within.
+        '''Find all non-empty paths from origin to nodes that represent interesting type variables.
         '''
+        # print(f'checking if {origin.base} is interesting')
+        if path and origin.base in self.interesting:
+            return [(string, origin)]
         if origin in path:
             return []
         path = list(path)
         path.append(origin)
-        if origin in destinations and len(path) > 1:
-            return [(string, origin)]
-        if within and origin not in within:
-            return []
         all_paths: List[Tuple[List[EdgeLabel], Vertex]] = []
         if origin in self.graph:
             for succ in self.graph[origin]:
@@ -681,7 +674,7 @@ class Solver:
                 new_string = list(string)
                 if label:
                     new_string.append(label)
-                all_paths += self._find_paths(succ, destinations, within, path, new_string)
+                all_paths += self._find_paths(succ, path, new_string)
         return all_paths
 
     def _add_constraint(self,
@@ -695,59 +688,65 @@ class Solver:
                 rhs = rhs.recall(label.capability)
             else:
                 lhs = lhs.recall(label.capability)
+        lhs_var = self._get_type_var(lhs)
+        rhs_var = self._get_type_var(rhs)
+        constraint = SubtypeConstraint(lhs_var, rhs_var)
+        # print(f'Maybe adding constraint: {constraint}')
         if lhs != rhs and lhs.suffix_variance and rhs.suffix_variance:
-            lhs_var = self._get_type_var(lhs)
-            rhs_var = self._get_type_var(rhs)
-            self.constraints.add(SubtypeConstraint(lhs_var, rhs_var))
+            # print('\tdoing it')
+            self.constraints.add(constraint)
 
     def _remove_SCC_internal_edges(self, scc: Set[Vertex]) -> None:
         self.graph.remove_edges_from({(head, tail) for head in scc for tail in scc})
 
-    def __call__(self) -> Set[SubtypeConstraint]:
-        self._forget_recall_transform()
-        reverse = networkx.reverse_view(self.graph)
-        for scc in networkx.strongly_connected_components(self.graph):
-            if len(scc) == 1:
-                # Every node is in a SCC, but some are singletons. Since this graph represents a
-                # weak partial order, every singleton loops to itself but that self-loop doesn't
-                # matter. For our purposes here, we only want SCCs with more than one node.
-                self._remove_SCC_internal_edges(scc)
-                continue
-            # - in each SCC, identify sources and sinks:
-            # sources are members of the SCC with incoming edges from outside the SCC
-            # sinks are nodes in the SCC with edges that leave the SCC
-            # TODO:
-            '''This algorithm is correct but will produce constraints in a different format. Do the
-            following:
-                - sort the SCCs topologically
-                - loop through SCCs from sink to source, doing the following:
-                    - use only sources in each SCC, not sinks
-                    - find paths but don't restrict to the SCC; instead, find any reachable node in
-                      interesting
-                    - emit constraints as before
-                    - remove edges as before
-            '''
-            source_sinks = filter(lambda n: (set(self.graph[n]) | set(reverse[n])) - scc, scc)
-            # - generate type constraints to relate each of these vertices to the others
-            for node in source_sinks:
-                self._make_type_var(node)
-            for node in source_sinks:
-                paths = self._find_paths(origin=node, destinations=source_sinks, within=scc)
-                for string, dest in paths:
-                    self._add_constraint(node, dest, string)
-            # - break the cycle by dropping all edges between the vertices
+    def _generate_type_vars(self) -> None:
+        forget_graph = networkx.DiGraph(self.graph)
+        recall_graph = networkx.DiGraph(self.graph)
+        for head, tail in self.graph.edges:
+            label = self.graph[head][tail].get('label')
+            if label:
+                if label.is_forget():
+                    recall_graph.remove_edge(head, tail)
+                else:
+                    forget_graph.remove_edge(head, tail)
+        for graph in [forget_graph, recall_graph]:
+            condensation = networkx.condensation(graph)
+            visited = set()
+            for scc_node in reversed(list(networkx.topological_sort(condensation))):
+                scc = condensation.nodes[scc_node]['members']
+                visited.add(scc_node)
+                if len(scc) == 1:
+                    continue
+                for node in scc:
+                    for predecessor in self.graph.predecessors(node):
+                        scc_index = condensation.graph['mapping'][predecessor]
+                        if scc_index not in visited:
+                            self._make_type_var(node)
+
+    def _generate_cyclical_constraints(self) -> None:
+        condensation = networkx.condensation(self.graph)
+        for scc_node in reversed(list(networkx.topological_sort(condensation))):
+            scc = condensation.nodes[scc_node]['members']
+            # generate type constraints from each header node to any interesting nodes it can reach
+            # (including itself)
+            for node in scc:
+                if node.base in self.interesting:
+                    print(f'found {node} in an SCC')
+                    for string, dest in self._find_paths(node):
+                        self._add_constraint(node, dest, string)
+            # break the cycle by dropping all edges between the vertices
             self._remove_SCC_internal_edges(scc)
-        # There are no more loops; just find paths and generate constraints
-        nodes = set()
-        for var in self.interesting:
-            t = self._get_vertex(var)
-            f = t.inverse()
-            nodes.add(t)
-            nodes.add(f)
-            nodes.add(t.dual())
-            nodes.add(f.dual())
-        for origin in nodes:
-            for string, dest in self._find_paths(origin, nodes):
-                self._add_constraint(origin, dest, string)
+
+    def _remove_self_loops(self) -> None:
+        self.graph.remove_edges_from({(node, node) for node in self.graph.nodes})
+
+    def __call__(self) -> Set[SubtypeConstraint]:
+        # TODO forget/recall transform introduces artifacts into the header calculation - but the
+        # SCC algorithm depends on not having bogus cycles
+        #
+        self._remove_self_loops()
+        self._generate_type_vars()
+        self._forget_recall_transform()
+        self._generate_cyclical_constraints()
         return self.constraints
 
