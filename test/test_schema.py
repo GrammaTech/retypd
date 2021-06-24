@@ -1,86 +1,10 @@
 from abc import ABC
-import re
+import networkx
 import unittest
 
 from type_inference import ConstraintSet, DerefLabel, DerivedTypeVariable, \
-        ForgetLabel, InLabel, LoadLabel, OutLabel, RecallLabel, Solver, StoreLabel, \
-        SubtypeConstraint, Vertex, ConstraintGraph
-
-class SchemaTestHelper:
-    '''Static helper functions for Schema tests. Since this parsing code is unlikely to be useful in
-    the code itself, it is included here.
-    '''
-
-    subtype_pattern = re.compile('([^ ]*) ⊑ ([^ ]*)')
-    in_pattern = re.compile('in_([0-9]+)')
-    deref_pattern = re.compile('σ([0-9]+)@([0-9]+)')
-    node_pattern = re.compile(r'([^ ]+)\.([⊕⊖])')
-    edge_pattern = re.compile(r'(\S+)\s+→\s+(\S+)(\s+\((forget|recall) ([^ ]*)\))?')
-
-    @staticmethod
-    def parse_label(label):
-        if label == 'load':
-            return LoadLabel.instance()
-        if label == 'store':
-            return StoreLabel.instance()
-        if label == 'out':
-            return OutLabel.instance()
-        in_match = SchemaTestHelper.in_pattern.match(label)
-        if in_match:
-            return InLabel(int(in_match.group(1)))
-        deref_match = SchemaTestHelper.deref_pattern.match(label)
-        if deref_match:
-            return DerefLabel(int(deref_match.group(1)), int(deref_match.group(2)))
-        raise ValueError
-
-    @staticmethod
-    def parse_variable(var):
-        components = var.split('.')
-        return DerivedTypeVariable(components[0], map(SchemaTestHelper.parse_label, components[1:]))
-
-    @staticmethod
-    def parse_constraint(constraint):
-        subtype_match = SchemaTestHelper.subtype_pattern.match(constraint)
-        if subtype_match:
-            return SubtypeConstraint(SchemaTestHelper.parse_variable(subtype_match.group(1)),
-                                     SchemaTestHelper.parse_variable(subtype_match.group(2)))
-        raise ValueError
-
-    @staticmethod
-    def parse_node(node):
-        node_match = SchemaTestHelper.node_pattern.match(node)
-        if node_match:
-            var = SchemaTestHelper.parse_variable(node_match.group(1))
-            return Vertex(var, node_match.group(2) == '⊕')
-        raise ValueError
-
-    @staticmethod
-    def parse_edge(edge):
-        edge_match = SchemaTestHelper.edge_pattern.match(edge)
-        if edge_match:
-            sub = SchemaTestHelper.parse_node(edge_match.group(1))
-            sup = SchemaTestHelper.parse_node(edge_match.group(2))
-            atts = {}
-            if edge_match.group(3):
-                capability = SchemaTestHelper.parse_label(edge_match.group(5))
-                if edge_match.group(4) == 'forget':
-                    label = ForgetLabel(capability)
-                elif edge_match.group(4) == 'recall':
-                    label = RecallLabel(capability)
-                else:
-                    raise ValueError
-                atts['label'] = label
-            return (sub, sup, atts)
-        raise ValueError
-
-    @staticmethod
-    def edges_to_dict(edges):
-        graph = {}
-        for edge in edges:
-            (f, t, atts) = SchemaTestHelper.parse_edge(edge)
-            graph[(f, t)] = atts
-        return graph
-
+        ForgetLabel, InLabel, LoadLabel, OutLabel, RecallLabel, SchemaParser, Solver, StoreLabel, \
+        SubtypeConstraint, Vertex
 
 class SchemaTest(ABC):
     def graphs_are_equal(self, graph, edge_set) -> bool:
@@ -101,19 +25,13 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
         '''
 
         constraints = ConstraintSet()
-        p = DerivedTypeVariable('p')
-        q = DerivedTypeVariable('q')
-        x = DerivedTypeVariable('x')
-        y = DerivedTypeVariable('y')
-        q_store = DerivedTypeVariable('q', [StoreLabel.instance(), DerefLabel(4, 0)])
-        p_load = DerivedTypeVariable('p', [LoadLabel.instance(), DerefLabel(4, 0)])
-        constraints.add_subtype(p, q)
-        constraints.add_subtype(x, q_store)
-        constraints.add_subtype(p_load, y)
+        constraints.add(SchemaParser.parse_constraint('p ⊑ q'))
+        constraints.add(SchemaParser.parse_constraint('x ⊑ q.store.σ4@0'))
+        constraints.add(SchemaParser.parse_constraint('p.load.σ4@0 ⊑ y'))
 
-        graph = constraints.generate_graph()
+        solver = Solver(constraints, {'x', 'y'})
 
-        graph.add_forget_recall()
+        solver._add_forget_recall_edges()
 
         forget_recall = ['p.load.⊕        →  p.⊕              (forget load)',
                          'p.load.⊖        →  p.⊖              (forget load)',
@@ -138,10 +56,10 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
                          'x.⊕             →  q.store.σ4@0.⊕',
                          'y.⊖             →  p.load.σ4@0.⊖']
 
-        forget_recall_graph = SchemaTestHelper.edges_to_dict(forget_recall)
-        self.graphs_are_equal(graph.graph, forget_recall_graph)
+        forget_recall_graph = SchemaParser.edges_to_dict(forget_recall)
+        self.graphs_are_equal(solver.constraint_graph.graph, forget_recall_graph)
 
-        graph.saturate()
+        solver._saturate()
 
         saturated = ['p.load.⊕        →  p.⊕              (forget load)',
                      'p.load.⊖        →  p.⊖              (forget load)',
@@ -178,34 +96,30 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
                      'x.⊕             →  q.store.σ4@0.⊕',
                      'y.⊖             →  p.load.σ4@0.⊖']
 
-        saturated_graph = SchemaTestHelper.edges_to_dict(saturated)
-        self.graphs_are_equal(graph.graph, saturated_graph)
+        saturated_graph = SchemaParser.edges_to_dict(saturated)
+        self.graphs_are_equal(solver.constraint_graph.graph, saturated_graph)
 
-        solver = Solver(graph, {x, y})
-        final_constraints = solver()
+        solver.graph = networkx.DiGraph(solver.constraint_graph.graph)
+        solver._remove_self_loops()
+        solver._generate_type_vars()
+        solver._unforgettable_subgraph_split()
+        solver._generate_constraints()
 
-        self.assertTrue(SubtypeConstraint(x, y) in final_constraints)
+        self.assertTrue(SchemaParser.parse_constraint('x ⊑ y') in solver.constraints)
 
     def test_other_simple_constraints(self):
         '''Another simple test from the paper (the program modeled in Figure 14 on p. 26).
         '''
 
         constraints = ConstraintSet()
-        p = DerivedTypeVariable('p')
-        A = DerivedTypeVariable('A')
-        B = DerivedTypeVariable('B')
-        x = DerivedTypeVariable('x')
-        y = DerivedTypeVariable('y')
-        x_store = DerivedTypeVariable('x', [StoreLabel.instance()])
-        y_load = DerivedTypeVariable('y', [LoadLabel.instance()])
-        constraints.add_subtype(y, p)
-        constraints.add_subtype(p, x)
-        constraints.add_subtype(A, x_store)
-        constraints.add_subtype(y_load, B)
+        constraints.add(SchemaParser.parse_constraint('y ⊑ p'))
+        constraints.add(SchemaParser.parse_constraint('p ⊑ x'))
+        constraints.add(SchemaParser.parse_constraint('A ⊑ x.store'))
+        constraints.add(SchemaParser.parse_constraint('y.load ⊑ B'))
 
-        graph = constraints.generate_graph()
+        solver = Solver(constraints, {'A', 'B'})
 
-        graph.add_forget_recall()
+        solver._add_forget_recall_edges()
 
         forget_recall = ['A.⊕        →  x.store.⊕',
                          'B.⊖        →  y.load.⊖',
@@ -224,10 +138,10 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
                          'y.⊕        →  y.load.⊕    (recall load)',
                          'y.⊖        →  y.load.⊖    (recall load)']
 
-        forget_recall_graph = SchemaTestHelper.edges_to_dict(forget_recall)
-        self.graphs_are_equal(graph.graph, forget_recall_graph)
+        forget_recall_graph = SchemaParser.edges_to_dict(forget_recall)
+        self.graphs_are_equal(solver.constraint_graph.graph, forget_recall_graph)
 
-        graph.saturate()
+        solver._saturate()
 
         saturated = ['A.⊕        →  x.store.⊕',
                      'B.⊖        →  y.load.⊖',
@@ -252,13 +166,16 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
                      'y.⊕        →  y.load.⊕    (recall load)',
                      'y.⊖        →  y.load.⊖    (recall load)']
 
-        saturated_graph = SchemaTestHelper.edges_to_dict(saturated)
-        self.graphs_are_equal(graph.graph, saturated_graph)
+        saturated_graph = SchemaParser.edges_to_dict(saturated)
+        self.graphs_are_equal(solver.constraint_graph.graph, saturated_graph)
 
-        solver = Solver(graph, {A, B})
-        final_constraints = solver()
+        solver.graph = networkx.DiGraph(solver.constraint_graph.graph)
+        solver._remove_self_loops()
+        solver._generate_type_vars()
+        solver._unforgettable_subgraph_split()
+        solver._generate_constraints()
 
-        self.assertTrue(SubtypeConstraint(A, B) in final_constraints)
+        self.assertTrue(SchemaParser.parse_constraint('A ⊑ B') in solver.constraints)
 
 
 class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
@@ -267,32 +184,19 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
         (slides 67-83, labeled as slides 13-15).
         '''
         constraints = ConstraintSet()
-        F = DerivedTypeVariable('F')
-        δ = DerivedTypeVariable('δ')
-        φ = DerivedTypeVariable('φ')
-        α = DerivedTypeVariable('α')
-        α_prime = DerivedTypeVariable("α'")
-        close_in = DerivedTypeVariable('close', [InLabel(0)])
-        close_out = DerivedTypeVariable('close', [OutLabel.instance()])
-        F_in = DerivedTypeVariable('F', [InLabel(0)])
-        F_out = DerivedTypeVariable('F', [OutLabel.instance()])
-        φ_load_0 = DerivedTypeVariable('φ', [LoadLabel.instance(), DerefLabel(4, 0)])
-        φ_load_4 = DerivedTypeVariable('φ', [LoadLabel.instance(), DerefLabel(4, 4)])
-        FileDescriptor = DerivedTypeVariable('#FileDescriptor')
-        SuccessZ = DerivedTypeVariable('#SuccessZ')
-        constraints.add_subtype(F_in, δ)
-        constraints.add_subtype(α, φ)
-        constraints.add_subtype(δ, φ)
-        constraints.add_subtype(φ_load_0, α)
-        constraints.add_subtype(φ_load_4, α_prime)
-        constraints.add_subtype(α_prime, close_in)
-        constraints.add_subtype(close_out, F_out)
-        constraints.add_subtype(close_in, FileDescriptor)
-        constraints.add_subtype(SuccessZ, close_out)
+        constraints.add(SchemaParser.parse_constraint("F.in_0 ⊑ δ"))
+        constraints.add(SchemaParser.parse_constraint("α ⊑ φ"))
+        constraints.add(SchemaParser.parse_constraint("δ ⊑ φ"))
+        constraints.add(SchemaParser.parse_constraint("φ.load.σ4@0 ⊑ α"))
+        constraints.add(SchemaParser.parse_constraint("φ.load.σ4@4 ⊑ α'"))
+        constraints.add(SchemaParser.parse_constraint("α' ⊑ close.in_0"))
+        constraints.add(SchemaParser.parse_constraint("close.out ⊑ F.out"))
+        constraints.add(SchemaParser.parse_constraint("close.in_0 ⊑ #FileDescriptor"))
+        constraints.add(SchemaParser.parse_constraint("#SuccessZ ⊑ close.out"))
 
-        graph = constraints.generate_graph()
+        solver = Solver(constraints, {'F', '#FileDescriptor', '#SuccessZ'})
 
-        graph.add_forget_recall()
+        solver._add_forget_recall_edges()
 
         forget_recall = ["close.⊕            →  close.in_0.⊖        (recall in_0)",
                          "close.⊖            →  close.in_0.⊕        (recall in_0)",
@@ -340,9 +244,10 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
                          "φ.⊖                →  δ.⊖",
                          "φ.⊕                →  φ.load.⊕            (recall load)",
                          "φ.⊖                →  φ.load.⊖            (recall load)"]
-        self.graphs_are_equal(graph.graph, SchemaTestHelper.edges_to_dict(forget_recall))
+        self.graphs_are_equal(solver.constraint_graph.graph,
+                              SchemaParser.edges_to_dict(forget_recall))
 
-        graph.saturate()
+        solver._saturate()
 
         saturated = ["close.⊖            →  close.in_0.⊕        (recall in_0)",
                      "close.⊕            →  close.in_0.⊖        (recall in_0)",
@@ -404,19 +309,43 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
                      "φ.⊖                →  δ.⊖",
                      "φ.⊕                →  φ.load.⊕            (recall load)",
                      "φ.⊖                →  φ.load.⊖            (recall load)"]
-        self.graphs_are_equal(graph.graph, SchemaTestHelper.edges_to_dict(saturated))
+        self.graphs_are_equal(solver.constraint_graph.graph,
+                              SchemaParser.edges_to_dict(saturated))
 
-        solver = Solver(graph, {F, FileDescriptor, SuccessZ})
-        final_constraints = solver()
+        solver.graph = networkx.DiGraph(solver.constraint_graph.graph)
+        solver._remove_self_loops()
+        solver._generate_type_vars()
+        solver._unforgettable_subgraph_split()
+        solver._generate_constraints()
 
-        self.assertTrue(SubtypeConstraint(SuccessZ, F_out) in final_constraints)
-        tv = solver._get_type_var(Vertex(φ, True, True))
-        self.assertTrue(SubtypeConstraint(F_in, tv) in final_constraints)
-        tv_load = tv.add_suffix(LoadLabel.instance())
-        tv_load_0 = tv_load.add_suffix(DerefLabel(4, 0))
-        tv_load_4 = tv_load.add_suffix(DerefLabel(4, 4))
-        self.assertTrue(SubtypeConstraint(tv_load_0, tv) in final_constraints)
-        self.assertTrue(SubtypeConstraint(tv_load_4, FileDescriptor) in final_constraints)
+        tv = solver.lookup_type_var('φ')
+        self.assertTrue(SchemaParser.parse_constraint('#SuccessZ ⊑ F.out') in solver.constraints)
+        self.assertTrue(SchemaParser.parse_constraint(f'F.in_0 ⊑ {tv}') in solver.constraints)
+        self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@0 ⊑ {tv}') in solver.constraints)
+        self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@4 ⊑ #FileDescriptor') in solver.constraints)
+
+    def test_end_to_end(self):
+        '''Same as the preceding test, but end-to-end.
+        '''
+        constraints = ConstraintSet()
+        constraints.add(SchemaParser.parse_constraint("F.in_0 ⊑ δ"))
+        constraints.add(SchemaParser.parse_constraint("α ⊑ φ"))
+        constraints.add(SchemaParser.parse_constraint("δ ⊑ φ"))
+        constraints.add(SchemaParser.parse_constraint("φ.load.σ4@0 ⊑ α"))
+        constraints.add(SchemaParser.parse_constraint("φ.load.σ4@4 ⊑ α'"))
+        constraints.add(SchemaParser.parse_constraint("α' ⊑ close.in_0"))
+        constraints.add(SchemaParser.parse_constraint("close.out ⊑ F.out"))
+        constraints.add(SchemaParser.parse_constraint("close.in_0 ⊑ #FileDescriptor"))
+        constraints.add(SchemaParser.parse_constraint("#SuccessZ ⊑ close.out"))
+
+        solver = Solver(constraints, {'F', '#FileDescriptor', '#SuccessZ'})
+        solver()
+
+        tv = solver.lookup_type_var('φ')
+        self.assertTrue(SchemaParser.parse_constraint('#SuccessZ ⊑ F.out') in solver.constraints)
+        self.assertTrue(SchemaParser.parse_constraint(f'F.in_0 ⊑ {tv}') in solver.constraints)
+        self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@0 ⊑ {tv}') in solver.constraints)
+        self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@4 ⊑ #FileDescriptor') in solver.constraints)
 
 if __name__ == '__main__':
     unittest.main()

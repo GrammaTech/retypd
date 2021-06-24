@@ -1,2 +1,5 @@
-from .schema import ConstraintGraph, ConstraintSet, DerefLabel, DerivedTypeVariable, InLabel, \
-        ForgetLabel, LoadLabel, OutLabel, RecallLabel, Solver, StoreLabel, SubtypeConstraint, Vertex
+from .schema import ConstraintSet, DerefLabel, DerivedTypeVariable, InLabel, \
+        LoadLabel, OutLabel, StoreLabel, EdgeLabel, ForgetLabel, RecallLabel, SubtypeConstraint, \
+        Vertex
+from .solver import Solver
+from .parser import SchemaParser
