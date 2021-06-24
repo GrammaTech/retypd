@@ -213,6 +213,19 @@ class DerivedTypeVariable:
             result.add(ExistenceConstraint(prefix))
         return result
 
+    def get_suffix(self, other: 'DerivedTypeVariable') -> Optional[Iterable[AccessPathLabel]]:
+        '''If self is a prefix of other, return the suffix of other's path that is not part of self.
+        Otherwise, return None.
+        '''
+        if self.base != other.base:
+            return None
+        if len(self.path) > len(other.path):
+            return None
+        for s_item, o_item in zip(self.path, other.path):
+            if s_item != o_item:
+                return None
+        return other.path[len(self.path):]
+
     def tail(self) -> AccessPathLabel:
         '''Retrieve the last item in the access path, if any. Return None if
         the path is empty.
@@ -648,8 +661,11 @@ class Solver:
 
     def _get_type_var(self, v: Vertex) -> DerivedTypeVariable:
         var = v.base
-        if var in self._type_vars:
-            return self._type_vars[var]
+        for expanded in self._type_vars:
+            suffix = expanded.get_suffix(var)
+            if suffix is not None:
+                type_var = self._type_vars[expanded]
+                return DerivedTypeVariable(type_var.base, suffix)
         return var
 
     def _find_paths(self,
@@ -659,7 +675,6 @@ class Solver:
                         List[Tuple[List[EdgeLabel], Vertex]]:
         '''Find all non-empty paths from origin to nodes that represent interesting type variables.
         '''
-        # print(f'checking if {origin.base} is interesting')
         if path and origin.base in self.interesting:
             return [(string, origin)]
         if origin in path:
@@ -689,10 +704,8 @@ class Solver:
                 lhs = lhs.recall(label.capability)
         lhs_var = self._get_type_var(lhs)
         rhs_var = self._get_type_var(rhs)
-        constraint = SubtypeConstraint(lhs_var, rhs_var)
-        # print(f'Maybe adding constraint: {constraint}')
         if lhs_var != rhs_var and lhs.suffix_variance and rhs.suffix_variance:
-            # print('\tdoing it')
+            constraint = SubtypeConstraint(lhs_var, rhs_var)
             self.constraints.add(constraint)
 
     def _remove_SCC_internal_edges(self, scc: Set[Vertex]) -> None:
@@ -708,6 +721,7 @@ class Solver:
                     recall_graph.remove_edge(head, tail)
                 else:
                     forget_graph.remove_edge(head, tail)
+        candidates: Set[DerivedTypeVariable] = set()
         for graph in [forget_graph, recall_graph]:
             condensation = networkx.condensation(graph)
             visited = set()
@@ -720,7 +734,16 @@ class Solver:
                     for predecessor in self.graph.predecessors(node):
                         scc_index = condensation.graph['mapping'][predecessor]
                         if scc_index not in visited:
-                            self._make_type_var(node.base)
+                            candidates.add(node.base)
+        candidates = sorted(candidates, reverse=True)
+        for index, candidate in enumerate(candidates):
+            emit = True
+            for other in candidates[index+1:]:
+                if other.get_suffix(candidate):
+                    emit = False
+                    break
+            if emit:
+                self._make_type_var(candidate)
 
     def _generate_cyclical_constraints(self) -> None:
         condensation = networkx.condensation(self.graph)
@@ -730,7 +753,6 @@ class Solver:
             # (including itself)
             for node in scc:
                 if node.base in self.interesting:
-                    print(f'found {node} in an SCC')
                     for string, dest in self._find_paths(node):
                         self._add_constraint(node, dest, string)
             # break the cycle by dropping all edges between the vertices

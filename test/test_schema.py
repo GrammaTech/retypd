@@ -250,10 +250,6 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
         solver = Solver(graph, {x, y})
         final_constraints = solver()
 
-        print('Simple test constraints (x ⊑ y):')
-        for constraint in final_constraints:
-            print(f'\t{constraint}')
-
         self.assertTrue(SubtypeConstraint(x, y) in final_constraints)
 
     def test_other_simple_constraints(self):
@@ -303,10 +299,6 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
 
         solver = Solver(graph, {A, B})
         final_constraints = solver()
-
-        print('Simple test constraints (A ⊑ B):')
-        for constraint in final_constraints:
-            print(f'\t{constraint}')
 
         self.assertTrue(SubtypeConstraint(A, B) in final_constraints)
 
@@ -467,15 +459,12 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
         solver = Solver(graph, {F, FileDescriptor, SuccessZ})
         final_constraints = solver()
 
-        print('Recursive constraints:')
-        for constraint in final_constraints:
-            print(f'\t{constraint}')
-
         self.assertTrue(SubtypeConstraint(SuccessZ, F_out) in final_constraints)
         tv = solver._get_type_var(Vertex(φ, True, True))
         self.assertTrue(SubtypeConstraint(F_in, tv) in final_constraints)
-        tv_load_0 = DerivedTypeVariable(tv, [LoadLabel.instance(), DerefLabel(4, 0)])
-        tv_load_4 = DerivedTypeVariable(tv, [LoadLabel.instance(), DerefLabel(4, 4)])
+        tv_load = tv.add_suffix(LoadLabel.instance())
+        tv_load_0 = tv_load.add_suffix(DerefLabel(4, 0))
+        tv_load_4 = tv_load.add_suffix(DerefLabel(4, 4))
         self.assertTrue(SubtypeConstraint(tv_load_0, tv) in final_constraints)
         self.assertTrue(SubtypeConstraint(tv_load_4, FileDescriptor) in final_constraints)
 
