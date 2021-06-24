@@ -2,7 +2,7 @@ from abc import ABC
 import re
 import unittest
 
-from type_inference import ConstraintSet, DerefLabel, DerivedTypeVariable, ExistenceConstraint, \
+from type_inference import ConstraintSet, DerefLabel, DerivedTypeVariable, \
         ForgetLabel, InLabel, LoadLabel, OutLabel, RecallLabel, Solver, StoreLabel, \
         SubtypeConstraint, Vertex, ConstraintGraph
 
@@ -11,7 +11,6 @@ class SchemaTestHelper:
     the code itself, it is included here.
     '''
 
-    existence_pattern = re.compile('VAR ([^ ]*)')
     subtype_pattern = re.compile('([^ ]*) ⊑ ([^ ]*)')
     in_pattern = re.compile('in_([0-9]+)')
     deref_pattern = re.compile('σ([0-9]+)@([0-9]+)')
@@ -41,9 +40,6 @@ class SchemaTestHelper:
 
     @staticmethod
     def parse_constraint(constraint):
-        existence_match = SchemaTestHelper.existence_pattern.match(constraint)
-        if existence_match:
-            return ExistenceConstraint(SchemaTestHelper.parse_variable(existence_match.group(1)))
         subtype_match = SchemaTestHelper.subtype_pattern.match(constraint)
         if subtype_match:
             return SubtypeConstraint(SchemaTestHelper.parse_variable(subtype_match.group(1)),
@@ -273,15 +269,9 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
 
         graph = constraints.generate_graph()
 
-        fixed_reference = []
-
-        fixed_graph = SchemaTestHelper.edges_to_dict(fixed_reference)
-        # TODO
-        # self.graphs_are_equal(graph.graph, fixed_graph)
-
         graph.add_forget_recall()
 
-        # print(graph)
+        print(graph)
 
         forget_recall = []
 

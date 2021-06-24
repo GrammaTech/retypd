@@ -8,7 +8,7 @@ for details
 author: Peter Aldous
 '''
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 import logging
 import os
@@ -202,17 +202,6 @@ class DerivedTypeVariable:
             return DerivedTypeVariable(self.base, self.path[:-1])
         return None
 
-    def prefixes(self) -> Set['ExistenceConstraint']:
-        '''Retrieve all prefixes of the derived type variable as a set.
-        '''
-        path = tuple(self.path)
-        result = set()
-        while path:
-            path = path[:-1]
-            prefix = DerivedTypeVariable(self.base, path)
-            result.add(ExistenceConstraint(prefix))
-        return result
-
     def get_suffix(self, other: 'DerivedTypeVariable') -> Optional[Iterable[AccessPathLabel]]:
         '''If self is a prefix of other, return the suffix of other's path that is not part of self.
         Otherwise, return None.
@@ -273,26 +262,6 @@ class DerivedTypeVariable:
         return self._str
 
 
-class ExistenceConstraint:
-    '''A type constraint of the form VAR a (see Definition 3.3)
-    '''
-    def __init__(self, var: DerivedTypeVariable) -> None:
-        self.var = var
-
-    def __eq__(self, other: Any) -> bool:
-        return (isinstance(other, ExistenceConstraint) and
-                self.var == other.var)
-
-    def __lt__(self, other: 'ExistenceConstraint') -> bool:
-        return self.var < other.var
-
-    def __hash__(self) -> int:
-        return hash(self.var)
-
-    def __str__(self) -> str:
-        return f'VAR {self.var}'
-
-
 class SubtypeConstraint:
     '''A type constraint of the form left ⊑ right (see Definition 3.3)
     '''
@@ -320,13 +289,7 @@ class SubtypeConstraint:
 class ConstraintSet:
     '''A (partitioned) set of type constraints
     '''
-    def __init__(self,
-                 existence: Optional[Iterable[ExistenceConstraint]] = None,
-                 subtype: Optional[Iterable[SubtypeConstraint]] = None) -> None:
-        if existence:
-            self.existence = set(existence)
-        else:
-            self.existence = set()
+    def __init__(self, subtype: Optional[Iterable[SubtypeConstraint]] = None) -> None:
         if subtype:
             self.subtype = set(subtype)
         else:
@@ -342,27 +305,14 @@ class ConstraintSet:
         self.subtype.add(constraint)
         return True
 
-    def add_existence(self, var: DerivedTypeVariable) -> bool:
-        '''Add an existence constraint
-        '''
-        ex = ExistenceConstraint(var)
-        if ex in self.existence:
-            return False
-        self.existence.add(ex)
-        return True
-
     def __str__(self) -> str:
         nt = os.linesep + '\t'
-        return (f'ConstraintSet:{nt}{nt.join(map(str, self.existence))}'
-                f'{os.linesep}{nt}{nt.join(map(str,self.subtype))}')
+        return (f'ConstraintSet:{nt}{nt.join(map(str,self.subtype))}')
 
     def generate_graph(self) -> 'ConstraintGraph':
         '''Produce a graph from the set of constraints. This corresponds to step 3 in the notes.
         '''
         graph = ConstraintGraph()
-        for ex in self.existence:
-            var = ex.var
-            graph.add_node(var)
         for sub_constraint in self.subtype:
             graph.add_edges(sub_constraint.left, sub_constraint.right)
         return graph
@@ -445,7 +395,13 @@ class Vertex:
         return Vertex(self.base, not self.suffix_variance, self._recall)
 
 
-class ForgetLabel:
+class EdgeLabel(ABC):
+    @abstractmethod
+    def is_forget(self) -> bool:
+        pass
+
+
+class ForgetLabel(EdgeLabel):
     '''A forget label in the graph.
     '''
     def __init__(self, capability: AccessPathLabel) -> None:
@@ -464,7 +420,7 @@ class ForgetLabel:
         return f'forget {self.capability}'
 
 
-class RecallLabel:
+class RecallLabel(EdgeLabel):
     '''A recall label in the graph.
     '''
     def __init__(self, capability: AccessPathLabel) -> None:
@@ -481,9 +437,6 @@ class RecallLabel:
 
     def __str__(self) -> str:
         return f'recall {self.capability}'
-
-
-EdgeLabel = Union[ForgetLabel, RecallLabel]
 
 
 class ConstraintGraph:
@@ -612,8 +565,7 @@ class ConstraintGraph:
     def graph_to_str(graph: networkx.DiGraph) -> str:
         nt = os.linesep + '\t'
         edge_to_str = lambda edge: ConstraintGraph.edge_to_str(graph, edge)
-        return (f'{nt.join(map(str, graph.nodes))}{os.linesep}'
-                f'{nt}{nt.join(map(edge_to_str, graph.edges))}')
+        return (f'{nt.join(map(edge_to_str, graph.edges))}')
 
     def __str__(self) -> str:
         nt = os.linesep + '\t'
