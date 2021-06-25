@@ -357,11 +357,20 @@ class EdgeLabel:
 
 class Vertex:
     '''A vertex in the graph of constraints. Vertex objects are immutable (by convention).
+
+    Unforgettable is a flag used to differentiate between two subgraphs later in the algorithm. See
+    :py:method:`Solver._unforgettable_subgraph_split` for details.
     '''
+
+    @unique
+    class Unforgettable(Enum):
+        PRE_RECALL = 0
+        POST_RECALL = 1
+
     def __init__(self,
                  base: DerivedTypeVariable,
                  suffix_variance: Variance,
-                 unforgettable: bool = False) -> None:
+                 unforgettable: Unforgettable = Unforgettable.PRE_RECALL) -> None:
         self.base = base
         self.suffix_variance = suffix_variance
         if suffix_variance == Variance.COVARIANT:
@@ -371,7 +380,7 @@ class Vertex:
             variance = '.⊖'
             summary = 0
         self._unforgettable = unforgettable
-        if unforgettable:
+        if unforgettable == Vertex.Unforgettable.POST_RECALL:
             self._str = 'R:' + str(self.base) + variance
             summary += 1
         else:
@@ -411,7 +420,9 @@ class Vertex:
         return self._str
 
     def split_unforgettable(self) -> 'Vertex':
-        return Vertex(self.base, self.suffix_variance, not self._unforgettable)
+        '''Return a duplicate of self for use in the post-recall subgraph.
+        '''
+        return Vertex(self.base, self.suffix_variance, Vertex.Unforgettable.POST_RECALL)
 
     def inverse(self) -> 'Vertex':
         return Vertex(self.base, Variance.invert(self.suffix_variance), self._unforgettable)
