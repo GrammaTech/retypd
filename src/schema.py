@@ -8,7 +8,8 @@ for details
 author: Peter Aldous
 '''
 
-from abc import ABC, abstractmethod
+from abc import ABC
+from enum import Enum, unique
 from typing import Any, Iterable, List, Optional, Sequence
 import logging
 import os
@@ -205,7 +206,7 @@ class DerivedTypeVariable:
             return DerivedTypeVariable(self.base, self.path[:-1])
         return None
 
-    def get_suffix(self, other: 'DerivedTypeVariable') -> Optional[Iterable[AccessPathLabel]]:
+    def get_suffix(self, other: 'DerivedTypeVariable') -> Optional[Sequence[AccessPathLabel]]:
         '''If self is a prefix of other, return the suffix of other's path that is not part of self.
         Otherwise, return None.
         '''
@@ -313,51 +314,38 @@ class ConstraintSet:
 
     def __str__(self) -> str:
         nt = os.linesep + '\t'
-        return (f'ConstraintSet:{nt}{nt.join(map(str,self.subtype))}')
+        return f'ConstraintSet:{nt}{nt.join(map(str,self.subtype))}'
 
 
-class EdgeLabel(ABC):
-    @abstractmethod
-    def is_forget(self) -> bool:
-        pass
 
-
-class ForgetLabel(EdgeLabel):
-    '''A forget label in the graph.
+class EdgeLabel:
+    '''A forget or recall label in the graph. Instances should never be mutated.
     '''
-    def __init__(self, capability: AccessPathLabel) -> None:
-        self.capability = capability
+    @unique
+    class Kind(Enum):
+        FORGET = 1
+        RECALL = 2
 
-    def is_forget(self) -> bool:
-        return True
+    def __init__(self, capability: AccessPathLabel, kind: Kind) -> None:
+        self.capability = capability
+        self.kind = kind
+        if self.kind == EdgeLabel.Kind.FORGET:
+            type_str = 'forget'
+        else:
+            type_str = 'recall'
+        self._str = f'{type_str} {self.capability}'
+        self._hash = hash(self.capability) ^ hash(self.kind)
 
     def __eq__(self, other: Any) -> bool:
-        return isinstance(other, ForgetLabel) and self.capability == other.capability
+        return (isinstance(other, EdgeLabel) and
+                self.capability == other.capability and
+                self.kind == other.kind)
 
     def __hash__(self) -> int:
-        return hash(self.capability)
+        return self._hash
 
     def __str__(self) -> str:
-        return f'forget {self.capability}'
-
-
-class RecallLabel(EdgeLabel):
-    '''A recall label in the graph.
-    '''
-    def __init__(self, capability: AccessPathLabel) -> None:
-        self.capability = capability
-
-    def is_forget(self) -> bool:
-        return False
-
-    def __eq__(self, other: Any) -> bool:
-        return isinstance(other, RecallLabel) and self.capability == other.capability
-
-    def __hash__(self) -> int:
-        return ~hash(self.capability)
-
-    def __str__(self) -> str:
-        return f'recall {self.capability}'
+        return self._str
 
 
 class Vertex:
@@ -371,13 +359,17 @@ class Vertex:
         self.suffix_variance = suffix_variance
         if suffix_variance:
             variance = '.⊕'
+            summary = 2
         else:
             variance = '.⊖'
+            summary = 0
         self._unforgettable = unforgettable
         if unforgettable:
             self._str = 'R:' + str(self.base) + variance
+            summary += 1
         else:
             self._str = str(self.base) + variance
+        self._hash = hash(self.base) ^ hash(summary)
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, Vertex) and
@@ -386,8 +378,7 @@ class Vertex:
                 self._unforgettable == other._unforgettable)
 
     def __hash__(self) -> int:
-        # TODO rotate one of the bool digests
-        return hash(self.base) ^ hash(self.suffix_variance) ^ hash(self._unforgettable)
+        return self._hash
 
     def forget_once(self) -> Optional['Vertex']:
         '''"Forget" the last element in the access path, creating a new Vertex. The new Vertex has

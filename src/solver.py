@@ -1,7 +1,9 @@
-from abc import ABC
-from typing import Any, Dict, List, Iterable, Optional, Set, Tuple, Union
+'''The driver for the retypd analysis.
+'''
+
+from typing import Dict, List, Iterable, Set, Tuple, Union
 from .schema import AccessPathLabel, ConstraintSet, DerivedTypeVariable, LoadLabel, StoreLabel, \
-        SubtypeConstraint, Vertex, EdgeLabel, ForgetLabel, RecallLabel
+        SubtypeConstraint, Vertex, EdgeLabel
 from .parser import SchemaParser
 import os
 import networkx
@@ -47,9 +49,9 @@ class ConstraintGraph:
         for node in existing_nodes:
             prefix = node.forget_once()
             while prefix:
-                forgotten = node.base.path[-1]
-                self.graph.add_edge(node, prefix, label=ForgetLabel(forgotten))
-                self.graph.add_edge(prefix, node, label=RecallLabel(forgotten))
+                capability = node.base.path[-1]
+                self.graph.add_edge(node, prefix, label=EdgeLabel(capability, EdgeLabel.Kind.FORGET))
+                self.graph.add_edge(prefix, node, label=EdgeLabel(capability, EdgeLabel.Kind.RECALL))
                 node = prefix
                 prefix = node.forget_once()
 
@@ -71,7 +73,7 @@ class ConstraintGraph:
 
         for head_x, tail_y in self.graph.edges:
             label = self.graph[head_x][tail_y].get('label')
-            if label and label.is_forget():
+            if label and label.kind == EdgeLabel.Kind.FORGET:
                 add_forgets(tail_y, {(label.capability, head_x)})
         while changed:
             changed = False
@@ -81,7 +83,7 @@ class ConstraintGraph:
             existing_edges = list(self.graph.edges)
             for head_x, tail_y in existing_edges:
                 label = self.graph[head_x][tail_y].get('label')
-                if label and not label.is_forget():
+                if label and label.kind == EdgeLabel.Kind.RECALL:
                     capability_l = label.capability
                     for (label, origin_z) in reaching_R.get(head_x, set()):
                         if label == capability_l:
@@ -177,12 +179,12 @@ class Solver:
         edges = set(self.graph.edges)
         for head, tail in edges:
             label = self.graph[head][tail].get('label')
-            if label and label.is_forget():
+            if label and label.kind == EdgeLabel.Kind.FORGET:
                 continue
             recall_head = head.split_unforgettable()
             recall_tail = tail.split_unforgettable()
             atts = self.graph[head][tail]
-            if label and not label.is_forget():
+            if label and label.kind == EdgeLabel.Kind.RECALL:
                 self.graph.remove_edge(head, tail)
                 self.graph.add_edge(head, recall_tail, **atts)
             self.graph.add_edge(recall_head, recall_tail, **atts)
@@ -218,9 +220,12 @@ class Solver:
         self.next += 1
 
     @staticmethod
-    def _filter_no_prefix(dtvs: Iterable[DerivedTypeVariable]) -> Set[DerivedTypeVariable]:
+    def _filter_no_prefix(variables: Iterable[DerivedTypeVariable]) -> Set[DerivedTypeVariable]:
+        '''Return a set of elements from variables for which no prefix exists in variables. For
+        example, if variables were the set {A, A.load}, return the set {A}.
+        '''
         selected = set()
-        candidates = sorted(dtvs, reverse=True)
+        candidates = sorted(variables, reverse=True)
         for index, candidate in enumerate(candidates):
             emit = True
             for other in candidates[index+1:]:
@@ -252,11 +257,11 @@ class Solver:
         for head, tail in self.graph.edges:
             label = self.graph[head][tail].get('label')
             if label:
-                if label.is_forget():
+                if label.kind == EdgeLabel.Kind.FORGET:
                     recall_graph.remove_edge(head, tail)
                 else:
                     forget_graph.remove_edge(head, tail)
-        loop_breakers = set()
+        loop_breakers: Set[DerivedTypeVariable] = set()
         for graph in [forget_graph, recall_graph]:
             condensation = networkx.condensation(graph)
             visited = set()
@@ -313,7 +318,7 @@ class Solver:
         lhs = origin
         rhs = dest
         for label in string:
-            if label.is_forget():
+            if label.kind == EdgeLabel.Kind.FORGET:
                 rhs = rhs.recall(label.capability)
             else:
                 lhs = lhs.recall(label.capability)

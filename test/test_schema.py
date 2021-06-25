@@ -2,9 +2,7 @@ from abc import ABC
 import networkx
 import unittest
 
-from type_inference import ConstraintSet, DerefLabel, DerivedTypeVariable, \
-        ForgetLabel, InLabel, LoadLabel, OutLabel, RecallLabel, SchemaParser, Solver, StoreLabel, \
-        SubtypeConstraint, Vertex
+from type_inference import ConstraintSet, SchemaParser, Solver
 
 class SchemaTest(ABC):
     def graphs_are_equal(self, graph, edge_set) -> bool:

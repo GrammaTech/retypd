@@ -1,6 +1,10 @@
+'''
+'''
+
 import re
-from .schema import DerefLabel, DerivedTypeVariable, InLabel, LoadLabel, OutLabel, StoreLabel, \
-        ForgetLabel, RecallLabel, SubtypeConstraint, Vertex
+from .schema import AccessPathLabel, DerefLabel, DerivedTypeVariable, EdgeLabel, \
+        InLabel, LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Vertex
+from typing import Dict, Iterable, Tuple
 
 
 class SchemaParser:
@@ -15,7 +19,7 @@ class SchemaParser:
     edge_pattern = re.compile(r'(\S+)\s+→\s+(\S+)(\s+\((forget|recall) ([^ ]*)\))?')
 
     @staticmethod
-    def parse_label(label):
+    def parse_label(label: str) -> AccessPathLabel:
         if label == 'load':
             return LoadLabel.instance()
         if label == 'store':
@@ -31,12 +35,13 @@ class SchemaParser:
         raise ValueError
 
     @staticmethod
-    def parse_variable(var):
+    def parse_variable(var: str) -> DerivedTypeVariable:
         components = var.split('.')
-        return DerivedTypeVariable(components[0], map(SchemaParser.parse_label, components[1:]))
+        path = [SchemaParser.parse_label(label) for label in components[1:]]
+        return DerivedTypeVariable(components[0], path)
 
     @staticmethod
-    def parse_constraint(constraint):
+    def parse_constraint(constraint: str) -> SubtypeConstraint:
         subtype_match = SchemaParser.subtype_pattern.match(constraint)
         if subtype_match:
             return SubtypeConstraint(SchemaParser.parse_variable(subtype_match.group(1)),
@@ -44,7 +49,7 @@ class SchemaParser:
         raise ValueError
 
     @staticmethod
-    def parse_node(node):
+    def parse_node(node: str) -> Vertex:
         node_match = SchemaParser.node_pattern.match(node)
         if node_match:
             var = SchemaParser.parse_variable(node_match.group(1))
@@ -52,7 +57,7 @@ class SchemaParser:
         raise ValueError
 
     @staticmethod
-    def parse_edge(edge):
+    def parse_edge(edge: str) -> Tuple[Vertex, Vertex, Dict[str, EdgeLabel]]:
         edge_match = SchemaParser.edge_pattern.match(edge)
         if edge_match:
             sub = SchemaParser.parse_node(edge_match.group(1))
@@ -61,21 +66,21 @@ class SchemaParser:
             if edge_match.group(3):
                 capability = SchemaParser.parse_label(edge_match.group(5))
                 if edge_match.group(4) == 'forget':
-                    label = ForgetLabel(capability)
+                    kind = EdgeLabel.Kind.FORGET
                 elif edge_match.group(4) == 'recall':
-                    label = RecallLabel(capability)
+                    kind = EdgeLabel.Kind.RECALL
                 else:
                     raise ValueError
-                atts['label'] = label
+                atts['label'] = EdgeLabel(capability, kind)
             return (sub, sup, atts)
         raise ValueError
 
     @staticmethod
-    def edges_to_dict(edges):
+    def edges_to_dict(edges: Iterable[str]) -> Dict[Tuple[Vertex, Vertex], Dict[str, EdgeLabel]]:
         graph = {}
         for edge in edges:
-            (f, t, atts) = SchemaParser.parse_edge(edge)
-            graph[(f, t)] = atts
+            (head, tail, atts) = SchemaParser.parse_edge(edge)
+            graph[(head, tail)] = atts
         return graph
 
 
