@@ -3,7 +3,7 @@
 
 from typing import Dict, List, Iterable, Set, Tuple, Union
 from .schema import AccessPathLabel, ConstraintSet, DerivedTypeVariable, LoadLabel, StoreLabel, \
-        SubtypeConstraint, Vertex, EdgeLabel
+        SubtypeConstraint, Variance, Vertex, EdgeLabel
 from .parser import SchemaParser
 import os
 import networkx
@@ -18,12 +18,6 @@ class ConstraintGraph:
         for constraint in constraints.subtype:
             self.add_edges(constraint.left, constraint.right)
 
-    def add_node(self, node: DerivedTypeVariable) -> None:
-        '''Add a node with covariant and contravariant suffixes to the graph.
-        '''
-        self.graph.add_node(Vertex(node, True))
-        self.graph.add_node(Vertex(node, False))
-
     def add_edge(self, head: Vertex, tail: Vertex, **atts) -> bool:
         if head not in self.graph or tail not in self.graph[head]:
             self.graph.add_edge(head, tail, **atts)
@@ -34,8 +28,8 @@ class ConstraintGraph:
         '''Add an edge to the underlying graph. Also add its reverse with reversed variance.
         '''
         changed = False
-        forward_from = Vertex(sub, True)
-        forward_to = Vertex(sup, True)
+        forward_from = Vertex(sub, Variance.COVARIANT)
+        forward_to = Vertex(sup, Variance.COVARIANT)
         changed = self.add_edge(forward_from, forward_to, **atts) or changed
         backward_from = forward_to.inverse()
         backward_to = forward_from.inverse()
@@ -47,13 +41,12 @@ class ConstraintGraph:
         '''
         existing_nodes = set(self.graph.nodes)
         for node in existing_nodes:
-            prefix = node.forget_once()
+            (capability, prefix) = node.forget_once()
             while prefix:
-                capability = node.base.path[-1]
                 self.graph.add_edge(node, prefix, label=EdgeLabel(capability, EdgeLabel.Kind.FORGET))
                 self.graph.add_edge(prefix, node, label=EdgeLabel(capability, EdgeLabel.Kind.RECALL))
                 node = prefix
-                prefix = node.forget_once()
+                (capability, prefix) = node.forget_once()
 
     def saturate(self) -> None:
         '''Add "shortcut" edges, per algorithm D.2 in the paper.
@@ -88,7 +81,7 @@ class ConstraintGraph:
                     for (label, origin_z) in reaching_R.get(head_x, set()):
                         if label == capability_l:
                             add_edge(origin_z, tail_y)
-            contravariant_vars = list(filter(lambda v: not v.suffix_variance, self.graph.nodes))
+            contravariant_vars = list(filter(lambda v: v.suffix_variance == Variance.CONTRAVARIANT, self.graph.nodes))
             for x in contravariant_vars:
                 for (capability_l, origin_z) in reaching_R.get(x, set()):
                     label = None
@@ -322,7 +315,8 @@ class Solver:
                 rhs = rhs.recall(label.capability)
             else:
                 lhs = lhs.recall(label.capability)
-        if lhs.suffix_variance and rhs.suffix_variance:
+        if (lhs.suffix_variance == Variance.COVARIANT and
+                rhs.suffix_variance == Variance.COVARIANT):
             lhs_var = self._get_type_var(lhs.base)
             rhs_var = self._get_type_var(rhs.base)
             if lhs_var != rhs_var:

@@ -3,7 +3,7 @@
 
 import re
 from .schema import AccessPathLabel, DerefLabel, DerivedTypeVariable, EdgeLabel, \
-        InLabel, LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Vertex
+        InLabel, LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Variance, Vertex
 from typing import Dict, Iterable, Tuple
 
 
@@ -53,7 +53,13 @@ class SchemaParser:
         node_match = SchemaParser.node_pattern.match(node)
         if node_match:
             var = SchemaParser.parse_variable(node_match.group(1))
-            return Vertex(var, node_match.group(2) == '⊕')
+            if node_match.group(2) == '⊕':
+                variance = Variance.COVARIANT
+            elif node_match.group(2) == '⊖':
+                variance = Variance.CONTRAVARIANT
+            else:
+                raise ValueError
+            return Vertex(var, variance)
         raise ValueError
 
     @staticmethod

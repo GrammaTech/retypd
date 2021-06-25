@@ -9,9 +9,9 @@ class SchemaTest(ABC):
         edges = graph.edges()
         self.assertEqual(len(edges), len(edge_set))
         for edge in edges:
-            (f, t) = edge
+            (head, tail) = edge
             self.assertTrue(edge in edge_set)
-            self.assertEqual(graph[f][t], edge_set[edge])
+            self.assertEqual(graph[head][tail], edge_set[edge])
 
 
 class BasicSchemaTest(SchemaTest, unittest.TestCase):

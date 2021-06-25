@@ -10,12 +10,31 @@ author: Peter Aldous
 
 from abc import ABC
 from enum import Enum, unique
-from typing import Any, Iterable, List, Optional, Sequence
+from functools import reduce
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
 import logging
 import os
 
 
 logging.basicConfig()
+
+
+@unique
+class Variance(Enum):
+    CONTRAVARIANT = 0
+    COVARIANT = 1
+
+    @staticmethod
+    def invert(v: 'Variance') -> 'Variance':
+        if v == Variance.CONTRAVARIANT:
+            return Variance.COVARIANT
+        return Variance.CONTRAVARIANT
+
+    @staticmethod
+    def combine(lhs: 'Variance', rhs: 'Variance') -> 'Variance':
+        if lhs == rhs:
+            return Variance.COVARIANT
+        return Variance.CONTRAVARIANT
 
 
 class AccessPathLabel(ABC):
@@ -40,11 +59,10 @@ class AccessPathLabel(ABC):
         '''
         return False
 
-    def is_covariant(self) -> bool:
-        '''Determines if the access path label is covariant (True) or contravariant (False), per
-        Table 1.
+    def variance(self) -> Variance:
+        '''Determines if the access path label is covariant or contravariant, per Table 1.
         '''
-        return True
+        return Variance.COVARIANT
 
 
 class LoadLabel(AccessPathLabel):
@@ -91,8 +109,8 @@ class StoreLabel(AccessPathLabel):
     def __hash__(self) -> int:
         return 1
 
-    def is_covariant(self) -> bool:
-        return False
+    def variance(self) -> Variance:
+        return Variance.CONTRAVARIANT
 
     def __str__(self) -> str:
         return 'store'
@@ -115,8 +133,8 @@ class InLabel(AccessPathLabel):
     def __hash__(self) -> int:
         return hash(self.index)
 
-    def is_covariant(self) -> bool:
-        return False
+    def variance(self) -> Variance:
+        return Variance.CONTRAVARIANT
 
     def __str__(self) -> str:
         return f'in_{self.index}'
@@ -245,22 +263,11 @@ class DerivedTypeVariable:
             return None
         return self.tail()
 
-    def path_is_covariant(self):
-        '''Determine if the access path is covariant or contravariant. This is a special case of
-        :py:classmethod:`suffix_is_covariant`.
+    def path_variance(self) -> Variance:
+        '''Determine the variance of the access path.
         '''
-        return DerivedTypeVariable.suffix_is_covariant(self.path)
-
-    @classmethod
-    def suffix_is_covariant(cls, suffix: Sequence[AccessPathLabel]) -> bool:
-        '''Given a sequence of :py:class:`AccessPathLabel` objects, determine if the suffix is
-        covariant or contravariant.
-        '''
-        is_covariant = True
-        for label in suffix:
-            if not label.is_covariant():
-                is_covariant = not is_covariant
-        return is_covariant
+        variances = map(lambda label: label.variance(), self.path)
+        return reduce(Variance.combine, variances, Variance.COVARIANT)
 
     def __str__(self) -> str:
         return self._str
@@ -353,11 +360,11 @@ class Vertex:
     '''
     def __init__(self,
                  base: DerivedTypeVariable,
-                 suffix_variance: bool,
+                 suffix_variance: Variance,
                  unforgettable: bool = False) -> None:
         self.base = base
         self.suffix_variance = suffix_variance
-        if suffix_variance:
+        if suffix_variance == Variance.COVARIANT:
             variance = '.⊕'
             summary = 2
         else:
@@ -380,15 +387,16 @@ class Vertex:
     def __hash__(self) -> int:
         return self._hash
 
-    def forget_once(self) -> Optional['Vertex']:
+    def forget_once(self) -> Tuple[Optional[AccessPathLabel], Optional['Vertex']]:
         '''"Forget" the last element in the access path, creating a new Vertex. The new Vertex has
         variance that reflects this change.
         '''
-        prefix = self.base.largest_prefix()
-        if prefix:
-            last = self.base.path[-1]
-            return Vertex(prefix, last.is_covariant() == self.suffix_variance)
-        return None
+        if self.base.path:
+            prefix_path = list(self.base.path)
+            last = prefix_path.pop()
+            prefix = DerivedTypeVariable(self.base.base, prefix_path)
+            return (last, Vertex(prefix, Variance.combine(last.variance(), self.suffix_variance)))
+        return (None, None)
 
     def recall(self, label: AccessPathLabel) -> 'Vertex':
         '''"Recall" label, creating a new Vertex. The new Vertex has variance that reflects this
@@ -396,27 +404,8 @@ class Vertex:
         '''
         path = list(self.base.path)
         path.append(label)
-        variance = self.suffix_variance == label.is_covariant()
+        variance = Variance.combine(self.suffix_variance, label.variance())
         return Vertex(DerivedTypeVariable(self.base.base, path), variance)
-
-    def _replace_last(self, label: AccessPathLabel) -> 'Vertex':
-        '''Create a new Vertex whose access path's last label has been replaced by :param:`label`.
-        Does not change variance.
-        '''
-        path = list(self.base.path[:-1])
-        path.append(label)
-        return Vertex(DerivedTypeVariable(self.base.base, path), self.suffix_variance)
-
-    def implicit_target(self) -> Optional['Vertex']:
-        '''If there is a lazily instantiated store/load edge from this node, find its target.
-        '''
-        if self.base.path:
-            last = self.base.path[-1]
-            if last is StoreLabel.instance() and self.suffix_variance:
-                return self._replace_last(LoadLabel.instance())
-            if last is LoadLabel.instance() and not self.suffix_variance:
-                return self._replace_last(StoreLabel.instance())
-        return None
 
     def __str__(self) -> str:
         return self._str
@@ -425,4 +414,4 @@ class Vertex:
         return Vertex(self.base, self.suffix_variance, not self._unforgettable)
 
     def inverse(self) -> 'Vertex':
-        return Vertex(self.base, not self.suffix_variance, self._unforgettable)
+        return Vertex(self.base, Variance.invert(self.suffix_variance), self._unforgettable)
