@@ -1,10 +1,10 @@
-'''
+'''Parsing helpers, mostly for unit testing.
 '''
 
 import re
 from .schema import AccessPathLabel, DerefLabel, DerivedTypeVariable, EdgeLabel, \
-        InLabel, LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Variance, Vertex
-from typing import Dict, Iterable, Tuple
+        InLabel, LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Variance, Node
+from typing import Dict, Tuple
 
 
 class SchemaParser:
@@ -12,14 +12,17 @@ class SchemaParser:
     the code itself, it is included here.
     '''
 
-    subtype_pattern = re.compile('([^ ]*) ⊑ ([^ ]*)')
+    subtype_pattern = re.compile('(\S*) (?:⊑|<=) (\S*)')
     in_pattern = re.compile('in_([0-9]+)')
     deref_pattern = re.compile('σ([0-9]+)@([0-9]+)')
-    node_pattern = re.compile(r'([^ ]+)\.([⊕⊖])')
-    edge_pattern = re.compile(r'(\S+)\s+→\s+(\S+)(\s+\((forget|recall) ([^ ]*)\))?')
+    node_pattern = re.compile(r'(\S+)\.([⊕⊖])')
+    edge_pattern = re.compile(r'(\S+)\s+(?:→|->)\s+(\S+)(\s+\((forget|recall) (\S*)\))?')
+    whitespace_pattern = re.compile(r'\s')
 
     @staticmethod
     def parse_label(label: str) -> AccessPathLabel:
+        '''Parse an AccessPathLabel. Raises ValueError if it is improperly formatted.
+        '''
         if label == 'load':
             return LoadLabel.instance()
         if label == 'store':
@@ -36,12 +39,19 @@ class SchemaParser:
 
     @staticmethod
     def parse_variable(var: str) -> DerivedTypeVariable:
+        '''Parse a DerivedTypeVariable. Raises ValueError if the string contains whitespace.
+        '''
+        if SchemaParser.whitespace_pattern.match(var):
+            raise ValueError
         components = var.split('.')
         path = [SchemaParser.parse_label(label) for label in components[1:]]
         return DerivedTypeVariable(components[0], path)
 
     @staticmethod
     def parse_constraint(constraint: str) -> SubtypeConstraint:
+        '''Parse a SubtypeConstraint. Raises a ValueError if constraint does not match
+        SchemaParser.subtype_pattern.
+        '''
         subtype_match = SchemaParser.subtype_pattern.match(constraint)
         if subtype_match:
             return SubtypeConstraint(SchemaParser.parse_variable(subtype_match.group(1)),
@@ -49,7 +59,9 @@ class SchemaParser:
         raise ValueError
 
     @staticmethod
-    def parse_node(node: str) -> Vertex:
+    def parse_node(node: str) -> Node:
+        '''Parse a Node. Raise a ValueError if it does not match SchemaParser.node_pattern.
+        '''
         node_match = SchemaParser.node_pattern.match(node)
         if node_match:
             var = SchemaParser.parse_variable(node_match.group(1))
@@ -59,11 +71,14 @@ class SchemaParser:
                 variance = Variance.CONTRAVARIANT
             else:
                 raise ValueError
-            return Vertex(var, variance)
+            return Node(var, variance)
         raise ValueError
 
     @staticmethod
-    def parse_edge(edge: str) -> Tuple[Vertex, Vertex, Dict[str, EdgeLabel]]:
+    def parse_edge(edge: str) -> Tuple[Node, Node, Dict[str, EdgeLabel]]:
+        '''Parse an edge in the graph, which consists of two nodes and an arrow, with an optional
+        edge label.
+        '''
         edge_match = SchemaParser.edge_pattern.match(edge)
         if edge_match:
             sub = SchemaParser.parse_node(edge_match.group(1))
@@ -80,13 +95,3 @@ class SchemaParser:
                 atts['label'] = EdgeLabel(capability, kind)
             return (sub, sup, atts)
         raise ValueError
-
-    @staticmethod
-    def edges_to_dict(edges: Iterable[str]) -> Dict[Tuple[Vertex, Vertex], Dict[str, EdgeLabel]]:
-        graph = {}
-        for edge in edges:
-            (head, tail, atts) = SchemaParser.parse_edge(edge)
-            graph[(head, tail)] = atts
-        return graph
-
-

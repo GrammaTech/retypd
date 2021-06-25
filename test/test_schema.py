@@ -1,8 +1,11 @@
+'''Simple unit tests from the paper and slides.
+'''
+
 from abc import ABC
 import networkx
 import unittest
 
-from type_inference import ConstraintSet, SchemaParser, Solver
+from retypd import ConstraintSet, SchemaParser, Solver
 
 class SchemaTest(ABC):
     def graphs_are_equal(self, graph, edge_set) -> bool:
@@ -12,6 +15,17 @@ class SchemaTest(ABC):
             (head, tail) = edge
             self.assertTrue(edge in edge_set)
             self.assertEqual(graph[head][tail], edge_set[edge])
+
+    @staticmethod
+    def edges_to_dict(edges):
+        '''Convert a collection of edge strings into a dict. Used for comparing a graph against an
+        expected value.
+        '''
+        graph = {}
+        for edge in edges:
+            (head, tail, atts) = SchemaParser.parse_edge(edge)
+            graph[(head, tail)] = atts
+        return graph
 
 
 class BasicSchemaTest(SchemaTest, unittest.TestCase):
@@ -31,30 +45,30 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
 
         solver._add_forget_recall_edges()
 
-        forget_recall = ['p.load.⊕        →  p.⊕              (forget load)',
-                         'p.load.⊖        →  p.⊖              (forget load)',
-                         'p.load.⊕        →  p.load.σ4@0.⊕    (recall σ4@0)',
-                         'p.load.⊖        →  p.load.σ4@0.⊖    (recall σ4@0)',
-                         'p.load.σ4@0.⊕   →  p.load.⊕         (forget σ4@0)',
-                         'p.load.σ4@0.⊖   →  p.load.⊖         (forget σ4@0)',
-                         'p.load.σ4@0.⊕   →  y.⊕',
-                         'p.⊕             →  p.load.⊕         (recall load)',
-                         'p.⊖             →  p.load.⊖         (recall load)',
-                         'p.⊕             →  q.⊕',
-                         'q.⊖             →  p.⊖',
-                         'q.⊕             →  q.store.⊖        (recall store)',
-                         'q.⊖             →  q.store.⊕        (recall store)',
-                         'q.store.⊕       →  q.⊖              (forget store)',
-                         'q.store.⊖       →  q.⊕              (forget store)',
-                         'q.store.⊕       →  q.store.σ4@0.⊕   (recall σ4@0)',
-                         'q.store.⊖       →  q.store.σ4@0.⊖   (recall σ4@0)',
-                         'q.store.σ4@0.⊕  →  q.store.⊕        (forget σ4@0)',
-                         'q.store.σ4@0.⊖  →  q.store.⊖        (forget σ4@0)',
-                         'q.store.σ4@0.⊖  →  x.⊖',
-                         'x.⊕             →  q.store.σ4@0.⊕',
-                         'y.⊖             →  p.load.σ4@0.⊖']
+        forget_recall = ['p.load.⊕        ->  p.⊕              (forget load)',
+                         'p.load.⊖        ->  p.⊖              (forget load)',
+                         'p.load.⊕        ->  p.load.σ4@0.⊕    (recall σ4@0)',
+                         'p.load.⊖        ->  p.load.σ4@0.⊖    (recall σ4@0)',
+                         'p.load.σ4@0.⊕   ->  p.load.⊕         (forget σ4@0)',
+                         'p.load.σ4@0.⊖   ->  p.load.⊖         (forget σ4@0)',
+                         'p.load.σ4@0.⊕   ->  y.⊕',
+                         'p.⊕             ->  p.load.⊕         (recall load)',
+                         'p.⊖             ->  p.load.⊖         (recall load)',
+                         'p.⊕             ->  q.⊕',
+                         'q.⊖             ->  p.⊖',
+                         'q.⊕             ->  q.store.⊖        (recall store)',
+                         'q.⊖             ->  q.store.⊕        (recall store)',
+                         'q.store.⊕       ->  q.⊖              (forget store)',
+                         'q.store.⊖       ->  q.⊕              (forget store)',
+                         'q.store.⊕       ->  q.store.σ4@0.⊕   (recall σ4@0)',
+                         'q.store.⊖       ->  q.store.σ4@0.⊖   (recall σ4@0)',
+                         'q.store.σ4@0.⊕  ->  q.store.⊕        (forget σ4@0)',
+                         'q.store.σ4@0.⊖  ->  q.store.⊖        (forget σ4@0)',
+                         'q.store.σ4@0.⊖  ->  x.⊖',
+                         'x.⊕             ->  q.store.σ4@0.⊕',
+                         'y.⊖             ->  p.load.σ4@0.⊖']
 
-        forget_recall_graph = SchemaParser.edges_to_dict(forget_recall)
+        forget_recall_graph = SchemaTest.edges_to_dict(forget_recall)
         self.graphs_are_equal(solver.constraint_graph.graph, forget_recall_graph)
 
         solver._saturate()
@@ -94,7 +108,7 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
                      'x.⊕             →  q.store.σ4@0.⊕',
                      'y.⊖             →  p.load.σ4@0.⊖']
 
-        saturated_graph = SchemaParser.edges_to_dict(saturated)
+        saturated_graph = SchemaTest.edges_to_dict(saturated)
         self.graphs_are_equal(solver.constraint_graph.graph, saturated_graph)
 
         solver.graph = networkx.DiGraph(solver.constraint_graph.graph)
@@ -110,10 +124,10 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
         '''
 
         constraints = ConstraintSet()
-        constraints.add(SchemaParser.parse_constraint('y ⊑ p'))
-        constraints.add(SchemaParser.parse_constraint('p ⊑ x'))
-        constraints.add(SchemaParser.parse_constraint('A ⊑ x.store'))
-        constraints.add(SchemaParser.parse_constraint('y.load ⊑ B'))
+        constraints.add(SchemaParser.parse_constraint('y <= p'))
+        constraints.add(SchemaParser.parse_constraint('p <= x'))
+        constraints.add(SchemaParser.parse_constraint('A <= x.store'))
+        constraints.add(SchemaParser.parse_constraint('y.load <= B'))
 
         solver = Solver(constraints, {'A', 'B'})
 
@@ -136,7 +150,7 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
                          'y.⊕        →  y.load.⊕    (recall load)',
                          'y.⊖        →  y.load.⊖    (recall load)']
 
-        forget_recall_graph = SchemaParser.edges_to_dict(forget_recall)
+        forget_recall_graph = SchemaTest.edges_to_dict(forget_recall)
         self.graphs_are_equal(solver.constraint_graph.graph, forget_recall_graph)
 
         solver._saturate()
@@ -164,7 +178,7 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
                      'y.⊕        →  y.load.⊕    (recall load)',
                      'y.⊖        →  y.load.⊖    (recall load)']
 
-        saturated_graph = SchemaParser.edges_to_dict(saturated)
+        saturated_graph = SchemaTest.edges_to_dict(saturated)
         self.graphs_are_equal(solver.constraint_graph.graph, saturated_graph)
 
         solver.graph = networkx.DiGraph(solver.constraint_graph.graph)
@@ -243,7 +257,7 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
                          "φ.⊕                →  φ.load.⊕            (recall load)",
                          "φ.⊖                →  φ.load.⊖            (recall load)"]
         self.graphs_are_equal(solver.constraint_graph.graph,
-                              SchemaParser.edges_to_dict(forget_recall))
+                              SchemaTest.edges_to_dict(forget_recall))
 
         solver._saturate()
 
@@ -308,7 +322,7 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
                      "φ.⊕                →  φ.load.⊕            (recall load)",
                      "φ.⊖                →  φ.load.⊖            (recall load)"]
         self.graphs_are_equal(solver.constraint_graph.graph,
-                              SchemaParser.edges_to_dict(saturated))
+                              SchemaTest.edges_to_dict(saturated))
 
         solver.graph = networkx.DiGraph(solver.constraint_graph.graph)
         solver._remove_self_loops()

@@ -16,7 +16,7 @@ with open(path.join(here, 'requirements.txt'), encoding='utf-8') as f:
 
 install_requires = [x.strip() for x in all_reqs if 'git+' not in x]
 
-setup(name='type_inference',
+setup(name=__packagename__,
       version=__version__,
       description='An implementation of retypd in Python3',
       author='GrammaTech, Inc.',

@@ -1,2 +1,2 @@
-__packagename__ = 'type_inference'
+__packagename__ = 'retypd'
 __version__ = '0.1'

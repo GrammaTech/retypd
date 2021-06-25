@@ -1,11 +1,4 @@
-'''Data types for an implementation of retypd analysis. See `Link the paper
-<https://arxiv.org/pdf/1603.05495v1.pdf>`, `Link the slides
-<https://raw.githubusercontent.com/emeryberger/PLDI-2016/master/presentations/pldi16-presentation241.pdf>`,
-and `Link the notes
-<https://git.grammatech.com/reverse-engineering/common/re_facts/-/blob/paldous/type-recovery/docs/how-to/type-recovery.rst>`
-for details
-
-author: Peter Aldous
+'''Data types for an implementation of retypd analysis.
 '''
 
 from abc import ABC
@@ -355,8 +348,8 @@ class EdgeLabel:
         return self._str
 
 
-class Vertex:
-    '''A vertex in the graph of constraints. Vertex objects are immutable (by convention).
+class Node:
+    '''A node in the graph of constraints. Node objects are immutable.
 
     Unforgettable is a flag used to differentiate between two subgraphs later in the algorithm. See
     :py:method:`Solver._unforgettable_subgraph_split` for details.
@@ -380,7 +373,7 @@ class Vertex:
             variance = '.⊖'
             summary = 0
         self._unforgettable = unforgettable
-        if unforgettable == Vertex.Unforgettable.POST_RECALL:
+        if unforgettable == Node.Unforgettable.POST_RECALL:
             self._str = 'R:' + str(self.base) + variance
             summary += 1
         else:
@@ -388,7 +381,7 @@ class Vertex:
         self._hash = hash(self.base) ^ hash(summary)
 
     def __eq__(self, other: Any) -> bool:
-        return (isinstance(other, Vertex) and
+        return (isinstance(other, Node) and
                 self.base == other.base and
                 self.suffix_variance == other.suffix_variance and
                 self._unforgettable == other._unforgettable)
@@ -396,33 +389,35 @@ class Vertex:
     def __hash__(self) -> int:
         return self._hash
 
-    def forget_once(self) -> Tuple[Optional[AccessPathLabel], Optional['Vertex']]:
-        '''"Forget" the last element in the access path, creating a new Vertex. The new Vertex has
+    def forget_once(self) -> Tuple[Optional[AccessPathLabel], Optional['Node']]:
+        '''"Forget" the last element in the access path, creating a new Node. The new Node has
         variance that reflects this change.
         '''
         if self.base.path:
             prefix_path = list(self.base.path)
             last = prefix_path.pop()
             prefix = DerivedTypeVariable(self.base.base, prefix_path)
-            return (last, Vertex(prefix, Variance.combine(last.variance(), self.suffix_variance)))
+            return (last, Node(prefix, Variance.combine(last.variance(), self.suffix_variance)))
         return (None, None)
 
-    def recall(self, label: AccessPathLabel) -> 'Vertex':
-        '''"Recall" label, creating a new Vertex. The new Vertex has variance that reflects this
+    def recall(self, label: AccessPathLabel) -> 'Node':
+        '''"Recall" label, creating a new Node. The new Node has variance that reflects this
         change.
         '''
         path = list(self.base.path)
         path.append(label)
         variance = Variance.combine(self.suffix_variance, label.variance())
-        return Vertex(DerivedTypeVariable(self.base.base, path), variance)
+        return Node(DerivedTypeVariable(self.base.base, path), variance)
 
     def __str__(self) -> str:
         return self._str
 
-    def split_unforgettable(self) -> 'Vertex':
-        '''Return a duplicate of self for use in the post-recall subgraph.
+    def split_unforgettable(self) -> 'Node':
+        '''Get a duplicate of self for use in the post-recall subgraph.
         '''
-        return Vertex(self.base, self.suffix_variance, Vertex.Unforgettable.POST_RECALL)
+        return Node(self.base, self.suffix_variance, Node.Unforgettable.POST_RECALL)
 
-    def inverse(self) -> 'Vertex':
-        return Vertex(self.base, Variance.invert(self.suffix_variance), self._unforgettable)
+    def inverse(self) -> 'Node':
+        '''Get a Node identical to this one but with inverted variance.
+        '''
+        return Node(self.base, Variance.invert(self.suffix_variance), self._unforgettable)

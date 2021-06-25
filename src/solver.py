@@ -2,8 +2,8 @@
 '''
 
 from typing import Dict, List, Iterable, Set, Tuple, Union
-from .schema import AccessPathLabel, ConstraintSet, DerivedTypeVariable, LoadLabel, StoreLabel, \
-        SubtypeConstraint, Variance, Vertex, EdgeLabel
+from .schema import AccessPathLabel, ConstraintSet, DerivedTypeVariable, EdgeLabel, LoadLabel, \
+        Node, StoreLabel, SubtypeConstraint, Variance
 from .parser import SchemaParser
 import os
 import networkx
@@ -18,7 +18,7 @@ class ConstraintGraph:
         for constraint in constraints.subtype:
             self.add_edges(constraint.left, constraint.right)
 
-    def add_edge(self, head: Vertex, tail: Vertex, **atts) -> bool:
+    def add_edge(self, head: Node, tail: Node, **atts) -> bool:
         if head not in self.graph or tail not in self.graph[head]:
             self.graph.add_edge(head, tail, **atts)
             return True
@@ -28,8 +28,8 @@ class ConstraintGraph:
         '''Add an edge to the underlying graph. Also add its reverse with reversed variance.
         '''
         changed = False
-        forward_from = Vertex(sub, Variance.COVARIANT)
-        forward_to = Vertex(sup, Variance.COVARIANT)
+        forward_from = Node(sub, Variance.COVARIANT)
+        forward_to = Node(sup, Variance.COVARIANT)
         changed = self.add_edge(forward_from, forward_to, **atts) or changed
         backward_from = forward_to.inverse()
         backward_to = forward_from.inverse()
@@ -52,15 +52,15 @@ class ConstraintGraph:
         '''Add "shortcut" edges, per algorithm D.2 in the paper.
         '''
         changed = False
-        reaching_R: Dict[Vertex, Set[Tuple[AccessPathLabel, Vertex]]] = {}
+        reaching_R: Dict[Node, Set[Tuple[AccessPathLabel, Node]]] = {}
 
-        def add_forgets(dest: Vertex, forgets: Set[Tuple[AccessPathLabel, Vertex]]):
+        def add_forgets(dest: Node, forgets: Set[Tuple[AccessPathLabel, Node]]):
             nonlocal changed
             if dest not in reaching_R or not (forgets <= reaching_R[dest]):
                 changed = True
                 reaching_R.setdefault(dest, set()).update(forgets)
 
-        def add_edge(origin: Vertex, dest: Vertex):
+        def add_edge(origin: Node, dest: Node):
             nonlocal changed
             changed = self.add_edge(origin, dest) or changed
 
@@ -93,7 +93,7 @@ class ConstraintGraph:
                         add_forgets(x.inverse(), {(label, origin_z)})
 
     @staticmethod
-    def edge_to_str(graph, edge: Tuple[Vertex, Vertex]) -> str:
+    def edge_to_str(graph, edge: Tuple[Node, Node]) -> str:
         '''A helper for __str__ that formats an edge
         '''
         width = 2 + max(map(lambda v: len(str(v)), graph.nodes))
@@ -108,14 +108,14 @@ class ConstraintGraph:
     @staticmethod
     def graph_to_dot(name: str, graph: networkx.DiGraph) -> str:
         nt = os.linesep + '\t'
-        def edge_to_str(edge: Tuple[Vertex, Vertex]) -> str:
+        def edge_to_str(edge: Tuple[Node, Node]) -> str:
             (sub, sup) = edge
             label = graph[sub][sup].get('label')
             label_str = ''
             if label:
                 label_str = f' [label="{label}"]'
             return f'"{sub}" -> "{sup}"{label_str};'
-        def node_to_str(node: Vertex) -> str:
+        def node_to_str(node: Node) -> str:
             return f'"{node}";'
         return (f'digraph {name} {{{nt}{nt.join(map(node_to_str, graph.nodes))}{nt}'
                 f'{nt.join(map(edge_to_str, graph.edges))}{os.linesep}}}')
@@ -143,7 +143,7 @@ class Solver:
     '''
     def __init__(self,
                  constraints: ConstraintSet,
-                 interesting: Set[Union[DerivedTypeVariable, str]]) -> None:
+                 interesting: Iterable[Union[DerivedTypeVariable, str]]) -> None:
         self.constraint_graph = ConstraintGraph(constraints)
         self.interesting: Set[DerivedTypeVariable] = set()
         for var in interesting:
@@ -156,9 +156,13 @@ class Solver:
         self._type_vars: Dict[DerivedTypeVariable, DerivedTypeVariable] = {}
 
     def _add_forget_recall_edges(self) -> None:
+        '''Passes through to ConstraintGraph.add_forget_recall()
+        '''
         self.constraint_graph.add_forget_recall()
 
     def _saturate(self) -> None:
+        '''Passes through to ConstraintGraph.saturate()
+        '''
         self.constraint_graph.saturate()
 
     def _unforgettable_subgraph_split(self) -> None:
@@ -277,11 +281,12 @@ class Solver:
             self._make_type_var(var)
 
     def _find_paths(self,
-                    origin: Vertex,
-                    path: List[Vertex] = [],
+                    origin: Node,
+                    path: List[Node] = [],
                     string: List[EdgeLabel] = []) -> \
-                        List[Tuple[List[EdgeLabel], Vertex]]:
+                        List[Tuple[List[EdgeLabel], Node]]:
         '''Find all non-empty paths from origin to nodes that represent interesting type variables.
+        Return the list of labels encountered along the way as well as the destination reached.
         '''
         if path and origin.base in self.interesting:
             return [(string, origin)]
@@ -289,7 +294,7 @@ class Solver:
             return []
         path = list(path)
         path.append(origin)
-        all_paths: List[Tuple[List[EdgeLabel], Vertex]] = []
+        all_paths: List[Tuple[List[EdgeLabel], Node]] = []
         if origin in self.graph:
             for succ in self.graph[origin]:
                 label = self.graph[origin][succ].get('label')
@@ -300,8 +305,8 @@ class Solver:
         return all_paths
 
     def _maybe_add_constraint(self,
-                        origin: Vertex,
-                        dest: Vertex,
+                        origin: Node,
+                        dest: Node,
                         string: List[EdgeLabel]) -> None:
         '''Generate constraints by adding the forgets in string to origin and the recalls in string
         to dest. If both of the generated vertices are covariant (the empty string's variance is
