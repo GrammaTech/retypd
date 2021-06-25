@@ -12,7 +12,7 @@ class SchemaParser:
     the code itself, it is included here.
     '''
 
-    subtype_pattern = re.compile('(\S*) (?:⊑|<=) (\S*)')
+    subtype_pattern = re.compile(r'(\S*) (?:⊑|<=) (\S*)')
     in_pattern = re.compile('in_([0-9]+)')
     deref_pattern = re.compile('σ([0-9]+)@([0-9]+)')
     node_pattern = re.compile(r'(\S+)\.([⊕⊖])')

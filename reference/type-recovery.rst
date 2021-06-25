@@ -111,6 +111,26 @@ types from the TSL code.
 The two JSON files in this directory include the schemas from the TSL implementation. The presence
 of any functions included in these schemas will yield types with semantic meaning.
 
+------------------------
+S-Pointer and S-Field⊕/⊖
+------------------------
+
+Most of the inference rules in Figure 3 (p. 5) become redundant because of the structure of the
+graph:
+* T-Left and T-Right are implicit because edges cannot exist without vertices.
+* T-Prefix is expressed by the existence of forget edges.
+* As discussed in the paper, T-InheritL and T-InheritR are redundant, as a combination of
+  T-Left/T-Right and S-Field⊕/S-Field⊖ can produce the same facts.
+* S-Refl and S-Trans are implicit.
+
+S-Pointer, S-Field⊕, and S-Field⊖ are not expressed in the graph. They are also problematic because
+they can create divergence (this is true of all three inference rules, not just S-Pointer). The
+paper explicitly explains that S-Pointer rules are instantiated lazily. However, it does not explain
+that the instantiations in Algorithm D.2 (p. 25) are actually instantiations of all three of these
+rules combined into one. The algorithm as written is safe; it is not yet perfectly clear to me
+whether there are useful things that might be inferred from other instantiations of the S-Field
+rules.
+
 #####################
 Type recovery outline
 #####################

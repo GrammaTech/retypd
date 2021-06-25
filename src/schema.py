@@ -14,12 +14,14 @@ logging.basicConfig()
 
 @unique
 class Variance(Enum):
+    '''Represents a capability's variance (or that of some sequence of capabilities).
+    '''
     CONTRAVARIANT = 0
     COVARIANT = 1
 
     @staticmethod
-    def invert(v: 'Variance') -> 'Variance':
-        if v == Variance.CONTRAVARIANT:
+    def invert(variance: 'Variance') -> 'Variance':
+        if variance == Variance.CONTRAVARIANT:
             return Variance.COVARIANT
         return Variance.CONTRAVARIANT
 

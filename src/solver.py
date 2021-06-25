@@ -19,6 +19,9 @@ class ConstraintGraph:
             self.add_edges(constraint.left, constraint.right)
 
     def add_edge(self, head: Node, tail: Node, **atts) -> bool:
+        '''Add an edge to the graph. The optional atts dict should include, if anything, a mapping
+        from the string 'label' to an EdgeLabel object.
+        '''
         if head not in self.graph or tail not in self.graph[head]:
             self.graph.add_edge(head, tail, **atts)
             return True
@@ -43,8 +46,12 @@ class ConstraintGraph:
         for node in existing_nodes:
             (capability, prefix) = node.forget_once()
             while prefix:
-                self.graph.add_edge(node, prefix, label=EdgeLabel(capability, EdgeLabel.Kind.FORGET))
-                self.graph.add_edge(prefix, node, label=EdgeLabel(capability, EdgeLabel.Kind.RECALL))
+                self.graph.add_edge(node,
+                                    prefix,
+                                    label=EdgeLabel(capability, EdgeLabel.Kind.FORGET))
+                self.graph.add_edge(prefix,
+                                    node,
+                                    label=EdgeLabel(capability, EdgeLabel.Kind.RECALL))
                 node = prefix
                 (capability, prefix) = node.forget_once()
 
@@ -64,6 +71,9 @@ class ConstraintGraph:
             nonlocal changed
             changed = self.add_edge(origin, dest) or changed
 
+        def is_contravariant(node: Node) -> bool:
+            return node.suffix_variance == Variance.CONTRAVARIANT
+
         for head_x, tail_y in self.graph.edges:
             label = self.graph[head_x][tail_y].get('label')
             if label and label.kind == EdgeLabel.Kind.FORGET:
@@ -81,7 +91,7 @@ class ConstraintGraph:
                     for (label, origin_z) in reaching_R.get(head_x, set()):
                         if label == capability_l:
                             add_edge(origin_z, tail_y)
-            contravariant_vars = list(filter(lambda v: v.suffix_variance == Variance.CONTRAVARIANT, self.graph.nodes))
+            contravariant_vars = list(filter(is_contravariant, self.graph.nodes))
             for x in contravariant_vars:
                 for (capability_l, origin_z) in reaching_R.get(x, set()):
                     label = None
@@ -129,7 +139,7 @@ class ConstraintGraph:
     def graph_to_str(graph: networkx.DiGraph) -> str:
         nt = os.linesep + '\t'
         edge_to_str = lambda edge: ConstraintGraph.edge_to_str(graph, edge)
-        return (f'{nt.join(map(edge_to_str, graph.edges))}')
+        return f'{nt.join(map(edge_to_str, graph.edges))}'
 
     def __str__(self) -> str:
         nt = os.linesep + '\t'
