@@ -24,8 +24,9 @@
 '''
 
 from typing import Dict, List, Iterable, Set, Tuple, Union
-from .schema import AccessPathLabel, ConstraintSet, DerivedTypeVariable, EdgeLabel, LoadLabel, \
-        Node, StoreLabel, SubtypeConstraint, Variance
+from .graph import EdgeLabel, Node
+from .schema import AccessPathLabel, ConstraintSet, DerivedTypeVariable, LoadLabel, StoreLabel, \
+        SubtypeConstraint, Variance
 from .parser import SchemaParser
 import os
 import networkx
