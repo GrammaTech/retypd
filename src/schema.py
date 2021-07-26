@@ -26,7 +26,7 @@
 from abc import ABC
 from enum import Enum, unique
 from functools import reduce
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 import logging
 import os
 
@@ -339,3 +339,27 @@ class ConstraintSet:
     def __str__(self) -> str:
         nt = os.linesep + '\t'
         return f'ConstraintSet:{nt}{nt.join(map(str,self.subtype))}'
+
+
+class Program:
+    '''An entire binary. Contains a set of global variables and a mapping from procedures to sets of
+    constraints.
+    '''
+    def __init__(self,
+                 globs: Iterable[Union[DerivedTypeVariable, str]],
+                 procs: Iterable[Tuple[Union[DerivedTypeVariable, str], ConstraintSet]]) -> None:
+        self.globs: Set[DerivedTypeVariable] = set()
+        for glob in globs:
+            if isinstance(glob, str):
+                self.globs.add(DerivedTypeVariable(glob))
+            else:
+                self.globs.add(glob)
+        self.procs: Dict[DerivedTypeVariable, ConstraintSet] = {}
+        for name, constraints in procs:
+            if isinstance(name, str):
+                var = DerivedTypeVariable(name)
+            else:
+                var = name
+            if var in self.procs:
+                raise ValueError(f'Procedure doubly bound: {name}')
+            self.procs[var] = constraints

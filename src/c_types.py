@@ -21,7 +21,7 @@
 # endorsement should be inferred.
 
 from abc import ABC
-from typing import Sequence
+from typing import Sequence, Set
 
 class CType(ABC):
     @property
