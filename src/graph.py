@@ -57,6 +57,9 @@ class EdgeLabel:
     def __str__(self) -> str:
         return self._str
 
+    def __repr__(self) -> str:
+        return self._str
+
 
 class Node:
     '''A node in the graph of constraints. Node objects are immutable.

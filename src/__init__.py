@@ -30,8 +30,7 @@ After computation has finished, the constraints are available in the solver obje
 attribute.
 '''
 
-from .schema import ConstraintSet, DerefLabel, DerivedTypeVariable, InLabel, LoadLabel, OutLabel, \
-        StoreLabel, SubtypeConstraint, Variance
+from .schema import ConstraintSet, DerivedTypeVariable, Program, SubtypeConstraint, Variance
 from .graph import EdgeLabel, Node
 from .solver import Solver
 from .parser import SchemaParser

@@ -26,9 +26,10 @@
 from abc import ABC
 from enum import Enum, unique
 from functools import reduce
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
 import logging
 import os
+import networkx
 
 
 logging.basicConfig()
@@ -215,10 +216,12 @@ class DerivedTypeVariable:
             self.path: Sequence[AccessPathLabel] = ()
         else:
             self.path = tuple(path)
+        self._str = self.format()
+
+    def format(self, separator: str = '.') -> str:
         if self.path:
-            self._str: str = f'{self.base}.{".".join(map(str, self.path))}'
-        else:
-            self._str: str = self.base
+            return f'{self.base}.{".".join(map(str, self.path))}'
+        return self.base
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, DerivedTypeVariable) and
@@ -289,6 +292,9 @@ class DerivedTypeVariable:
     def __str__(self) -> str:
         return self._str
 
+    def __repr__(self) -> str:
+        return self.format('$')
+
 
 class SubtypeConstraint:
     '''A type constraint of the form left ⊑ right (see Definition 3.3)
@@ -313,6 +319,9 @@ class SubtypeConstraint:
     def __str__(self) -> str:
         return f'{self.left} ⊑ {self.right}'
 
+    def __repr__(self) -> str:
+        return str(self)
+
 
 class ConstraintSet:
     '''A (partitioned) set of type constraints
@@ -336,30 +345,60 @@ class ConstraintSet:
         self.subtype.add(constraint)
         return True
 
+    def __or__(self, other: 'ConstraintSet') -> 'ConstraintSet':
+        return ConstraintSet(self.subtype | other.subtype)
+
     def __str__(self) -> str:
         nt = os.linesep + '\t'
         return f'ConstraintSet:{nt}{nt.join(map(str,self.subtype))}'
 
+    def __repr__(self) -> str:
+        return f'ConstraintSet({repr(self.subtype)})'
+
+    def __iter__(self) -> Iterator[SubtypeConstraint]:
+        return iter(self.subtype)
+
+
+MaybeVar = Union[DerivedTypeVariable, str]
+
+def maybe_to_var(mv: MaybeVar) -> DerivedTypeVariable:
+    if isinstance(mv, str):
+        return DerivedTypeVariable(mv)
+    return mv
+
+
+Key = TypeVar('Key')
+Value = TypeVar('Value')
+MaybeDict = Union[Dict[Key, Value], Iterable[Tuple[Key, Value]]]
+
+def maybe_to_bindings(md: MaybeDict[Key, Value]) -> Iterable[Tuple[Key, Value]]:
+    if isinstance(md, dict):
+        return md.items()
+    return md
+
 
 class Program:
-    '''An entire binary. Contains a set of global variables and a mapping from procedures to sets of
-    constraints.
+    '''An entire binary. Contains a set of global variables, a mapping from procedures to sets of
+    constraints, and a call graph.
     '''
     def __init__(self,
-                 globs: Iterable[Union[DerivedTypeVariable, str]],
-                 procs: Iterable[Tuple[Union[DerivedTypeVariable, str], ConstraintSet]]) -> None:
-        self.globs: Set[DerivedTypeVariable] = set()
-        for glob in globs:
-            if isinstance(glob, str):
-                self.globs.add(DerivedTypeVariable(glob))
-            else:
-                self.globs.add(glob)
-        self.procs: Dict[DerivedTypeVariable, ConstraintSet] = {}
-        for name, constraints in procs:
-            if isinstance(name, str):
-                var = DerivedTypeVariable(name)
-            else:
-                var = name
-            if var in self.procs:
+                 globs: Iterable[MaybeVar],
+                 proc_constraints: MaybeDict[MaybeVar, ConstraintSet],
+                 callgraph: Union[MaybeDict[MaybeVar, Iterable[MaybeVar]],
+                                  networkx.DiGraph]) -> None:
+        self.globs = {maybe_to_var(glob) for glob in globs}
+        self.proc_constraints: Dict[DerivedTypeVariable, ConstraintSet] = {}
+        for name, constraints in maybe_to_bindings(proc_constraints):
+            var = maybe_to_var(name)
+            if var in self.proc_constraints:
                 raise ValueError(f'Procedure doubly bound: {name}')
-            self.procs[var] = constraints
+            self.proc_constraints[var] = constraints
+        if isinstance(callgraph, networkx.DiGraph):
+            self.callgraph = callgraph
+        else: # Dict or Iterable[Tuple]
+            self.callgraph = networkx.DiGraph()
+            for caller, callees in maybe_to_bindings(callgraph):
+                caller_var = maybe_to_var(caller)
+                self.callgraph.add_node(caller_var)
+                for callee in callees:
+                    self.callgraph.add_edge(caller_var, maybe_to_var(callee))

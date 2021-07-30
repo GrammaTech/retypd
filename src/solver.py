@@ -23,69 +23,23 @@
 '''The driver for the retypd analysis.
 '''
 
-from typing import Dict, List, Iterable, Set, Tuple, Union
+from typing import Dict, List, Iterable, Optional, Set
 from .graph import EdgeLabel, Node, ConstraintGraph
-from .schema import ConstraintSet, DerivedTypeVariable, SubtypeConstraint, Variance
+from .schema import ConstraintSet, DerivedTypeVariable, Program, SubtypeConstraint, Variance
 from .parser import SchemaParser
 import networkx
 
 
 class Solver:
-    '''Takes a saturated constraint graph and a set of interesting variables and generates subtype
-    constraints. The constructor does not perform the computation; rather, :py:class:`Solver`
-    objects are callable as thunks.
+    '''Takes a program and generates subtype constraints. The constructor does not perform the
+    computation; rather, :py:class:`Solver` objects are callable as thunks.
     '''
-    def __init__(self,
-                 constraints: ConstraintSet,
-                 interesting: Iterable[Union[DerivedTypeVariable, str]]) -> None:
-        self.constraint_graph = ConstraintGraph(constraints)
-        self.interesting: Set[DerivedTypeVariable] = set()
-        for var in interesting:
-            if isinstance(var, str):
-                self.interesting.add(DerivedTypeVariable(var))
-            else:
-                self.interesting.add(var)
+    def __init__(self, program: Program) -> None:
+        self.program = program
+        # TODO possibly make these values shared across a function
         self.next = 0
-        self.constraints: Set[SubtypeConstraint] = set()
+        self.loop_breakers: Set[DerivedTypeVariable] = set(program.callgraph) | set(program.globs)
         self._type_vars: Dict[DerivedTypeVariable, DerivedTypeVariable] = {}
-
-    def _add_forget_recall_edges(self) -> None:
-        '''Passes through to ConstraintGraph.add_forget_recall()
-        '''
-        self.constraint_graph.add_forget_recall()
-
-    def _saturate(self) -> None:
-        '''Passes through to ConstraintGraph.saturate()
-        '''
-        self.constraint_graph.saturate()
-
-    def _unforgettable_subgraph_split(self) -> None:
-        '''The algorithm, after saturation, only admits paths such that forget edges all precede
-        the first recall edge (if there is such an edge). To enforce this, we modify the graph by
-        splitting each node and the unlabeled and recall edges (but not forget edges!). Recall edges
-        in the original graph are changed to point to the 'unforgettable' duplicate of their
-        original target. As a result, no forget edges are reachable after traversing a single recall
-        edge.
-        '''
-        edges = set(self.graph.edges)
-        for head, tail in edges:
-            label = self.graph[head][tail].get('label')
-            if label and label.kind == EdgeLabel.Kind.FORGET:
-                continue
-            recall_head = head.split_unforgettable()
-            recall_tail = tail.split_unforgettable()
-            atts = self.graph[head][tail]
-            if label and label.kind == EdgeLabel.Kind.RECALL:
-                self.graph.remove_edge(head, tail)
-                self.graph.add_edge(head, recall_tail, **atts)
-            self.graph.add_edge(recall_head, recall_tail, **atts)
-
-    def lookup_type_var(self, var_str: str) -> DerivedTypeVariable:
-        '''Take a string, convert it to a DerivedTypeVariable, and if there is a type variable that
-        stands in for a prefix of it, change the prefix to the type variable.
-        '''
-        var = SchemaParser.parse_variable(var_str)
-        return self._get_type_var(var)
 
     def _get_type_var(self, var: DerivedTypeVariable) -> DerivedTypeVariable:
         '''Look up a type variable by name. If it (or a prefix of it) exists in _type_vars, form the
@@ -99,16 +53,187 @@ class Solver:
                 return DerivedTypeVariable(type_var.base, suffix)
         return var
 
+
+    def lookup_type_var(self, var_str: str) -> DerivedTypeVariable:
+        '''Take a string, convert it to a DerivedTypeVariable, and if there is a type variable that
+        stands in for a prefix of it, change the prefix to the type variable.
+        '''
+        var = SchemaParser.parse_variable(var_str)
+        return self._get_type_var(var)
+
     def _make_type_var(self, base: DerivedTypeVariable) -> None:
-        '''Retrieve or generate a type variable. Automatically adds this variable to the set of
-        interesting variables.
+        '''Generate a type variable.
         '''
         if base in self._type_vars:
             return
-        var = DerivedTypeVariable(f'τ_{self.next}')
+        var = DerivedTypeVariable(f'τ${self.next}')
         self._type_vars[base] = var
-        self.interesting.add(base)
         self.next += 1
+
+    def _generate_type_vars(self, graph: networkx.DiGraph) -> None:
+        '''Identify at least one node in each nontrivial SCC and generate a type variable for it.
+        This ensures that the path exploration algorithm will never loop; instead, it will generate
+        constraints that are recursive on the type variable.
+
+        To do so, find strongly connected components (such that loops may contain forget or recall
+        edges but never both). In each nontrivial SCC (in reverse topological order), identify all
+        vertices with predecessors in a strongly connected component that has not yet been visited.
+        If any of the identified variables is a prefix of another (e.g., φ and φ.load.σ8@0),
+        eliminate the longer one. Each of these variables is added to the set of variables at which
+        graph exploration stops. Excepting those with a prefix already in the set, these variables
+        are made into named type variables.
+
+        Once all SCCs have been processed, minimize the set of candidates as before (remove
+        variables that have a prefix in the set) and emit type variables for each remaining
+        candidate.
+        '''
+        forget_graph = networkx.DiGraph(graph)
+        recall_graph = networkx.DiGraph(graph)
+        for head, tail in graph.edges:
+            label = graph[head][tail].get('label')
+            if label:
+                if label.kind == EdgeLabel.Kind.FORGET:
+                    recall_graph.remove_edge(head, tail)
+                else:
+                    forget_graph.remove_edge(head, tail)
+        loop_breakers: Set[DerivedTypeVariable] = set()
+        for fr_graph in [forget_graph, recall_graph]:
+            condensation = networkx.condensation(fr_graph)
+            visited = set()
+            for scc_node in reversed(list(networkx.topological_sort(condensation))):
+                candidates: Set[DerivedTypeVariable] = set()
+                scc = condensation.nodes[scc_node]['members']
+                visited.add(scc_node)
+                if len(scc) == 1:
+                    continue
+                for node in scc:
+                    for predecessor in graph.predecessors(node):
+                        scc_index = condensation.graph['mapping'][predecessor]
+                        if scc_index not in visited:
+                            candidates.add(node.base)
+                candidates = Solver._filter_no_prefix(candidates)
+                self.loop_breakers |= candidates
+        for var in Solver._filter_no_prefix(loop_breakers):
+            self._make_type_var(var)
+
+    def _maybe_constraint(self,
+                          origin: Node,
+                          dest: Node,
+                          string: List[EdgeLabel]) -> Optional[SubtypeConstraint]:
+        '''Generate constraints by adding the forgets in string to origin and the recalls in string
+        to dest. If both of the generated vertices are covariant (the empty string's variance is
+        covariant, so only covariant vertices can represent a derived type variable without an
+        elided portion of its path) and if the two variables are not equal, emit a constraint.
+        '''
+        lhs = origin
+        rhs = dest
+        for label in string:
+            if label.kind == EdgeLabel.Kind.FORGET:
+                rhs = rhs.recall(label.capability)
+            else:
+                lhs = lhs.recall(label.capability)
+        if (lhs.suffix_variance == Variance.COVARIANT and
+                rhs.suffix_variance == Variance.COVARIANT):
+            lhs_var = self._get_type_var(lhs.base)
+            rhs_var = self._get_type_var(rhs.base)
+            if lhs_var != rhs_var:
+                return SubtypeConstraint(lhs_var, rhs_var)
+        return None
+
+    def _generate_constraints(self,
+                              graph: networkx.DiGraph,
+                              endpoints: Set[DerivedTypeVariable]) -> ConstraintSet:
+        '''Now that type variables have been computed, no cycles can be produced. Find paths from
+        interesting nodes to other interesting nodes and generate constraints.
+        '''
+        constraints = ConstraintSet()
+        def explore(origin: Node,
+                    path: List[Node] = [],
+                    string: List[EdgeLabel] = []) -> None:
+            '''Find all non-empty paths that begin and end members of self.loop_breakers, where the
+            beginning and/or the end is also in nodes. Return the list of labels encountered along the
+            way as well as the origin and destination.
+            '''
+            if path and origin.base in self.loop_breakers:
+                constraint = self._maybe_constraint(path[0], origin, string)
+                if constraint:
+                    constraints.add(constraint)
+                return
+            if origin in path:
+                return
+            path = list(path)
+            path.append(origin)
+            if origin in graph:
+                for succ in graph[origin]:
+                    label = graph[origin][succ].get('label')
+                    new_string = list(string)
+                    if label:
+                        new_string.append(label)
+                    explore(succ, path, new_string)
+        for origin in {node for node in graph.nodes if node.base in self.loop_breakers}:
+            explore(origin)
+        return constraints
+
+    def __call__(self) -> Dict[DerivedTypeVariable, ConstraintSet]:
+        '''Perform the retypd calculation.
+        '''
+        accumulated = networkx.DiGraph()
+        derived: Dict[DerivedTypeVariable, ConstraintSet] = {}
+        scc_dag = networkx.condensation(self.program.callgraph)
+        # The idea here is that functions need to satisfy their clients' needs for inputs and need
+        # to use their clients' return values without overextending them. So we do a reverse
+        # topological order on functions, lumping SCCs together, and slowly extend the graph.
+        # It would be interesting to explore how this algorithm compares with a more restricted one
+        # as far as asymptotic complexity, but this is simple to understand and so the right choice
+        # for now. I suspect that most of the graphs are fairly sparse and so the practical reality
+        # is that there aren't many paths.
+        for scc_node in reversed(list(networkx.topological_sort(scc_dag))):
+            scc = scc_dag.nodes[scc_node]['members']
+            for proc in scc:
+                graph = ConstraintGraph(self.program.proc_constraints[proc])
+                # TODO I think these three calls should move into the constructor
+                graph.add_forget_recall()
+                graph.saturate()
+                Solver._remove_self_loops(graph)
+                accumulated.add_edges_from(graph.graph.edges)
+                for head, tail in graph.graph.edges:
+                    label = graph.graph[head][tail].get('label')
+                    if label:
+                        accumulated[head][tail]['label'] = label
+            # make a copy; some of this analysis mutates the graph
+            scc_graph = networkx.DiGraph(accumulated)
+            # TODO could this be done on the proc graph? Does mutual recursion potentially introduce
+            # loops?
+            self._generate_type_vars(scc_graph)
+            Solver._unforgettable_subgraph_split(scc_graph)
+            generated = self._generate_constraints(scc_graph, scc)
+            derived.update({proc: generated for proc in scc})
+        # generate constraints for globals once all information is available
+        generated = self._generate_constraints(scc_graph, self.program.globs)
+        derived.update({glob: generated for glob in self.program.globs})
+        return derived
+
+    @staticmethod
+    def _unforgettable_subgraph_split(graph: networkx.DiGraph) -> None:
+        '''The algorithm, after saturation, only admits paths such that forget edges all precede
+        the first recall edge (if there is such an edge). To enforce this, we modify the graph by
+        splitting each node and the unlabeled and recall edges (but not forget edges!). Recall edges
+        in the original graph are changed to point to the 'unforgettable' duplicate of their
+        original target. As a result, no forget edges are reachable after traversing a single recall
+        edge.
+        '''
+        edges = set(graph.edges)
+        for head, tail in edges:
+            label = graph[head][tail].get('label')
+            if label and label.kind == EdgeLabel.Kind.FORGET:
+                continue
+            recall_head = head.split_unforgettable()
+            recall_tail = tail.split_unforgettable()
+            atts = graph[head][tail]
+            if label and label.kind == EdgeLabel.Kind.RECALL:
+                graph.remove_edge(head, tail)
+                graph.add_edge(head, recall_tail, **atts)
+            graph.add_edge(recall_head, recall_tail, **atts)
 
     @staticmethod
     def _filter_no_prefix(variables: Iterable[DerivedTypeVariable]) -> Set[DerivedTypeVariable]:
@@ -127,125 +252,10 @@ class Solver:
                 selected.add(candidate)
         return selected
 
-    def _generate_type_vars(self) -> None:
-        '''Identify at least one node in each nontrivial SCC and generate a type variable for it.
-        This ensures that the path exploration algorithm will never loop; instead, it will generate
-        constraints that are recursive on the type variable.
-
-        To do so, find strongly connected components (such that loops may contain forget or recall
-        edges but never both). In each nontrivial SCC (in reverse topological order), identify all
-        vertices with predecessors in a strongly connected component that has not yet been visited.
-        If any of the identified variables is a prefix of another (e.g., φ and φ.load.σ8@0),
-        eliminate the longer one. Add these variables to a set of candidates and to the set of
-        interesting variables, where path execution will stop.
-
-        Once all SCCs have been processed, minimize the set of candidates as before (remove
-        variables that have a prefix in the set) and emit type variables for each remaining
-        candidate.
-        '''
-        forget_graph = networkx.DiGraph(self.graph)
-        recall_graph = networkx.DiGraph(self.graph)
-        for head, tail in self.graph.edges:
-            label = self.graph[head][tail].get('label')
-            if label:
-                if label.kind == EdgeLabel.Kind.FORGET:
-                    recall_graph.remove_edge(head, tail)
-                else:
-                    forget_graph.remove_edge(head, tail)
-        loop_breakers: Set[DerivedTypeVariable] = set()
-        for graph in [forget_graph, recall_graph]:
-            condensation = networkx.condensation(graph)
-            visited = set()
-            for scc_node in reversed(list(networkx.topological_sort(condensation))):
-                candidates: Set[DerivedTypeVariable] = set()
-                scc = condensation.nodes[scc_node]['members']
-                visited.add(scc_node)
-                if len(scc) == 1:
-                    continue
-                for node in scc:
-                    for predecessor in self.graph.predecessors(node):
-                        scc_index = condensation.graph['mapping'][predecessor]
-                        if scc_index not in visited:
-                            candidates.add(node.base)
-                candidates = Solver._filter_no_prefix(candidates)
-                loop_breakers |= candidates
-                self.interesting |= candidates
-        loop_breakers = Solver._filter_no_prefix(loop_breakers)
-        for var in loop_breakers:
-            self._make_type_var(var)
-
-    def _find_paths(self,
-                    origin: Node,
-                    path: List[Node] = [],
-                    string: List[EdgeLabel] = []) -> \
-                        List[Tuple[List[EdgeLabel], Node]]:
-        '''Find all non-empty paths from origin to nodes that represent interesting type variables.
-        Return the list of labels encountered along the way as well as the destination reached.
-        '''
-        if path and origin.base in self.interesting:
-            return [(string, origin)]
-        if origin in path:
-            return []
-        path = list(path)
-        path.append(origin)
-        all_paths: List[Tuple[List[EdgeLabel], Node]] = []
-        if origin in self.graph:
-            for succ in self.graph[origin]:
-                label = self.graph[origin][succ].get('label')
-                new_string = list(string)
-                if label:
-                    new_string.append(label)
-                all_paths += self._find_paths(succ, path, new_string)
-        return all_paths
-
-    def _maybe_add_constraint(self,
-                        origin: Node,
-                        dest: Node,
-                        string: List[EdgeLabel]) -> None:
-        '''Generate constraints by adding the forgets in string to origin and the recalls in string
-        to dest. If both of the generated vertices are covariant (the empty string's variance is
-        covariant, so only covariant vertices can represent a derived type variable without an
-        elided portion of its path) and if the two variables are not equal, emit a constraint.
-        '''
-        lhs = origin
-        rhs = dest
-        for label in string:
-            if label.kind == EdgeLabel.Kind.FORGET:
-                rhs = rhs.recall(label.capability)
-            else:
-                lhs = lhs.recall(label.capability)
-        if (lhs.suffix_variance == Variance.COVARIANT and
-                rhs.suffix_variance == Variance.COVARIANT):
-            lhs_var = self._get_type_var(lhs.base)
-            rhs_var = self._get_type_var(rhs.base)
-            if lhs_var != rhs_var:
-                constraint = SubtypeConstraint(lhs_var, rhs_var)
-                self.constraints.add(constraint)
-
-    def _generate_constraints(self) -> None:
-        '''Now that type variables have been computed, no cycles can be produced. Find paths from
-        interesting nodes to other interesting nodes and generate constraints.
-        '''
-        for node in self.graph.nodes:
-            if node.base in self.interesting:
-                for string, dest in self._find_paths(node):
-                    self._maybe_add_constraint(node, dest, string)
-
-    def _remove_self_loops(self) -> None:
+    @staticmethod
+    def _remove_self_loops(graph: ConstraintGraph) -> None:
         '''Loops from a node directly to itself are not useful, so it's useful to remove them.
         '''
-        self.graph.remove_edges_from({(node, node) for node in self.graph.nodes})
-
-    def __call__(self) -> Set[SubtypeConstraint]:
-        '''Perform the retypd calculation.
-        '''
-        self._add_forget_recall_edges()
-        self._saturate()
-        self.graph = networkx.DiGraph(self.constraint_graph.graph)
-        self._remove_self_loops()
-        self._generate_type_vars()
-        self._unforgettable_subgraph_split()
-        self._generate_constraints()
-        return self.constraints
+        graph.graph.remove_edges_from({(node, node) for node in graph.graph.nodes})
 
 
