@@ -38,7 +38,8 @@ class Solver:
         self.program = program
         # TODO possibly make these values shared across a function
         self.next = 0
-        self.loop_breakers: Set[DerivedTypeVariable] = set(program.callgraph) | set(program.globs)
+        self.loop_breakers: Set[DerivedTypeVariable] = \
+                set(program.callgraph) | set(program.globs) | program.types.internal_types
         self._type_vars: Dict[DerivedTypeVariable, DerivedTypeVariable] = {}
 
     def _get_type_var(self, var: DerivedTypeVariable) -> DerivedTypeVariable:
@@ -170,7 +171,9 @@ class Solver:
                     if label:
                         new_string.append(label)
                     explore(succ, path, new_string)
-        for origin in {node for node in graph.nodes if node.base in self.loop_breakers}:
+        for origin in {node for node in graph.nodes if node.base in self.loop_breakers and
+                                                       node._unforgettable ==
+                                                       Node.Unforgettable.PRE_RECALL}:
             explore(origin)
         return constraints
 

@@ -5,7 +5,7 @@ from abc import ABC
 import networkx
 import unittest
 
-from retypd import ConstraintSet, Program, SchemaParser, Solver
+from retypd import ConstraintSet, DummyLattice, Program, SchemaParser, Solver
 
 class SchemaTest(ABC):
     def graphs_are_equal(self, graph, edge_set) -> None:
@@ -44,7 +44,7 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
         x = SchemaParser.parse_variable('x')
         y = SchemaParser.parse_variable('y')
 
-        program = Program({x, y}, {f: constraints}, {f: {}})
+        program = Program(DummyLattice(), {x, y}, {f: constraints}, {f: {}})
         solver = Solver(program)
         generated = solver()
 
@@ -63,7 +63,7 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
         A = SchemaParser.parse_variable('A')
         B = SchemaParser.parse_variable('B')
 
-        program = Program({A, B}, {f: constraints}, {f: {}})
+        program = Program(DummyLattice(), {A, B}, {f: constraints}, {f: {}})
         solver = Solver(program)
         generated = solver()
 
@@ -86,10 +86,11 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
         constraints[F].add(SchemaParser.parse_constraint("φ.load.σ4@4 ⊑ α'"))
         constraints[F].add(SchemaParser.parse_constraint("α' ⊑ close.in_0"))
         constraints[F].add(SchemaParser.parse_constraint("close.out ⊑ F.out"))
+        # How to make lattice elements into DTVs?
         constraints[close].add(SchemaParser.parse_constraint("close.in_0 ⊑ #FileDescriptor"))
         constraints[close].add(SchemaParser.parse_constraint("#SuccessZ ⊑ close.out"))
 
-        program = Program({F, '#FileDescriptor', '#SuccessZ'}, constraints, {F: {close}})
+        program = Program(DummyLattice(), {F}, constraints, {F: {close}})
         solver = Solver(program)
         generated = solver()
 

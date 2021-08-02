@@ -26,7 +26,8 @@
 from abc import ABC
 from enum import Enum, unique
 from functools import reduce
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Dict, Generic, Iterable, Iterator, List, Optional, Sequence, Set, Tuple, \
+        TypeVar, Union
 import logging
 import os
 import networkx
@@ -359,6 +360,32 @@ class ConstraintSet:
         return iter(self.subtype)
 
 
+T = TypeVar('T')
+
+class Lattice(ABC, Generic[T]):
+    @property
+    def atomic_types(self) -> Set[T]:
+        pass
+
+    @property
+    def internal_types(self) -> Set[T]:
+        pass
+
+    @property
+    def top(self) -> T:
+        pass
+
+    @property
+    def bottom(self) -> T:
+        pass
+
+    def meet(self, t: T, v: T) -> T:
+        pass
+
+    def join(self, t: T, v: T) -> T:
+        pass
+
+
 MaybeVar = Union[DerivedTypeVariable, str]
 
 def maybe_to_var(mv: MaybeVar) -> DerivedTypeVariable:
@@ -382,10 +409,12 @@ class Program:
     constraints, and a call graph.
     '''
     def __init__(self,
+                 types: Lattice[DerivedTypeVariable],
                  globs: Iterable[MaybeVar],
                  proc_constraints: MaybeDict[MaybeVar, ConstraintSet],
                  callgraph: Union[MaybeDict[MaybeVar, Iterable[MaybeVar]],
                                   networkx.DiGraph]) -> None:
+        self.types = types
         self.globs = {maybe_to_var(glob) for glob in globs}
         self.proc_constraints: Dict[DerivedTypeVariable, ConstraintSet] = {}
         for name, constraints in maybe_to_bindings(proc_constraints):
