@@ -211,11 +211,11 @@ class Solver:
             self._generate_type_vars(scc_graph)
             Solver._unforgettable_subgraph_split(scc_graph)
             generated = self._generate_constraints(scc_graph)
-            sketches.add_sketches(generated)
+            sketches.add_constraints(generated)
             derived.update({proc: generated for proc in scc})
         # generate constraints for globals once all information is available
         generated = self._generate_constraints(scc_graph)
-        sketches.add_sketches(generated)
+        sketches.add_constraints(generated)
         derived.update({glob: generated for glob in self.program.globs})
         return (derived, sketches)
 
@@ -290,12 +290,17 @@ SkNode = Union[SketchNode, DerivedTypeVariable]
 
 
 class Sketches:
+    '''The set of sketches from a set of constraints. Intended to be updated incrementally, per the
+    Solver's reverse topological ordering.
+    '''
     def __init__(self, solver: Solver) -> None:
         self.sketches = networkx.DiGraph()
         self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
         self.solver = solver
 
     def make_node(self, variable: DerivedTypeVariable) -> SketchNode:
+        '''Make a node from a DTV. Compute its atom from its access path.
+        '''
         if variable in self.lookup:
             return self.lookup[variable]
         variance = variable.path_variance
@@ -307,6 +312,10 @@ class Sketches:
         return result
 
     def add_variable(self, variable: DerivedTypeVariable) -> None:
+        '''Add a variable and its prefixes to the set of sketches. Each node's atomic type is either
+        TOP or BOTTOM, depending on the variance of the variable's access path. If the variable
+        already exists, skip it.
+        '''
         if variable in self.lookup:
             return
         node = self.make_node(variable)
@@ -320,11 +329,15 @@ class Sketches:
             prefix = variable.largest_prefix
 
     def replace_edge(self, head: SkNode, tail: SkNode, new_head: SkNode, new_tail: SkNode) -> None:
+        '''Replace an edge, keeping its attributes intact.
+        '''
         atts = self.sketches[head][tail]
         self.sketches.remove_edge(head, tail)
         self.sketches.add_edge(new_head, new_tail, **atts)
 
     def replace_node(self, old: SketchNode, new: SkNode) -> None:
+        '''Replace a node, updating incoming and outgoing edges but preserving their attributes.
+        '''
         for pred in self.sketches.predecessors(old):
             self.replace_edge(pred, old, pred, new)
         for succ in self.sketches.successors(old):
@@ -346,7 +359,9 @@ class Sketches:
         result = variable
         print(f'normalized {variable} to {result}')
 
-    def add_sketches(self, constraints: ConstraintSet) -> None:
+    def add_constraints(self, constraints: ConstraintSet) -> None:
+        '''Extend the set of sketches with the new set of constraints.
+        '''
         for constraint in constraints:
             self.add_variable(constraint.left)
             self.add_variable(constraint.right)
