@@ -26,11 +26,12 @@
 from abc import ABC
 from enum import Enum, unique
 from functools import reduce
-from typing import Any, Dict, Generic, Iterable, Iterator, List, Optional, Sequence, Set, Tuple, \
-        TypeVar, Union
+from typing import Any, Dict, FrozenSet, Generic, Iterable, Iterator, List, Optional, Sequence, \
+        Tuple, TypeVar, Union
 import logging
 import os
 import networkx
+from .c_types import CType
 
 
 logging.basicConfig()
@@ -237,6 +238,7 @@ class DerivedTypeVariable:
     def __hash__(self) -> int:
         return hash(self.base) ^ hash(self.path)
 
+    @property
     def largest_prefix(self) -> Optional['DerivedTypeVariable']:
         '''Return the prefix obtained by removing the last item from the type variable's path. If
         there is no path, return None.
@@ -258,6 +260,7 @@ class DerivedTypeVariable:
                 return None
         return other.path[len(self.path):]
 
+    @property
     def tail(self) -> AccessPathLabel:
         '''Retrieve the last item in the access path, if any. Return None if
         the path is empty.
@@ -274,6 +277,11 @@ class DerivedTypeVariable:
         path.append(suffix)
         return DerivedTypeVariable(self.base, path)
 
+    def extend(self, suffix: Iterable[AccessPathLabel]) -> 'DerivedTypeVariable':
+        path: List[AccessPathLabel] = list(self.path)
+        path.extend(suffix)
+        return DerivedTypeVariable(self.base, path)
+
     def get_single_suffix(self, prefix: 'DerivedTypeVariable') -> Optional[AccessPathLabel]:
         '''If :param:`prefix` is a prefix of :param:`self` with exactly one additional
         :py:class:`AccessPathLabel`, return the additional label. If not, return `None`.
@@ -282,8 +290,13 @@ class DerivedTypeVariable:
                 len(self.path) != (len(prefix.path) + 1) or
                 self.path[:-1] != prefix.path):
             return None
-        return self.tail()
+        return self.tail
 
+    @property
+    def base_var(self) -> 'DerivedTypeVariable':
+        return DerivedTypeVariable(self.base)
+
+    @property
     def path_variance(self) -> Variance:
         '''Determine the variance of the access path.
         '''
@@ -364,11 +377,11 @@ T = TypeVar('T')
 
 class Lattice(ABC, Generic[T]):
     @property
-    def atomic_types(self) -> Set[T]:
+    def atomic_types(self) -> FrozenSet[T]:
         pass
 
     @property
-    def internal_types(self) -> Set[T]:
+    def internal_types(self) -> FrozenSet[T]:
         pass
 
     @property

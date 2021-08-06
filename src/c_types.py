@@ -29,6 +29,10 @@ class CType(ABC):
     def size(self) -> int:
         pass
 
+    @property
+    def comment(self) -> Optional[str]:
+        return None
+
     def declare(self, name: str) -> str:
         return f'{self} {name}'
 
@@ -205,7 +209,7 @@ class StructType(CompoundType):
 
 class UnionType(CompoundType):
     next_id = 0
-    def __init__(self, fields: Set[CType], name: Optional[str]=None) -> None:
+    def __init__(self, fields: Iterable[Field], name: Optional[str]=None) -> None:
         self._fields = fields
         if name:
             self._name = name

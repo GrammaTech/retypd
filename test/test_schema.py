@@ -46,9 +46,9 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
 
         program = Program(DummyLattice(), {x, y}, {f: constraints}, {f: {}})
         solver = Solver(program)
-        generated = solver()
+        (gen_const, sketches) = solver()
 
-        self.assertTrue(SchemaParser.parse_constraint('x ⊑ y') in generated[f])
+        self.assertTrue(SchemaParser.parse_constraint('x ⊑ y') in gen_const[f])
 
     def test_other_simple_constraints(self):
         '''Another simple test from the paper (the program modeled in Figure 14 on p. 26).
@@ -65,9 +65,9 @@ class BasicSchemaTest(SchemaTest, unittest.TestCase):
 
         program = Program(DummyLattice(), {A, B}, {f: constraints}, {f: {}})
         solver = Solver(program)
-        generated = solver()
+        (gen_const, sketches) = solver()
 
-        self.assertTrue(SchemaParser.parse_constraint('A ⊑ B') in generated[f])
+        self.assertTrue(SchemaParser.parse_constraint('A ⊑ B') in gen_const[f])
 
 
 class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
@@ -86,20 +86,20 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
         constraints[F].add(SchemaParser.parse_constraint("φ.load.σ4@4 ⊑ α'"))
         constraints[F].add(SchemaParser.parse_constraint("α' ⊑ close.in_0"))
         constraints[F].add(SchemaParser.parse_constraint("close.out ⊑ F.out"))
-        # How to make lattice elements into DTVs?
+
         constraints[close].add(SchemaParser.parse_constraint("close.in_0 ⊑ #FileDescriptor"))
         constraints[close].add(SchemaParser.parse_constraint("#SuccessZ ⊑ close.out"))
 
         program = Program(DummyLattice(), {F}, constraints, {F: {close}})
         solver = Solver(program)
-        generated = solver()
+        (gen_const, sketches) = solver()
 
         tv = solver.lookup_type_var('φ')
-        self.assertTrue(SchemaParser.parse_constraint('#SuccessZ ⊑ F.out') in generated[F])
-        self.assertTrue(SchemaParser.parse_constraint(f'F.in_0 ⊑ {tv}') in generated[F])
-        self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@0 ⊑ {tv}') in generated[F])
+        self.assertTrue(SchemaParser.parse_constraint('#SuccessZ ⊑ F.out') in gen_const[F])
+        self.assertTrue(SchemaParser.parse_constraint(f'F.in_0 ⊑ {tv}') in gen_const[F])
+        self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@0 ⊑ {tv}') in gen_const[F])
         self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@4 ⊑ #FileDescriptor') in
-                generated[F])
+                gen_const[F])
 
 if __name__ == '__main__':
     unittest.main()

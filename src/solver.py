@@ -23,10 +23,11 @@
 '''The driver for the retypd analysis.
 '''
 
-from typing import Dict, List, Iterable, Optional, Set
+from typing import Dict, FrozenSet, List, Iterable, Optional, Set, Tuple, Union
 from .graph import EdgeLabel, Node, ConstraintGraph
 from .schema import ConstraintSet, DerivedTypeVariable, Program, SubtypeConstraint, Variance
 from .parser import SchemaParser
+import os
 import networkx
 
 
@@ -38,8 +39,9 @@ class Solver:
         self.program = program
         # TODO possibly make these values shared across a function
         self.next = 0
-        self.loop_breakers: Set[DerivedTypeVariable] = \
+        self.endpoints: Set[DerivedTypeVariable] = \
                 set(program.callgraph) | set(program.globs) | program.types.internal_types
+        self.interesting: FrozenSet[DerivedTypeVariable] = frozenset(self.endpoints)
         self._type_vars: Dict[DerivedTypeVariable, DerivedTypeVariable] = {}
 
     def _get_type_var(self, var: DerivedTypeVariable) -> DerivedTypeVariable:
@@ -54,12 +56,12 @@ class Solver:
                 return DerivedTypeVariable(type_var.base, suffix)
         return var
 
-
-    def lookup_type_var(self, var_str: str) -> DerivedTypeVariable:
+    def lookup_type_var(self, var: Union[str, DerivedTypeVariable]) -> DerivedTypeVariable:
         '''Take a string, convert it to a DerivedTypeVariable, and if there is a type variable that
         stands in for a prefix of it, change the prefix to the type variable.
         '''
-        var = SchemaParser.parse_variable(var_str)
+        if isinstance(var, str):
+            var = SchemaParser.parse_variable(var)
         return self._get_type_var(var)
 
     def _make_type_var(self, base: DerivedTypeVariable) -> None:
@@ -97,7 +99,7 @@ class Solver:
                     recall_graph.remove_edge(head, tail)
                 else:
                     forget_graph.remove_edge(head, tail)
-        loop_breakers: Set[DerivedTypeVariable] = set()
+        endpoints: Set[DerivedTypeVariable] = set()
         for fr_graph in [forget_graph, recall_graph]:
             condensation = networkx.condensation(fr_graph)
             visited = set()
@@ -113,8 +115,9 @@ class Solver:
                         if scc_index not in visited:
                             candidates.add(node.base)
                 candidates = Solver._filter_no_prefix(candidates)
-                self.loop_breakers |= candidates
-        for var in Solver._filter_no_prefix(loop_breakers):
+                self.endpoints |= candidates
+                endpoints |= candidates
+        for var in Solver._filter_no_prefix(endpoints):
             self._make_type_var(var)
 
     def _maybe_constraint(self,
@@ -141,9 +144,7 @@ class Solver:
                 return SubtypeConstraint(lhs_var, rhs_var)
         return None
 
-    def _generate_constraints(self,
-                              graph: networkx.DiGraph,
-                              endpoints: Set[DerivedTypeVariable]) -> ConstraintSet:
+    def _generate_constraints(self, graph: networkx.DiGraph) -> ConstraintSet:
         '''Now that type variables have been computed, no cycles can be produced. Find paths from
         interesting nodes to other interesting nodes and generate constraints.
         '''
@@ -151,11 +152,10 @@ class Solver:
         def explore(origin: Node,
                     path: List[Node] = [],
                     string: List[EdgeLabel] = []) -> None:
-            '''Find all non-empty paths that begin and end members of self.loop_breakers, where the
-            beginning and/or the end is also in nodes. Return the list of labels encountered along the
-            way as well as the origin and destination.
+            '''Find all non-empty paths that begin and end members of self.interesting. Return the
+            list of labels encountered along the way as well as the origin and destination.
             '''
-            if path and origin.base in self.loop_breakers:
+            if path and origin.base in self.endpoints:
                 constraint = self._maybe_constraint(path[0], origin, string)
                 if constraint:
                     constraints.add(constraint)
@@ -171,18 +171,19 @@ class Solver:
                     if label:
                         new_string.append(label)
                     explore(succ, path, new_string)
-        for origin in {node for node in graph.nodes if node.base in self.loop_breakers and
+        for origin in {node for node in graph.nodes if node.base in self.endpoints and
                                                        node._unforgettable ==
                                                        Node.Unforgettable.PRE_RECALL}:
             explore(origin)
         return constraints
 
-    def __call__(self) -> Dict[DerivedTypeVariable, ConstraintSet]:
+    def __call__(self) -> Tuple[Dict[DerivedTypeVariable, ConstraintSet], 'Sketches']:
         '''Perform the retypd calculation.
         '''
         accumulated = networkx.DiGraph()
         derived: Dict[DerivedTypeVariable, ConstraintSet] = {}
         scc_dag = networkx.condensation(self.program.callgraph)
+        sketches = Sketches(self)
         # The idea here is that functions need to satisfy their clients' needs for inputs and need
         # to use their clients' return values without overextending them. So we do a reverse
         # topological order on functions, lumping SCCs together, and slowly extend the graph.
@@ -209,12 +210,14 @@ class Solver:
             # loops?
             self._generate_type_vars(scc_graph)
             Solver._unforgettable_subgraph_split(scc_graph)
-            generated = self._generate_constraints(scc_graph, scc)
+            generated = self._generate_constraints(scc_graph)
+            sketches.add_sketches(generated)
             derived.update({proc: generated for proc in scc})
         # generate constraints for globals once all information is available
-        generated = self._generate_constraints(scc_graph, self.program.globs)
+        generated = self._generate_constraints(scc_graph)
+        sketches.add_sketches(generated)
         derived.update({glob: generated for glob in self.program.globs})
-        return derived
+        return (derived, sketches)
 
     @staticmethod
     def _unforgettable_subgraph_split(graph: networkx.DiGraph) -> None:
@@ -262,3 +265,110 @@ class Solver:
         graph.graph.remove_edges_from({(node, node) for node in graph.graph.nodes})
 
 
+class SketchNode:
+    def __init__(self, dtv: DerivedTypeVariable, atom: DerivedTypeVariable) -> None:
+        self.dtv = dtv
+        self.atom = atom
+
+    # the atomic type of a DTV is an annotation, not part of its identity
+    def __eq__(self, other) -> bool:
+        if isinstance(other, SketchNode):
+            return self.dtv == other.dtv
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self.dtv)
+
+    def __str__(self) -> str:
+        return f'{self.dtv} ({self.atom})'
+
+    def __repr__(self) -> str:
+        return f'SketchNode({self})'
+
+
+SkNode = Union[SketchNode, DerivedTypeVariable]
+
+
+class Sketches:
+    def __init__(self, solver: Solver) -> None:
+        self.sketches = networkx.DiGraph()
+        self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
+        self.solver = solver
+
+    def make_node(self, variable: DerivedTypeVariable) -> SketchNode:
+        if variable in self.lookup:
+            return self.lookup[variable]
+        variance = variable.path_variance
+        if variance == Variance.COVARIANT:
+            result = SketchNode(variable, self.solver.program.types.top)
+        else:
+            result = SketchNode(variable, self.solver.program.types.bottom)
+        self.lookup[variable] = result
+        return result
+
+    def add_variable(self, variable: DerivedTypeVariable) -> None:
+        if variable in self.lookup:
+            return
+        node = self.make_node(variable)
+        self.sketches.add_node(node)
+        prefix = variable.largest_prefix
+        while prefix:
+            prefix_node = self.make_node(prefix)
+            self.sketches.add_edge(prefix_node, node, label=variable.tail)
+            variable = prefix
+            node = prefix_node
+            prefix = variable.largest_prefix
+
+    def replace_edge(self, head: SkNode, tail: SkNode, new_head: SkNode, new_tail: SkNode) -> None:
+        atts = self.sketches[head][tail]
+        self.sketches.remove_edge(head, tail)
+        self.sketches.add_edge(new_head, new_tail, **atts)
+
+    def replace_node(self, old: SketchNode, new: SkNode) -> None:
+        for pred in self.sketches.predecessors(old):
+            self.replace_edge(pred, old, pred, new)
+        for succ in self.sketches.successors(old):
+            self.replace_edge(old, succ, new, succ)
+
+    # TODO dead code - remove when sure it isn't needed
+    def normalize(self) -> None:
+        # Sort to make this operation deterministic; it's possible that multiple interesting
+        # variables could reach the same node. NB this doesn't affect correctness, but it does make
+        # debugging easier.
+        for variable in sorted(self.solver.interesting):
+            node = self.make_node(variable)
+            #
+
+        # TODO old dead code
+        normal = self.solver.lookup_type_var(variable.base_var)
+        if normal:
+            result = normal.extend(variable.path)
+        result = variable
+        print(f'normalized {variable} to {result}')
+
+    def add_sketches(self, constraints: ConstraintSet) -> None:
+        for constraint in constraints:
+            self.add_variable(constraint.left)
+            self.add_variable(constraint.right)
+        # remove cycles by replacing nodes with variables when downstream from themselves
+        for cycle in networkx.simple_cycles(self.sketches):
+            node = cycle[1]
+            last = cycle[-1]
+            self.replace_edge(last, node, last, node.dtv)
+        # refine the types of the nodes. NB this will ignore labels, as self.lookup only tracks
+        # nodes
+        for constraint in constraints:
+            left = constraint.left
+            right = constraint.right
+            if left in self.solver.program.types.internal_types:
+                node = self.lookup[right]
+                node.atom = self.solver.program.types.join(node.atom, left)
+            if right in self.solver.program.types.internal_types:
+                node = self.lookup[left]
+                node.atom = self.solver.program.types.meet(node.atom, right)
+
+    def __str__(self) -> str:
+        if self.lookup:
+            nt = f'{os.linesep}\t'
+            return f'sketches:{nt}{nt.join(map(lambda k: f"{k} → {self.lookup[k].atom}", self.lookup))}'
+        return 'no sketches'
