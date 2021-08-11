@@ -144,6 +144,9 @@ class ConstraintGraph:
         self.graph = networkx.DiGraph()
         for constraint in constraints.subtype:
             self.add_edges(constraint.left, constraint.right)
+        self.add_forget_recall()
+        self.saturate()
+        self._remove_self_loops()
 
     def add_edge(self, head: Node, tail: Node, **atts) -> bool:
         '''Add an edge to the graph. The optional atts dict should include, if anything, a mapping
@@ -228,6 +231,11 @@ class ConstraintGraph:
                         label = StoreLabel.instance()
                     if label:
                         add_forgets(x.inverse(), {(label, origin_z)})
+
+    def _remove_self_loops(self) -> None:
+        '''Loops from a node directly to itself are not useful, so it's useful to remove them.
+        '''
+        self.graph.remove_edges_from({(node, node) for node in self.graph.nodes})
 
     @staticmethod
     def edge_to_str(graph, edge: Tuple[Node, Node]) -> str:

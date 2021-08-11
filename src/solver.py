@@ -23,7 +23,7 @@
 '''The driver for the retypd analysis.
 '''
 
-from typing import Dict, FrozenSet, List, Iterable, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 from .graph import EdgeLabel, Node, ConstraintGraph
 from .schema import ConstraintSet, DerivedTypeVariable, Program, SubtypeConstraint, Variance
 from .parser import SchemaParser
@@ -39,9 +39,6 @@ class Solver:
         self.program = program
         # TODO possibly make these values shared across a function
         self.next = 0
-        self.endpoints: Set[DerivedTypeVariable] = \
-                set(program.callgraph) | set(program.globs) | program.types.internal_types
-        self.interesting: FrozenSet[DerivedTypeVariable] = frozenset(self.endpoints)
         self._type_vars: Dict[DerivedTypeVariable, DerivedTypeVariable] = {}
 
     def _get_type_var(self, var: DerivedTypeVariable) -> DerivedTypeVariable:
@@ -115,8 +112,11 @@ class Solver:
                         if scc_index not in visited:
                             candidates.add(node.base)
                 candidates = Solver._filter_no_prefix(candidates)
-                self.endpoints |= candidates
                 endpoints |= candidates
+        self.all_endpoints = frozenset(endpoints |
+                                       set(self.program.callgraph) |
+                                       set(self.program.global_vars) |
+                                       self.program.types.internal_types)
         for var in Solver._filter_no_prefix(endpoints):
             self._make_type_var(var)
 
@@ -146,16 +146,16 @@ class Solver:
 
     def _generate_constraints(self, graph: networkx.DiGraph) -> ConstraintSet:
         '''Now that type variables have been computed, no cycles can be produced. Find paths from
-        interesting nodes to other interesting nodes and generate constraints.
+        endpoints to other endpoints and generate constraints.
         '''
         constraints = ConstraintSet()
         def explore(origin: Node,
                     path: List[Node] = [],
                     string: List[EdgeLabel] = []) -> None:
-            '''Find all non-empty paths that begin and end members of self.interesting. Return the
-            list of labels encountered along the way as well as the origin and destination.
+            '''Find all non-empty paths that begin and end on members of self.all_endpoints. Return
+            the list of labels encountered along the way as well as the origin and destination.
             '''
-            if path and origin.base in self.endpoints:
+            if path and origin.base in self.all_endpoints:
                 constraint = self._maybe_constraint(path[0], origin, string)
                 if constraint:
                     constraints.add(constraint)
@@ -171,7 +171,7 @@ class Solver:
                     if label:
                         new_string.append(label)
                     explore(succ, path, new_string)
-        for origin in {node for node in graph.nodes if node.base in self.endpoints and
+        for origin in {node for node in graph.nodes if node.base in self.all_endpoints and
                                                        node._unforgettable ==
                                                        Node.Unforgettable.PRE_RECALL}:
             explore(origin)
@@ -195,10 +195,6 @@ class Solver:
             scc = scc_dag.nodes[scc_node]['members']
             for proc in scc:
                 graph = ConstraintGraph(self.program.proc_constraints[proc])
-                # TODO I think these three calls should move into the constructor
-                graph.add_forget_recall()
-                graph.saturate()
-                Solver._remove_self_loops(graph)
                 accumulated.add_edges_from(graph.graph.edges)
                 for head, tail in graph.graph.edges:
                     label = graph.graph[head][tail].get('label')
@@ -211,12 +207,12 @@ class Solver:
             self._generate_type_vars(scc_graph)
             Solver._unforgettable_subgraph_split(scc_graph)
             generated = self._generate_constraints(scc_graph)
-            sketches.add_constraints(generated)
+            sketches.add_constraints(generated, scc)
             derived.update({proc: generated for proc in scc})
         # generate constraints for globals once all information is available
         generated = self._generate_constraints(scc_graph)
-        sketches.add_constraints(generated)
-        derived.update({glob: generated for glob in self.program.globs})
+        sketches.add_constraints(generated, self.program.global_vars)
+        derived.update({glob: generated for glob in self.program.global_vars})
         return (derived, sketches)
 
     @staticmethod
@@ -242,7 +238,7 @@ class Solver:
             graph.add_edge(recall_head, recall_tail, **atts)
 
     @staticmethod
-    def _filter_no_prefix(variables: Iterable[DerivedTypeVariable]) -> Set[DerivedTypeVariable]:
+    def _filter_no_prefix(variables: Set[DerivedTypeVariable]) -> Set[DerivedTypeVariable]:
         '''Return a set of elements from variables for which no prefix exists in variables. For
         example, if variables were the set {A, A.load}, return the set {A}.
         '''
@@ -251,18 +247,13 @@ class Solver:
         for index, candidate in enumerate(candidates):
             emit = True
             for other in candidates[index+1:]:
-                if other.get_suffix(candidate):
+                # other and candidate cannot be equal because they're distinct elements of a set
+                if other.get_suffix(candidate) is not None:
                     emit = False
                     break
             if emit:
                 selected.add(candidate)
         return selected
-
-    @staticmethod
-    def _remove_self_loops(graph: ConstraintGraph) -> None:
-        '''Loops from a node directly to itself are not useful, so it's useful to remove them.
-        '''
-        graph.graph.remove_edges_from({(node, node) for node in graph.graph.nodes})
 
 
 class SketchNode:
@@ -297,6 +288,7 @@ class Sketches:
         self.sketches = networkx.DiGraph()
         self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
         self.solver = solver
+        self.dependencies: Dict[DerivedTypeVariable, Set[DerivedTypeVariable]] = {}
 
     def make_node(self, variable: DerivedTypeVariable) -> SketchNode:
         '''Make a node from a DTV. Compute its atom from its access path.
@@ -311,14 +303,15 @@ class Sketches:
         self.lookup[variable] = result
         return result
 
-    def add_variable(self, variable: DerivedTypeVariable) -> None:
+    def add_variable(self, variable: DerivedTypeVariable) -> SketchNode:
         '''Add a variable and its prefixes to the set of sketches. Each node's atomic type is either
         TOP or BOTTOM, depending on the variance of the variable's access path. If the variable
         already exists, skip it.
         '''
         if variable in self.lookup:
-            return
+            return self.lookup[variable]
         node = self.make_node(variable)
+        created = node
         self.sketches.add_node(node)
         prefix = variable.largest_prefix
         while prefix:
@@ -327,6 +320,7 @@ class Sketches:
             variable = prefix
             node = prefix_node
             prefix = variable.largest_prefix
+        return created
 
     def replace_edge(self, head: SkNode, tail: SkNode, new_head: SkNode, new_tail: SkNode) -> None:
         '''Replace an edge, keeping its attributes intact.
@@ -343,35 +337,56 @@ class Sketches:
         for succ in self.sketches.successors(old):
             self.replace_edge(old, succ, new, succ)
 
-    # TODO dead code - remove when sure it isn't needed
-    def normalize(self) -> None:
-        # Sort to make this operation deterministic; it's possible that multiple interesting
-        # variables could reach the same node. NB this doesn't affect correctness, but it does make
-        # debugging easier.
-        for variable in sorted(self.solver.interesting):
-            node = self.make_node(variable)
-            #
+    def convert_to_label(self, old: SketchNode) -> None:
+        self.replace_node(old, old.dtv)
 
-        # TODO old dead code
-        normal = self.solver.lookup_type_var(variable.base_var)
-        if normal:
-            result = normal.extend(variable.path)
-        result = variable
-        print(f'normalized {variable} to {result}')
-
-    def add_constraints(self, constraints: ConstraintSet) -> None:
-        '''Extend the set of sketches with the new set of constraints.
+    def remove_cycles(self) -> None:
+        '''Identify cycles in the graph and remove them by replacing instances of every node
+        downstream from itself with a label (the labeled polymorphism mentioned in Definition 3.5).
         '''
-        for constraint in constraints:
-            self.add_variable(constraint.left)
-            self.add_variable(constraint.right)
-        # remove cycles by replacing nodes with variables when downstream from themselves
         for cycle in networkx.simple_cycles(self.sketches):
             node = cycle[1]
             last = cycle[-1]
             self.replace_edge(last, node, last, node.dtv)
-        # refine the types of the nodes. NB this will ignore labels, as self.lookup only tracks
-        # nodes
+
+    def copy_dependencies(self, dependencies: Dict[SketchNode, Set[SketchNode]]) -> None:
+        '''Copy the structures from self.sketches corresponding to the keys in dependencies to each
+        other simultaneously. Each copy is a DFS that identifies duplicates and replaces them with
+        labels, so the resulting graphs are trees. All reads are from self.sketches and all writes
+        go to a temporary variable, so no fixed point calculation is needed.
+        '''
+        new_sketches = networkx.DiGraph(self.sketches)
+        def copy_inner(onto: SketchNode, origin: SketchNode, seen: Set[SketchNode]) -> None:
+            if origin not in seen:
+                seen = seen | {origin}
+                for dependency in dependencies.get(origin, set()):
+                    copy_inner(onto, dependency, seen)
+                for succ in set(self.sketches.successors(origin)):
+                    label = self.sketches[origin][succ]['label']
+                    if succ in seen:
+                        new_succ = succ.dtv
+                    else:
+                        new_succ = self.make_node(onto.dtv.add_suffix(label))
+                        copy_inner(new_succ, succ, seen | {origin, new_succ})
+                    new_sketches.add_edge(onto, new_succ, label=label)
+        for dest in dependencies:
+            for origin in dependencies.get(dest, set()):
+                seen = set(map(lambda n: self.lookup[n], dest.dtv.all_prefixes()))
+                copy_inner(dest, origin, seen)
+        self.sketches = new_sketches
+
+    def add_constraints(self, constraints: ConstraintSet, nodes: Set[DerivedTypeVariable]) -> None:
+        '''Extend the set of sketches with the new set of constraints.
+        '''
+        dependencies: Dict[SketchNode, Set[SketchNode]] = {}
+        for constraint in constraints:
+            left_node = self.add_variable(constraint.left)
+            right_node = self.add_variable(constraint.right)
+            left_base_var = constraint.left.base_var
+            # TODO need to resolve intraprocedural dependencies on endpoints first
+            if left_base_var in nodes:
+                dependencies.setdefault(left_node, set()).add(right_node)
+        self.copy_dependencies(dependencies)
         for constraint in constraints:
             left = constraint.left
             right = constraint.right

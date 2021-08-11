@@ -27,7 +27,7 @@ from abc import ABC
 from enum import Enum, unique
 from functools import reduce
 from typing import Any, Dict, FrozenSet, Generic, Iterable, Iterator, List, Optional, Sequence, \
-        Tuple, TypeVar, Union
+        Set, Tuple, TypeVar, Union
 import logging
 import os
 import networkx
@@ -247,6 +247,16 @@ class DerivedTypeVariable:
             return DerivedTypeVariable(self.base, self.path[:-1])
         return None
 
+    def all_prefixes(self) -> Set['DerivedTypeVariable']:
+        '''Return all prefixes of self, including self.
+        '''
+        var = self
+        result: Set['DerivedTypeVariable'] = set()
+        while var:
+            result.add(var)
+            var = var.largest_prefix
+        return result
+
     def get_suffix(self, other: 'DerivedTypeVariable') -> Optional[Sequence[AccessPathLabel]]:
         '''If self is a prefix of other, return the suffix of other's path that is not part of self.
         Otherwise, return None.
@@ -423,12 +433,12 @@ class Program:
     '''
     def __init__(self,
                  types: Lattice[DerivedTypeVariable],
-                 globs: Iterable[MaybeVar],
+                 global_vars: Iterable[MaybeVar],
                  proc_constraints: MaybeDict[MaybeVar, ConstraintSet],
                  callgraph: Union[MaybeDict[MaybeVar, Iterable[MaybeVar]],
                                   networkx.DiGraph]) -> None:
         self.types = types
-        self.globs = {maybe_to_var(glob) for glob in globs}
+        self.global_vars = {maybe_to_var(glob) for glob in global_vars}
         self.proc_constraints: Dict[DerivedTypeVariable, ConstraintSet] = {}
         for name, constraints in maybe_to_bindings(proc_constraints):
             var = maybe_to_var(name)
