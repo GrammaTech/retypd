@@ -33,8 +33,8 @@ class DummyLattice(Lattice[DerivedTypeVariable]):
     _success = DerivedTypeVariable('#SuccessZ')
     _fd = DerivedTypeVariable('#FileDescriptor')
     _str = DerivedTypeVariable('str')
-    _top = DerivedTypeVariable('TOP')
-    _bottom = DerivedTypeVariable('BOTTOM')
+    _top = DerivedTypeVariable('┬')
+    _bottom = DerivedTypeVariable('┴')
     _internal = frozenset({_int, _fd, _success, _str})
     _endcaps = frozenset({_top, _bottom})
 

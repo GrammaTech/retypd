@@ -378,15 +378,20 @@ class Sketches:
     def add_constraints(self, constraints: ConstraintSet, nodes: Set[DerivedTypeVariable]) -> None:
         '''Extend the set of sketches with the new set of constraints.
         '''
-        dependencies: Dict[SketchNode, Set[SketchNode]] = {}
+        inter_dependencies: Dict[SketchNode, Set[SketchNode]] = {}
+        intra_dependencies: Dict[SketchNode, Set[SketchNode]] = {}
         for constraint in constraints:
             left_node = self.add_variable(constraint.left)
             right_node = self.add_variable(constraint.right)
             left_base_var = constraint.left.base_var
+            right_base_var = constraint.right.base_var
             # TODO need to resolve intraprocedural dependencies on endpoints first
+            if right_base_var in self.solver._type_vars:
+                intra_dependencies.setdefault(left_node, set()).add(right_node)
             if left_base_var in nodes:
-                dependencies.setdefault(left_node, set()).add(right_node)
-        self.copy_dependencies(dependencies)
+                inter_dependencies.setdefault(left_node, set()).add(right_node)
+        self.copy_dependencies(intra_dependencies)
+        self.copy_dependencies(inter_dependencies)
         for constraint in constraints:
             left = constraint.left
             right = constraint.right
@@ -397,8 +402,41 @@ class Sketches:
                 node = self.lookup[left]
                 node.atom = self.solver.program.types.meet(node.atom, right)
 
+    def to_dot(self, dtv: DerivedTypeVariable) -> str:
+        nt = f'{os.linesep}\t'
+        graph_str = f'digraph {dtv} {{'
+        start = self.lookup[dtv]
+        # emit nodes
+        for node in self.sketches.nodes:
+            if isinstance(node, SketchNode) and node.dtv.base_var == dtv:
+                graph_str += nt
+                graph_str += f'"{node.dtv}" [label="{node.atom}"];'
+            else:
+                # TODO I should probably create new, distinct objects instead of reusing the same
+                # DTV for every label
+                pass
+        # emit edges
+        seen = {(start, start)}
+        frontier = {(start, succ) for succ in self.sketches.successors(start)} - seen
+        while frontier:
+            new_frontier = set()
+            for node, succ in frontier:
+                graph_str += nt
+                f_label = node
+                if isinstance(node, SketchNode):
+                    f_label = node.dtv
+                t_label = succ
+                if isinstance(succ, SketchNode):
+                    t_label = succ.dtv
+                    new_frontier |= {(succ, s_s) for s_s in self.sketches.successors(succ)}
+                graph_str += f'"{f_label}" -> "{t_label}"'
+                graph_str += f' [label="{self.sketches[node][succ]["label"]}"];'
+            frontier = new_frontier - seen
+        graph_str += f'{os.linesep}}}'
+        return graph_str
+
     def __str__(self) -> str:
         if self.lookup:
             nt = f'{os.linesep}\t'
-            return f'sketches:{nt}{nt.join(map(lambda k: f"{k} → {self.lookup[k].atom}", self.lookup))}'
+            return f'nodes:{nt}{nt.join(map(lambda k: f"{k} ({self.lookup[k].atom}", self.lookup))})'
         return 'no sketches'
