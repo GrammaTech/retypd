@@ -21,7 +21,7 @@
 # endorsement should be inferred.
 
 from abc import ABC
-from typing import Iterable, Optional, Sequence, Set
+from typing import Iterable, Optional, Sequence
 import os
 
 class CType(ABC):

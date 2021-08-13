@@ -31,7 +31,6 @@ from typing import Any, Dict, FrozenSet, Generic, Iterable, Iterator, List, Opti
 import logging
 import os
 import networkx
-from .c_types import CType
 
 
 logging.basicConfig()
@@ -218,7 +217,6 @@ class DerivedTypeVariable:
             self.path: Sequence[AccessPathLabel] = ()
         else:
             self.path = tuple(path)
-        self._str = self.format()
 
     def format(self, separator: str = '.') -> str:
         if self.path:
@@ -270,6 +268,14 @@ class DerivedTypeVariable:
                 return None
         return other.path[len(self.path):]
 
+    def remove_suffix(self, suffix: Sequence[AccessPathLabel]) -> Optional['DerivedTypeVariable']:
+        result = DerivedTypeVariable(self.base, self.path)
+        for label in reversed(suffix):
+            if not result.path or result.path[-1] != label:
+                return None
+            result = result.largest_prefix
+        return result
+
     @property
     def tail(self) -> AccessPathLabel:
         '''Retrieve the last item in the access path, if any. Return None if
@@ -314,7 +320,7 @@ class DerivedTypeVariable:
         return reduce(Variance.combine, variances, Variance.COVARIANT)
 
     def __str__(self) -> str:
-        return self._str
+        return self.format()
 
     def __repr__(self) -> str:
         return self.format('$')

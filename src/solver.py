@@ -53,6 +53,14 @@ class Solver:
                 return DerivedTypeVariable(type_var.base, suffix)
         return var
 
+    def reverse_type_var(self, var: DerivedTypeVariable) -> DerivedTypeVariable:
+        '''Look up the canonical version of a variable; if it begins with a type variable
+        '''
+        base = var.base_var
+        if base in self._rev_type_vars:
+            return self._rev_type_vars[base].extend(var.path)
+        return var
+
     def lookup_type_var(self, var: Union[str, DerivedTypeVariable]) -> DerivedTypeVariable:
         '''Take a string, convert it to a DerivedTypeVariable, and if there is a type variable that
         stands in for a prefix of it, change the prefix to the type variable.
@@ -119,6 +127,7 @@ class Solver:
                                        self.program.types.internal_types)
         for var in Solver._filter_no_prefix(endpoints):
             self._make_type_var(var)
+        self._rev_type_vars = {tv: var for (var, tv) in self._type_vars.items()}
 
     def _maybe_constraint(self,
                           origin: Node,
@@ -271,13 +280,37 @@ class SketchNode:
         return hash(self.dtv)
 
     def __str__(self) -> str:
-        return f'{self.dtv} ({self.atom})'
+        return f'{self.dtv}'
 
     def __repr__(self) -> str:
         return f'SketchNode({self})'
 
 
-SkNode = Union[SketchNode, DerivedTypeVariable]
+class LabelNode:
+    counter = 0
+    def __init__(self, target: DerivedTypeVariable) -> None:
+        self.target = target
+        self.id = LabelNode.counter
+        LabelNode.counter += 1
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, LabelNode):
+            # return self.id == other.id and self.target == other.target
+            return self.target == other.target
+        return False
+
+    def __hash__(self) -> int:
+        # return hash(self.target) ^ hash(self.id)
+        return hash(self.target)
+
+    def __str__(self) -> str:
+        return f'{self.target}.{self.id}'
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
+SkNode = Union[SketchNode, LabelNode]
 
 
 class Sketches:
@@ -337,9 +370,6 @@ class Sketches:
         for succ in self.sketches.successors(old):
             self.replace_edge(old, succ, new, succ)
 
-    def convert_to_label(self, old: SketchNode) -> None:
-        self.replace_node(old, old.dtv)
-
     def remove_cycles(self) -> None:
         '''Identify cycles in the graph and remove them by replacing instances of every node
         downstream from itself with a label (the labeled polymorphism mentioned in Definition 3.5).
@@ -356,45 +386,75 @@ class Sketches:
         go to a temporary variable, so no fixed point calculation is needed.
         '''
         new_sketches = networkx.DiGraph(self.sketches)
-        def copy_inner(onto: SketchNode, origin: SketchNode, seen: Set[SketchNode]) -> None:
-            if origin not in seen:
-                seen = seen | {origin}
-                for dependency in dependencies.get(origin, set()):
+        def add_edge(head: SketchNode, tail: SkNode, label: str) -> None:
+            # don't emit duplicate edges
+            if (head, tail) not in new_sketches.edges:
+                new_sketches.add_edge(head, tail, label=label)
+        def copy_inner(onto: SketchNode, origin: SketchNode, seen: Dict[SketchNode, SketchNode]) -> None:
+            seen[origin] = onto
+            # If the dependencies graph says that onto is a subtype of origin, copy all of origin's
+            # outgoing edges and their targets. If this introduces a loop, create a label instead of
+            # a loop.
+            for dependency in dependencies.get(origin, set()):
+                if dependency in seen:
+                    original = seen[dependency]
+                    for succ in self.sketches.successors(dependency):
+                        label = self.sketches[dependency][succ]['label']
+                        new_succ = LabelNode(original.dtv.add_suffix(label))
+                        add_edge(onto, new_succ, label=label)
+                else:
                     copy_inner(onto, dependency, seen)
-                for succ in set(self.sketches.successors(origin)):
-                    label = self.sketches[origin][succ]['label']
-                    if succ in seen:
-                        new_succ = succ.dtv
-                    else:
-                        new_succ = self.make_node(onto.dtv.add_suffix(label))
-                        copy_inner(new_succ, succ, seen | {origin, new_succ})
-                    new_sketches.add_edge(onto, new_succ, label=label)
+            # Copy all of origin's outgoing edges onto onto.
+            for succ in self.sketches.successors(origin):
+                label = self.sketches[origin][succ]['label']
+                # If succ has been seen, look up the last time it was seen and instead create a
+                # label that links to the previous location where it was seen.
+                if succ in seen:
+                    add_edge(onto, LabelNode(seen[succ].dtv), label=label)
+                # If the successor is a label, translate it into this sketch.
+                elif isinstance(succ, LabelNode):
+                    suffix = succ.target.get_suffix(origin.dtv)
+                    if suffix is None:
+                        raise ValueError('Sanity check: suffix is non-None')
+                    succ_dtv = onto.dtv.remove_suffix(suffix)
+                    if not succ_dtv:
+                        raise ValueError('Sanity check: remove_suffix was successful')
+                    add_edge(onto, LabelNode(succ_dtv), label=label)
+                # Otherwise, it's a regular (non-label) node that hasn't been seen, so emit it and
+                # explore its successors.
+                else:
+                    succ_node = self.make_node(onto.dtv.add_suffix(label))
+                    add_edge(onto, succ_node, label=label)
+                    seen[succ_node] = onto
+                    copy_inner(succ_node, succ, seen)
         for dest in dependencies:
             for origin in dependencies.get(dest, set()):
-                seen = set(map(lambda n: self.lookup[n], dest.dtv.all_prefixes()))
+                seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
                 copy_inner(dest, origin, seen)
         self.sketches = new_sketches
 
+    counter = 0
     def add_constraints(self, constraints: ConstraintSet, nodes: Set[DerivedTypeVariable]) -> None:
         '''Extend the set of sketches with the new set of constraints.
         '''
         inter_dependencies: Dict[SketchNode, Set[SketchNode]] = {}
         intra_dependencies: Dict[SketchNode, Set[SketchNode]] = {}
         for constraint in constraints:
-            left_node = self.add_variable(constraint.left)
-            right_node = self.add_variable(constraint.right)
-            left_base_var = constraint.left.base_var
-            right_base_var = constraint.right.base_var
-            # TODO need to resolve intraprocedural dependencies on endpoints first
+            left = self.solver.reverse_type_var(constraint.left)
+            right = self.solver.reverse_type_var(constraint.right)
+            left_node = self.add_variable(left)
+            right_node = self.add_variable(right)
+            left_base_var = left.base_var
+            right_base_var = right.base_var
             if right_base_var in self.solver._type_vars:
                 intra_dependencies.setdefault(left_node, set()).add(right_node)
-            if left_base_var in nodes:
+            elif left_base_var in nodes:
                 inter_dependencies.setdefault(left_node, set()).add(right_node)
         self.copy_dependencies(intra_dependencies)
         self.copy_dependencies(inter_dependencies)
         for constraint in constraints:
-            left = constraint.left
-            right = constraint.right
+            left = self.solver.reverse_type_var(constraint.left)
+            right = self.solver.reverse_type_var(constraint.right)
             if left in self.solver.program.types.internal_types:
                 node = self.lookup[right]
                 node.atom = self.solver.program.types.join(node.atom, left)
@@ -406,32 +466,33 @@ class Sketches:
         nt = f'{os.linesep}\t'
         graph_str = f'digraph {dtv} {{'
         start = self.lookup[dtv]
-        # emit nodes
-        for node in self.sketches.nodes:
-            if isinstance(node, SketchNode) and node.dtv.base_var == dtv:
-                graph_str += nt
-                graph_str += f'"{node.dtv}" [label="{node.atom}"];'
-            else:
-                # TODO I should probably create new, distinct objects instead of reusing the same
-                # DTV for every label
-                pass
-        # emit edges
-        seen = {(start, start)}
+        edges_str = ''
+        # emit edges and identify nodes
+        nodes = {start}
+        seen: Set[Tuple[SketchNode, SkNode]] = {(start, start)}
         frontier = {(start, succ) for succ in self.sketches.successors(start)} - seen
         while frontier:
-            new_frontier = set()
-            for node, succ in frontier:
-                graph_str += nt
-                f_label = node
-                if isinstance(node, SketchNode):
-                    f_label = node.dtv
-                t_label = succ
-                if isinstance(succ, SketchNode):
-                    t_label = succ.dtv
-                    new_frontier |= {(succ, s_s) for s_s in self.sketches.successors(succ)}
-                graph_str += f'"{f_label}" -> "{t_label}"'
-                graph_str += f' [label="{self.sketches[node][succ]["label"]}"];'
+            new_frontier: Set[Tuple[SketchNode, SkNode]] = set()
+            for pred, succ in frontier:
+                edges_str += nt
+                nodes.add(succ)
+                new_frontier |= {(succ, s_s) for s_s in self.sketches.successors(succ)}
+                edges_str += f'"{pred}" -> "{succ}"'
+                edges_str += f' [label="{self.sketches[pred][succ]["label"]}"];'
             frontier = new_frontier - seen
+        # emit nodes
+        for node in nodes:
+            if isinstance(node, SketchNode):
+                if node.dtv == dtv:
+                    graph_str += nt
+                    graph_str += f'"{node}" [label="{node.dtv}"];'
+                elif node.dtv.base_var == dtv:
+                    graph_str += nt
+                    graph_str += f'"{node}" [label="{node.atom}"];'
+            elif node.target.base_var == dtv:
+                graph_str += nt
+                graph_str += f'"{node}" [label="{node.target}", shape=house];'
+        graph_str += edges_str
         graph_str += f'{os.linesep}}}'
         return graph_str
 
