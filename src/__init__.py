@@ -30,6 +30,6 @@ object is the set of constraints generated from the analysis.
 
 from .graph import EdgeLabel, Node
 from .dummylattice import DummyLattice
-from .schema import ConstraintSet, DerivedTypeVariable, Program, SubtypeConstraint, Variance
+from .schema import ConstraintSet, DerefLabel, DerivedTypeVariable, InLabel, LoadLabel, OutLabel, Program, StoreLabel, SubtypeConstraint, Variance
 from .solver import Solver
 from .parser import SchemaParser
