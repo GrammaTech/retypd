@@ -203,7 +203,7 @@ class Solver:
         for scc_node in reversed(list(networkx.topological_sort(scc_dag))):
             scc = scc_dag.nodes[scc_node]['members']
             for proc in scc:
-                graph = ConstraintGraph(self.program.proc_constraints[proc])
+                graph = ConstraintGraph(self.program.proc_constraints.get(proc, ConstraintSet()))
                 accumulated.add_edges_from(graph.graph.edges)
                 for head, tail in graph.graph.edges:
                     label = graph.graph[head][tail].get('label')
