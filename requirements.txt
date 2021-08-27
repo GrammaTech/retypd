@@ -1,3 +1,2 @@
 networkx
-pandas
-scipy
+tqdm

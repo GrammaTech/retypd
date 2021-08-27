@@ -29,14 +29,15 @@ from .schema import ConstraintSet, DerivedTypeVariable, Program, SubtypeConstrai
 from .parser import SchemaParser
 import os
 import networkx
-
+import tqdm
 
 class Solver:
     '''Takes a program and generates subtype constraints. The constructor does not perform the
     computation; rather, :py:class:`Solver` objects are callable as thunks.
     '''
-    def __init__(self, program: Program) -> None:
+    def __init__(self, program: Program, verbose: bool = False) -> None:
         self.program = program
+        self.verbose = verbose
         # TODO possibly make these values shared across a function
         self.next = 0
         self._type_vars: Dict[DerivedTypeVariable, DerivedTypeVariable] = {}
@@ -115,7 +116,7 @@ class Solver:
                 if len(scc) == 1:
                     continue
                 for node in scc:
-                    for predecessor in graph.predecessors(node):
+                    for predecessor in graph.predecessors(node):  # XXX Should this fr_graph?
                         scc_index = condensation.graph['mapping'][predecessor]
                         if scc_index not in visited:
                             candidates.add(node.base)
@@ -189,10 +190,17 @@ class Solver:
     def __call__(self) -> Tuple[Dict[DerivedTypeVariable, ConstraintSet], 'Sketches']:
         '''Perform the retypd calculation.
         '''
-        accumulated = networkx.DiGraph()
+        def show_progress(iterable):
+            if self.verbose:
+                return tqdm.tqdm(iterable)
+            return iterable
+
         derived: Dict[DerivedTypeVariable, ConstraintSet] = {}
         scc_dag = networkx.condensation(self.program.callgraph)
         sketches = Sketches(self)
+
+        accumulated = networkx.DiGraph()
+
         # The idea here is that functions need to satisfy their clients' needs for inputs and need
         # to use their clients' return values without overextending them. So we do a reverse
         # topological order on functions, lumping SCCs together, and slowly extend the graph.
@@ -200,28 +208,33 @@ class Solver:
         # as far as asymptotic complexity, but this is simple to understand and so the right choice
         # for now. I suspect that most of the graphs are fairly sparse and so the practical reality
         # is that there aren't many paths.
-        for scc_node in reversed(list(networkx.topological_sort(scc_dag))):
+        for scc_node in show_progress(reversed(list(networkx.topological_sort(scc_dag)))):
             scc = scc_dag.nodes[scc_node]['members']
+            scc_graph = networkx.DiGraph()
             for proc in scc:
-                graph = ConstraintGraph(self.program.proc_constraints.get(proc, ConstraintSet()))
+                constraints = self.program.proc_constraints.get(proc, ConstraintSet())
+                graph = ConstraintGraph(constraints)
+                scc_graph.add_edges_from(graph.graph.edges)
                 accumulated.add_edges_from(graph.graph.edges)
                 for head, tail in graph.graph.edges:
                     label = graph.graph[head][tail].get('label')
                     if label:
+                        scc_graph[head][tail]['label'] = label
                         accumulated[head][tail]['label'] = label
             # make a copy; some of this analysis mutates the graph
-            scc_graph = networkx.DiGraph(accumulated)
-            # TODO could this be done on the proc graph? Does mutual recursion potentially introduce
-            # loops?
             self._generate_type_vars(scc_graph)
             Solver._unforgettable_subgraph_split(scc_graph)
             generated = self._generate_constraints(scc_graph)
             sketches.add_constraints(generated, scc)
             derived.update({proc: generated for proc in scc})
         # generate constraints for globals once all information is available
-        generated = self._generate_constraints(scc_graph)
+        # TODO: restrict the "interesting endpoints" such that at least one of them
+        # must be a global. When updating `derived` below, filter out the constraints
+        # that refer to each global.
+        generated = self._generate_constraints(accumulated)
         sketches.add_constraints(generated, self.program.global_vars)
         derived.update({glob: generated for glob in self.program.global_vars})
+
         return (derived, sketches)
 
     @staticmethod
