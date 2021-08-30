@@ -444,10 +444,19 @@ class Sketches:
             right = self.solver.reverse_type_var(constraint.right)
             left_node = self.add_variable(left)
             right_node = self.add_variable(right)
+            # Base variables are the type variable in question without the access path; e.g.,
+            # F.in_0.load.σ4@0's base variable is F.
             left_base_var = left.base_var
             right_base_var = right.base_var
+            # Type variables are generated only to break cycles in the constraint graph. If the rhs
+            # is a type variable, that means that the relationship between the sketches is
+            # intraprocedural and not interprocedural.
             if right_base_var in self.solver._type_vars:
                 intra_dependencies.setdefault(left_node, set()).add(right_node)
+            # If the right-hand side is not a type variable, it must be an interesting node (a
+            # function or global). The left and right base nodes may be different or the same;
+            # either way, treat it as an interprocedural dependency (TODO might there be constraints
+            # with matching left and right base variables that don't need this treatment).
             elif left_base_var in nodes:
                 inter_dependencies.setdefault(left_node, set()).add(right_node)
         self.copy_dependencies(intra_dependencies)
