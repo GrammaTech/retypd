@@ -116,7 +116,10 @@ class Solver:
                 if len(scc) == 1:
                     continue
                 for node in scc:
-                    for predecessor in graph.predecessors(node):  # XXX Should this fr_graph?
+                    # Look in graph for predecessors, not fr_graph; the purpose of fr_graph is
+                    # merely to ensure that the SCCs we examine don't contain both forget and recall
+                    # edges.
+                    for predecessor in graph.predecessors(node):
                         scc_index = condensation.graph['mapping'][predecessor]
                         if scc_index not in visited:
                             candidates.add(node.base)
@@ -227,6 +230,12 @@ class Solver:
             generated = self._generate_constraints(scc_graph)
             sketches.add_constraints(generated, scc)
             derived.update({proc: generated for proc in scc})
+        # TODO while examining constraints for each function, accumulate constraints into a dict
+        # whenever a constraint includes a global (keys should be globals; values should be
+        # ConstraintSets). Create a graph with relationships between globals, identify SCCs, and
+        # iterate in reverse topological order, generating and copying sketches as with functions.
+        # This should remove the need for accumulated.
+
         # generate constraints for globals once all information is available
         # TODO: restrict the "interesting endpoints" such that at least one of them
         # must be a global. When updating `derived` below, filter out the constraints
