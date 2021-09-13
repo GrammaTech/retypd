@@ -43,7 +43,7 @@ class VoidType(CType):
         return 0
 
     def __str__(self) -> str:
-        return f'void'
+        return 'void'
 
 
 class IntType(CType):
@@ -59,7 +59,7 @@ class IntType(CType):
         signed_tag = ''
         if not self.signed:
             signed_tag = 'u'
-        return f'{signed_tag}int{self.width}_t'
+        return f'{signed_tag}int{self.width*8}_t'
 
 
 class FloatType(CType):
@@ -112,7 +112,7 @@ class PointerType(CType):
 
     @property
     def size(self) -> int:
-        raise NotImplemented
+        raise NotImplementedError()
 
     def __str__(self) -> str:
         return f'{self.target_type}*'
@@ -134,7 +134,7 @@ class FunctionType(CType):
 
     @property
     def size(self) -> int:
-        raise NotImplemented
+        raise NotImplementedError()
 
     def __str__(self) -> str:
         return self.name
@@ -192,7 +192,7 @@ class StructType(CompoundType):
 
     @property
     def size(self) -> int:
-        raise NotImplemented
+        raise NotImplementedError()
 
     @property
     def compound_type(self) -> str:
