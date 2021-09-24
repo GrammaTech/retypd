@@ -101,5 +101,24 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
         self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@4 ⊑ #FileDescriptor') in
                 gen_const[F])
 
+
+class ForgetsTest(SchemaTest, unittest.TestCase):
+    def test_forgets(self):
+        '''A simple test to check that paths that include "forgotten" labels reconstruct access
+        paths in the correct order.
+        '''
+        F = SchemaParser.parse_variable('F')
+        l = SchemaParser.parse_variable('l')
+
+        constraints = {F: ConstraintSet()}
+        constraint = SchemaParser.parse_constraint("l ⊑ F.in_1.load.σ8@0")
+        constraints[F].add(constraint)
+
+        program = Program(DummyLattice(), {F, l}, constraints, {F: {}})
+        solver = Solver(program)
+        (gen_const, sketches) = solver()
+
+        self.assertTrue(constraint in gen_const[F])
+
 if __name__ == '__main__':
     unittest.main()
