@@ -144,11 +144,19 @@ class Solver:
         '''
         lhs = origin
         rhs = dest
+        forgets = []
+        recalls = []
         for label in string:
             if label.kind == EdgeLabel.Kind.FORGET:
-                rhs = rhs.recall(label.capability)
+                forgets.append(label.capability)
             else:
-                lhs = lhs.recall(label.capability)
+                recalls.append(label.capability)
+        for recall in recalls:
+            lhs = lhs.recall(recall)
+        forgets.reverse()
+        for forget in forgets:
+            rhs = rhs.recall(forget)
+
         if (lhs.suffix_variance == Variance.COVARIANT and
                 rhs.suffix_variance == Variance.COVARIANT):
             lhs_var = self._get_type_var(lhs.base)
