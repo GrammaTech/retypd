@@ -90,7 +90,7 @@ class RecursiveSchemaTest(SchemaTest, unittest.TestCase):
         constraints[close].add(SchemaParser.parse_constraint("close.in_0 ⊑ #FileDescriptor"))
         constraints[close].add(SchemaParser.parse_constraint("#SuccessZ ⊑ close.out"))
 
-        program = Program(DummyLattice(), {F}, constraints, {F: {close}})
+        program = Program(DummyLattice(), {}, constraints, {F: [close]})
         solver = Solver(program)
         (gen_const, sketches) = solver()
 
