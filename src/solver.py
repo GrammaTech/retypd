@@ -83,6 +83,7 @@ class SolverConfig:
     # Keep global constraints in the function pass.
     globals_in_func_pass: bool = True
 
+
 # There are two main aspects created by the solver: output constraints and sketches. The output
 # constraints are _intra-procedural_: the constraints for a function f() will not contain
 # constraints from its callees or callers.
@@ -247,6 +248,15 @@ class Solver(Loggable):
         '''
         npaths = 0
         constraints = ConstraintSet()
+        # As per the algorithm we only allow paths that follow the regular language
+        # (recall _)* (forget _)*
+        # We enforce this by looking for inversions from forget->recall.
+        def matches_language(string):
+            if len(string) >= 2 \
+               and string[-2].kind == EdgeLabel.Kind.FORGET \
+               and string[-1].kind == EdgeLabel.Kind.RECALL:
+                return False
+            return True
         # On large procedures, the graph this is exploring can be quite large (hundreds of nodes,
         # thousands of edges). This can result in an insane number of paths - most of which do not
         # result in a constraint, and most of the ones that do result in constraints are redundant.
@@ -264,6 +274,8 @@ class Solver(Loggable):
                 return
             if current_node in path:
                 npaths += 1
+                return
+            if not matches_language(string):
                 return
             if path and current_node.base in self.all_endpoints:
                 constraint = self._maybe_constraint(path[0], current_node, string)
@@ -356,16 +368,18 @@ class Solver(Loggable):
         global_bases = set([str(v) for v in self.program.global_vars])
         def _collect_globals(c: SubtypeConstraint):
             global_count = 0
+            dtv_left = DerivedTypeVariable(c.left.base)
+            dtv_right = DerivedTypeVariable(c.right.base)
             if c.left.base in global_bases:
-                global_constraints[c.left.base].add(c)
+                global_constraints[dtv_left].add(c)
                 global_count += 1
             if c.right.base in global_bases:
-                global_constraints[c.right.base].add(c)
+                global_constraints[dtv_right].add(c)
                 global_count += 1
             if global_count == 2:
                 # The sub-typing relationship is reversed from the "depends on results
                 # from" relationship
-                global_graph.add_edge(c.right.base, c.left.base)
+                global_graph.add_edge(dtv_right, dtv_left)
             # Return "True" to keep this constraint.
             return self.config.globals_in_func_pass or (global_count == 0)
 
@@ -432,6 +446,8 @@ class SketchNode:
     def __init__(self, dtv: DerivedTypeVariable, atom: DerivedTypeVariable) -> None:
         self.dtv = dtv
         self.atom = atom
+        # Reference to SketchNode's (in other SCCs) that this node came from
+        self.source = set()
 
     # the atomic type of a DTV is an annotation, not part of its identity
     def __eq__(self, other) -> bool:
@@ -553,7 +569,8 @@ class Sketches(Loggable):
                     origin: SketchNode,
                     other_sketches: networkx.DiGraph,
                     dependencies: Dict[SketchNode, Set[SketchNode]],
-                    seen: Dict[SketchNode, SketchNode]) -> None:
+                    seen: Dict[SketchNode, SketchNode],
+                    populate_source: bool = False) -> None:
         seen[origin] = onto
         # If the dependencies graph says that onto is a subtype of origin, copy all of origin's
         # outgoing edges and their targets. If this introduces a loop, create a label instead of
@@ -575,6 +592,8 @@ class Sketches(Loggable):
         # node we are looking at.
         if origin not in other_sketches.nodes:
             return
+        if populate_source:
+            onto.source.add(origin)
 
         # Copy all of origin's outgoing edges onto onto.
         for succ in other_sketches.successors(origin):
@@ -627,7 +646,7 @@ class Sketches(Loggable):
                 # the sketches_map.
                 if origin_base in sketches_map:
                     self._copy_inner(dest, origin, sketches_map[origin_base].sketches,
-                                     dependencies, seen)
+                                     dependencies, seen, populate_source=True)
 
     counter = 0
     def add_constraints(self,

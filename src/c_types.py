@@ -182,13 +182,20 @@ class CompoundType(CType):
 
 class StructType(CompoundType):
     next_id = 0
-    def __init__(self, fields: Iterable[Field], name: Optional[str]=None) -> None:
-        self._fields = sorted(fields, key=lambda f: f.offset)
+
+    def __init__(self, name: Optional[str]=None) -> None:
         if name:
             self._name = name
         else:
             self._name = f'struct_{StructType.next_id}'
             StructType.next_id += 1
+
+    def set_fields(self, fields: Iterable[Field]):
+        """
+        We need to be able to construct a Struct before populating it so that we can
+        represent recursive types.
+        """
+        self._fields = sorted(fields, key=lambda f: f.offset)
 
     @property
     def size(self) -> int:
