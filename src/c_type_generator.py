@@ -34,8 +34,9 @@ from .c_types import (
     CType,
     PointerType,
     FunctionType,
-    Field,
+    ArrayType,
     StructType,
+    Field,
 )
 from .loggable import Loggable
 from typing import Set, Dict
@@ -149,11 +150,34 @@ class CTypeGenerator(Loggable):
             s.set_fields(fields=list(fields.values()))
         return rv
 
-    def _simplify_pointers(self, typ: CType):
+    def _simplify_pointers(self, typ: CType, seen_structs: Set[CType]):
         """
         Look for all Pointer(Struct(FieldType)) patterns where the struct has a single field at
         offset = 0 and convert it to Pointer(FieldType).
         """
+        if isinstance(typ, Field):
+            return Field(self._simplify_pointers(typ.ctype, seen_structs), typ.offset)
+        elif isinstance(typ, ArrayType):
+            return ArrayType(self._simplify_pointers(typ.member_type, seen_structs))
+        elif isinstance(typ, PointerType):
+            if isinstance(typ.target_type, StructType):
+                s = typ.target_type
+                if len(s.fields) == 1 and s.fields[0].offset == 0:
+                    rv = PointerType(self._simplify_pointers(s.fields[0].ctype, seen_structs))
+                    self.info("Simplified pointer: %s", rv)
+                    return rv
+            return PointerType(self._simplify_pointers(typ.target_type, seen_structs))
+        elif isinstance(typ, FunctionType):
+            params = [self._simplify_pointers(t, seen_structs) for t in typ.params]
+            rt = self._simplify_pointers(typ.return_type, seen_structs)
+            return FunctionType(rt, params, name=typ.name)
+        elif isinstance(typ, StructType):
+            if typ in seen_structs:
+                return typ
+            seen_structs.add(typ)
+            s = StructType(name=typ.name)
+            s.set_fields([self._simplify_pointers(t, seen_structs) for t in typ.fields])
+            return s
         return typ
 
     def __call__(self, simplify_pointers=True):
@@ -188,7 +212,7 @@ class CTypeGenerator(Loggable):
 
         if simplify_pointers:
             for typ in dtv_to_type.values():
-                self._simplify_pointers(typ)
+                self._simplify_pointers(typ, set())
 
         return dtv_to_type
 
