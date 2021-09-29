@@ -25,7 +25,8 @@ implementation for reference.
 '''
 
 from typing import FrozenSet
-from .schema import DerivedTypeVariable, Lattice
+from .schema import DerivedTypeVariable, Lattice, LatticeCTypes
+from .c_types import IntType
 
 
 class DummyLattice(Lattice[DerivedTypeVariable]):
@@ -99,3 +100,8 @@ class DummyLattice(Lattice[DerivedTypeVariable]):
         # the remaining cases are integral types. In all three combinations of two, the least upper
         # bound is INT.
         return DummyLattice._int
+
+class DummyLatticeCTypes(LatticeCTypes):
+    def atom_to_ctype(self, atom, byte_size):
+        return {DummyLattice._int: IntType(byte_size, True)}.get(atom)
+

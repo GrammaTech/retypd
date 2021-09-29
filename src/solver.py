@@ -32,6 +32,7 @@ from .schema import (
     SubtypeConstraint,
     Variance,
 )
+from .loggable import Loggable, LogLevel
 from .parser import SchemaParser
 import os
 import itertools
@@ -39,7 +40,6 @@ import networkx
 import tqdm
 from dataclasses import dataclass
 from graphviz import Digraph
-from enum import Enum
 
 
 def dump_labeled_graph(graph, label, filename):
@@ -53,26 +53,6 @@ def dump_labeled_graph(graph, label, filename):
         label = str(graph.get_edge_data(head, tail).get("label", "<NO LABEL>"))
         G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
     G.render(filename, format='svg', view=False)
-
-
-class LogLevel(int, Enum):
-    QUIET = 0
-    INFO = 1
-    DEBUG = 2
-
-# Unfortunable, the python logging class is a bit flawed and overly complex for what we need
-# When you use info/debug you can use %s/%d/etc formatting ala logging to lazy evaluate
-class Loggable:
-    def __init__(self, verbose: LogLevel = LogLevel.QUIET):
-        self.verbose = verbose
-
-    def info(self, *args):
-        if self.verbose >= LogLevel.INFO:
-            print(str(args[0]) % tuple(args[1:]))
-
-    def debug(self, *args):
-        if self.verbose >= LogLevel.DEBUG:
-            print(str(args[0]) % tuple(args[1:]))
 
 
 @dataclass

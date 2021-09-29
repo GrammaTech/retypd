@@ -437,6 +437,14 @@ class Lattice(ABC, Generic[T]):
         pass
 
 
+class LatticeCTypes:
+    """
+    Class for converting a Lattice type to a CType.
+    """
+    def atom_to_ctype(self, atom: Any, byte_size: int):
+        raise NotImplementedError("Child class must implemented")
+
+
 MaybeVar = Union[DerivedTypeVariable, str]
 
 def maybe_to_var(mv: MaybeVar) -> DerivedTypeVariable:

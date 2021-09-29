@@ -29,7 +29,19 @@ object is the set of constraints generated from the analysis.
 '''
 
 from .graph import EdgeLabel, Node
-from .dummylattice import DummyLattice
-from .schema import ConstraintSet, DerefLabel, DerivedTypeVariable, InLabel, LoadLabel, OutLabel, Program, StoreLabel, SubtypeConstraint, Variance
+from .dummylattice import DummyLattice, DummyLatticeCTypes
+from .schema import (
+    ConstraintSet,
+    DerefLabel,
+    DerivedTypeVariable,
+    InLabel,
+    LoadLabel,
+    OutLabel,
+    Program,
+    StoreLabel,
+    SubtypeConstraint,
+    Variance,
+)
 from .solver import Solver, SolverConfig
 from .parser import SchemaParser
+from .c_type_generator import CTypeGenerator, CTypeGenerationError
