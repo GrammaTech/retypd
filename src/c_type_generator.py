@@ -36,11 +36,15 @@ from .c_types import (
     FunctionType,
     ArrayType,
     StructType,
+    IntType,
+    UnionType,
     Field,
 )
 from .loggable import Loggable
-from typing import Set, Dict
+from typing import Set, Dict, Optional
 from collections import defaultdict
+import itertools
+import sys
 
 
 class CTypeGenerationError(Exception):
@@ -48,7 +52,6 @@ class CTypeGenerationError(Exception):
     Exception raised when an unexpected situation occurs during CType generation.
     """
     pass
-
 
 class CTypeGenerator(Loggable):
     """
@@ -65,6 +68,36 @@ class CTypeGenerator(Loggable):
         self.struct_types = {}
         self.dtv2type = defaultdict(dict)
         self.lattice_ctypes = lattice_ctypes
+
+    def union_types(self, a: CType, b: CType):
+        if a is None:
+            return b
+        if b is None:
+            return a
+        at = type(a)
+        bt = type(b)
+        if at == IntType and bt in (PointerType, StructType, ArrayType):
+            return b
+        if bt == IntType and at in (PointerType, StructType, ArrayType):
+            return a
+        if at == bt:
+            if at == IntType:
+                if a.width == b.width:
+                    return IntType(a.width, a.signed or b.signed)
+            elif at in (FloatType, CharType) and a.width == b.width:
+                return a
+
+        unioned_types = []
+        if at == UnionType:
+            unioned_types.extend(a.fields)
+        else:
+            unioned_types.append(a)
+        if bt == UnionType:
+            unioned_types.extend(b.fields)
+        else:
+            unioned_types.append(b)
+        self.debug("Unioning: %s", unioned_types)
+        return UnionType(unioned_types)
 
     def resolve_label(self, sketches, node):
         if isinstance(node, LabelNode):
@@ -84,14 +117,8 @@ class CTypeGenerator(Loggable):
                     successors.extend(self._succ_no_loadstore(base_dtv, sketches, n, seen))
                 else:
                     successors.append(n)
+        self.debug("Successors %s --> %s", node, successors)
         return successors
-
-    def pick_best(self, *candidates):
-        "When a specific offset has multiple candidate atomic types, pick the best one"
-        for t in candidates:
-            if t is not None:
-                return t
-        return candidates[0]
 
     def examine_sources(self, sources: Set[SketchNode], my_node: SketchNode, my_type: CType):
         """
@@ -108,46 +135,63 @@ class CTypeGenerator(Loggable):
         """
         return my_type
 
-    def c_type_from_node(self, base_dtv: DerivedTypeVariable, sketches, n, depth=2):
-        n = self.resolve_label(sketches, n)
-        assert n is not None
+    def c_type_from_nodeset(self,
+                            base_dtv: DerivedTypeVariable,
+                            sketches: Sketches,
+                            ns: Set[SketchNode]):
+        ns = set([self.resolve_label(sketches, n) for n in ns])
+        assert None not in ns
 
         # Check cache
-        dtv = n.dtv
-        if dtv in self.dtv2type[base_dtv]:
-            return self.dtv2type[base_dtv][dtv]
+        for n in ns:
+            if n.dtv in self.dtv2type[base_dtv]:
+                self.info("Already cached (recursive type): %s", n.dtv)
+                return self.dtv2type[base_dtv][n.dtv]
 
-        children = self._succ_no_loadstore(base_dtv, sketches, n, set())
+        children = list(itertools.chain(
+            *[self._succ_no_loadstore(base_dtv, sketches, n, set()) for n in ns]
+        ))
         if len(children) == 0:
-            tail = n.dtv.tail
-            if tail is not None and isinstance(tail, DerefLabel):
-                byte_size = tail.size
-            else:
-                byte_size = self.default_int_size
-            rv = self.lattice_ctypes.atom_to_ctype(n.atom, byte_size)
-            self.dtv2type[base_dtv][dtv] = rv
+            rv = None
+            for n in ns:
+                tail = n.dtv.tail
+                if tail is not None and isinstance(tail, DerefLabel):
+                    byte_size = tail.size
+                else:
+                    byte_size = self.default_int_size
+                ntype = self.lattice_ctypes.atom_to_ctype(n.atom, byte_size)
+                rv = self.union_types(rv, ntype)
+            for n in ns:
+                self.dtv2type[base_dtv][n.dtv] = rv
+            self.debug("Terminal type: %s -> %s", ns, rv)
         else:
             # We could recurse on types below, so we populate the struct _first_
             s = StructType()
             self.struct_types[s.name] = s
             rv = PointerType(s)
-            self.dtv2type[base_dtv][dtv] = rv
+            for n in ns:
+                self.dtv2type[base_dtv][n.dtv] = rv
 
-            fields = {}
+            self.debug("%s has %d children", ns, len(children))
+            # XXX this is aggressively merging different edges for the same deref offset, no
+            # matter the atom (TOP, BOTTOM, lattice type, ...)
+            children_by_offset = defaultdict(set)
             for c in children:
                 tail = c.dtv.tail
-                if tail is None:
+                if not isinstance(tail, DerefLabel):
+                    print(f"ERROR: {c.dtv} does not end in DerefLabel", file=sys.stderr)
                     continue
-                if isinstance(tail, DerefLabel):
-                    child_type = self.c_type_from_node(base_dtv, sketches, c, depth+2)
-                    if c.source:
-                        child_type = self.examine_sources(c.source, c, child_type)
-                    prev_field = fields.get(tail.offset, Field(None)).ctype
-                    fields[tail.offset] = Field(self.pick_best(child_type, prev_field),
-                                                offset=tail.offset)
-                else:
-                    raise CTypeGenerationError(f"Unexpected child: {tail}")
-            s.set_fields(fields=list(fields.values()))
+                #assert isinstance(tail, DerefLabel)
+                children_by_offset[tail.offset].add(c)
+
+            fields = []
+            for offset, siblings in children_by_offset.items():
+                child_type = self.c_type_from_nodeset(base_dtv, sketches, siblings)
+                # TODO
+                #if c.source:
+                #    child_type = self.examine_sources(c.source, c, child_type)
+                fields.append(Field(child_type, offset=offset))
+            s.set_fields(fields=fields)
         return rv
 
     def _simplify_pointers(self, typ: CType, seen_structs: Set[CType]):
@@ -180,18 +224,22 @@ class CTypeGenerator(Loggable):
             return s
         return typ
 
-    def __call__(self, simplify_pointers=True):
+    def __call__(self, simplify_pointers=True, filter_to: Optional[Set[DerivedTypeVariable]] = None):
         """
         Generate CTypes.
 
         :param simplify_pointers: By default pointers to single-field structs are simplified to
             just be pointers to the base type of the first field. Set this to False to keep types
             normalized to always use structs to contain pointed-to data.
+        :param filter_to: If specified, only emit types for the given base DerivedTypeVariables
+            (typically globals or functions). If None (default), emit all types.
         """
         dtv_to_type = {}
         for base_dtv, sketches in self.sketch_map.items():
             node = sketches.lookup.get(base_dtv)
             if node is None:
+                continue
+            if filter_to is not None and base_dtv not in filter_to:
                 continue
             # First, see if it is a function
             params = []
@@ -199,20 +247,26 @@ class CTypeGenerator(Loggable):
             for succ in self._succ_no_loadstore(base_dtv, sketches, node, set()):
                 assert isinstance(succ, SketchNode)
                 if isinstance(succ.dtv.tail, InLabel):
-                    p = self.c_type_from_node(base_dtv, sketches, succ)
+                    self.debug("Processing %s", succ.dtv)
+                    p = self.c_type_from_nodeset(base_dtv, sketches, {succ})
                     params.append(p)
                 elif isinstance(succ.dtv.tail, OutLabel):
+                    self.debug("Processing %s", succ.dtv)
                     assert (rtype is None)
-                    rtype = self.c_type_from_node(base_dtv, sketches, succ)
+                    rtype = self.c_type_from_nodeset(base_dtv, sketches, {succ})
             # Not a function
             if rtype is None and not params:
-                dtv_to_type[base_dtv] = self.c_type_from_node(base_dtv, sketches, node)
+                self.debug("Processing %s", base_dtv)
+                dtv_to_type[base_dtv] = self.c_type_from_nodeset(base_dtv, sketches, {node})
             else:
                 dtv_to_type[base_dtv] = FunctionType(rtype, params, name=str(base_dtv))
 
         if simplify_pointers:
-            for typ in dtv_to_type.values():
-                self._simplify_pointers(typ, set())
+            self.debug("Simplifying pointers")
+            new_dtv_to_type = {}
+            for dtv,typ in dtv_to_type.items():
+                new_dtv_to_type[dtv] = self._simplify_pointers(typ, set())
+            dtv_to_type = new_dtv_to_type
 
         return dtv_to_type
 

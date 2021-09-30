@@ -144,9 +144,13 @@ class FunctionType(CType):
 
 
 class Field:
-    def __init__(self, ctype: CType, offset: Optional[int]=None) -> None:
+    def __init__(self,
+                 ctype: CType,
+                 offset: Optional[int]=None,
+                 name: str="") -> None:
         self.ctype = ctype
         self.offset = offset
+        self.name = name
 
     @property
     def size(self) -> int:
@@ -183,7 +187,8 @@ class CompoundType(CType):
 class StructType(CompoundType):
     next_id = 0
 
-    def __init__(self, name: Optional[str]=None) -> None:
+    def __init__(self, fields: Iterable[Field] = [], name: Optional[str]=None) -> None:
+        self.set_fields(fields)
         if name:
             self._name = name
         else:
@@ -199,7 +204,9 @@ class StructType(CompoundType):
 
     @property
     def size(self) -> int:
-        raise NotImplementedError()
+        if not self.fields:
+            return 0
+        return self.fields[-1].offset + self.fields[-1].size
 
     @property
     def compound_type(self) -> str:

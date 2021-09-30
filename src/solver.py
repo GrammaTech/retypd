@@ -974,5 +974,5 @@ class Sketches(Loggable):
     def __str__(self) -> str:
         if self.lookup:
             nt = f'{os.linesep}\t'
-            return f'nodes:{nt}{nt.join(map(lambda k: f"{k} ({self.lookup[k].atom})", self.lookup))})'
+            return f'nodes:{nt}{nt.join(map(lambda k: f"{k} ({self.lookup[k].atom}) sources={self.lookup[k].source}", self.lookup))})'
         return 'no sketches'
