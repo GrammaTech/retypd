@@ -684,7 +684,7 @@ class Sketches(Loggable):
         self.instantiate_intra(intra_dependencies)
         # Inter-SCC dependencies make use of the sketches_map, which maps each base DTV to its
         # sketch graph. This way we don't need to copy and iterate over a huge DiGraph for the
-        # entire program when we only need the direct callees (or referent's, for globals)
+        # entire program when we only need the direct callees (or referents, for globals)
         self.copy_inter(inter_dependencies, sketches_map)
 
         for constraint in constraints:
