@@ -648,7 +648,6 @@ class Sketches(Loggable):
                     self._copy_inner(dest, origin, sketches_map[origin_base].sketches,
                                      dependencies, seen, populate_source=True)
 
-    counter = 0
     def add_constraints(self,
                         constraints: ConstraintSet,
                         nodes: Set[DerivedTypeVariable],
