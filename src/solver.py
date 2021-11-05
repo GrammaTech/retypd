@@ -680,11 +680,13 @@ class Sketches(Loggable):
                 self.debug("Have %d nodes" % len(nodes))
                 inter_dependencies.setdefault(left_node, set()).add(right_node)
         # Intra-SCC dependencies just get instantiated using "this" set of sketches
-        self.instantiate_intra(intra_dependencies)
+        if intra_dependencies:
+            self.instantiate_intra(intra_dependencies)
         # Inter-SCC dependencies make use of the sketches_map, which maps each base DTV to its
         # sketch graph. This way we don't need to copy and iterate over a huge DiGraph for the
         # entire program when we only need the direct callees (or referents, for globals)
-        self.copy_inter(inter_dependencies, sketches_map)
+        if inter_dependencies:
+            self.copy_inter(inter_dependencies, sketches_map)
 
         for constraint in constraints:
             left = self.solver.reverse_type_var(constraint.left)
