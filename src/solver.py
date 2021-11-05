@@ -293,8 +293,8 @@ class Solver(Loggable):
                         new_string.append(label)
                     explore(succ, path, new_string)
         start_nodes = {node for node in graph.nodes if node.base in self.all_endpoints and
-                                                       node._unforgettable ==
-                                                       Node.Unforgettable.PRE_RECALL}
+                                                       node._forgotten ==
+                                                       Node.Forgotten.PRE_FORGET}
         # We evenly distribute the maximum number of paths that we are willing to explore
         # across all origin nodes here.
         max_paths_per_root = int(min(self.config.max_paths_per_root,
@@ -341,7 +341,7 @@ class Solver(Loggable):
 
             # make a copy; some of this analysis mutates the graph
             self._generate_type_vars(scc_graph)
-            Solver._unforgettable_subgraph_split(scc_graph)
+            Solver._recall_forget_split(scc_graph)
             generated = self._generate_constraints(scc_graph)
 
             # The sketches for this SCC; note it may pull in data from other sketches
@@ -368,8 +368,8 @@ class Solver(Loggable):
         global_bases = set([str(v) for v in self.program.global_vars])
         def _collect_globals(c: SubtypeConstraint):
             global_count = 0
-            dtv_left = DerivedTypeVariable(c.left.base)
-            dtv_right = DerivedTypeVariable(c.right.base)
+            dtv_left = c.left.base_var
+            dtv_right = c.right.base_var
             if c.left.base in global_bases:
                 global_constraints[dtv_left].add(c)
                 global_count += 1
@@ -402,26 +402,25 @@ class Solver(Loggable):
         return (derived, sketches)
 
     @staticmethod
-    def _unforgettable_subgraph_split(graph: networkx.DiGraph) -> None:
-        '''The algorithm, after saturation, only admits paths such that forget edges all precede
-        the first recall edge (if there is such an edge). To enforce this, we modify the graph by
-        splitting each node and the unlabeled and recall edges (but not forget edges!). Recall edges
-        in the original graph are changed to point to the 'unforgettable' duplicate of their
-        original target. As a result, no forget edges are reachable after traversing a single recall
-        edge.
+    def _recall_forget_split(graph: networkx.DiGraph) -> None:
+        '''The algorithm, after saturation, only admits paths such that recall edges all precede
+        the first forget edge (if there is such an edge). To enforce this, we modify the graph by
+        splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
+        in the original graph are changed to point to the 'forgotten' duplicate of their original
+        target. As a result, no recall edges are reachable after traversing a single forget edge.
         '''
         edges = set(graph.edges)
         for head, tail in edges:
             label = graph[head][tail].get('label')
-            if label and label.kind == EdgeLabel.Kind.FORGET:
-                continue
-            recall_head = head.split_unforgettable()
-            recall_tail = tail.split_unforgettable()
-            atts = graph[head][tail]
             if label and label.kind == EdgeLabel.Kind.RECALL:
+                continue
+            forget_head = head.split_recall_forget()
+            forget_tail = tail.split_recall_forget()
+            atts = graph[head][tail]
+            if label and label.kind == EdgeLabel.Kind.FORGET:
                 graph.remove_edge(head, tail)
-                graph.add_edge(head, recall_tail, **atts)
-            graph.add_edge(recall_head, recall_tail, **atts)
+                graph.add_edge(head, forget_tail, **atts)
+            graph.add_edge(forget_head, forget_tail, **atts)
 
     @staticmethod
     def _filter_no_prefix(variables: Set[DerivedTypeVariable]) -> Set[DerivedTypeVariable]:
