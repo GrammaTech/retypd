@@ -87,7 +87,7 @@ class Node:
             summary = 0
         self._forgotten = forgotten
         if forgotten == Node.Forgotten.POST_FORGET:
-            self._str = 'R:' + str(self.base) + variance
+            self._str = 'F:' + str(self.base) + variance
             summary += 1
         else:
             self._str = str(self.base) + variance
