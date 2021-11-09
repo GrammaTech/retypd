@@ -80,8 +80,6 @@ class SolverConfig:
     max_paths_per_root: int = 2**64
     # Maximum paths total to explore per SCC
     max_total_paths: int = 2**64
-    # Keep global constraints in the function pass.
-    globals_in_func_pass: bool = True
 
 
 # There are two main aspects created by the solver: output constraints and sketches. The output
@@ -305,6 +303,8 @@ class Solver(Loggable):
         return constraints
 
     def _solve_topo_graph(self,
+                          callgraph: networkx.DiGraph,
+                          global_vars: Set[DerivedTypeVariable],
                           scc_dag: networkx.DiGraph,
                           constraint_map: Dict[Any, ConstraintSet],
                           sketches_map: Dict[DerivedTypeVariable, "Sketches"],
@@ -346,7 +346,7 @@ class Solver(Loggable):
 
             # The sketches for this SCC; note it may pull in data from other sketches
             scc_sketches = Sketches(self, self.verbose)
-            scc_sketches.add_constraints(generated, scc, sketches_map)
+            scc_sketches.add_constraints(callgraph, global_vars, generated, scc, sketches_map)
 
             for proc_or_global in scc:
                 sketches_map[proc_or_global] = scc_sketches
@@ -361,27 +361,12 @@ class Solver(Loggable):
         derived: Dict[DerivedTypeVariable, ConstraintSet] = {}
         sketches: Dict[DerivedTypeVariable, Sketches] = {}
 
-        global_constraints = defaultdict(ConstraintSet)
-        global_graph = networkx.DiGraph()
-
-        # Callback and set for collecting any constraints related to globals
-        global_bases = set([str(v) for v in self.program.global_vars])
-        def _collect_globals(c: SubtypeConstraint):
-            global_count = 0
-            dtv_left = c.left.base_var
-            dtv_right = c.right.base_var
-            if c.left.base in global_bases:
-                global_constraints[dtv_left].add(c)
-                global_count += 1
-            if c.right.base in global_bases:
-                global_constraints[dtv_right].add(c)
-                global_count += 1
-            if global_count == 2:
-                # The sub-typing relationship is reversed from the "depends on results
-                # from" relationship
-                global_graph.add_edge(dtv_right, dtv_left)
-            # Return "True" to keep this constraint.
-            return self.config.globals_in_func_pass or (global_count == 0)
+        def find_roots(digraph: networkx.DiGraph):
+            roots = []
+            for n in digraph.nodes:
+                if digraph.in_degree(n) == 0:
+                    roots.append(n)
+            return roots
 
         # The idea here is that functions need to satisfy their clients' needs for inputs and need
         # to use their clients' return values without overextending them. So we do a reverse
@@ -391,13 +376,21 @@ class Solver(Loggable):
         # for now. I suspect that most of the graphs are fairly sparse and so the practical reality
         # is that there aren't many paths.
         self.info("Solving functions")
-        scc_dag = networkx.condensation(self.program.callgraph)
-        self._solve_topo_graph(scc_dag, self.program.proc_constraints, sketches,
-                               derived, _collect_globals)
-
-        self.info("Solving globals")
-        global_scc_dag = networkx.condensation(global_graph)
-        self._solve_topo_graph(global_scc_dag, global_constraints, sketches, derived)
+        callgraph = networkx.DiGraph(self.program.callgraph)
+        fake_root = DerivedTypeVariable("$$FAKEROOT$$")
+        for r in find_roots(callgraph):
+            callgraph.add_edge(fake_root, r)
+        scc_dag = networkx.condensation(callgraph)
+        self._solve_topo_graph(callgraph, self.program.global_vars, scc_dag,
+                               self.program.proc_constraints, sketches, derived)
+        # Note: all globals point to the same "Sketches" graph, which has all the globals
+        # in it. It would be nice to separate them out, but not a priority right now (clients
+        # can do it easily).
+        for g in self.program.global_vars:
+            derived[g] = derived[fake_root]
+            sketches[g] = sketches[fake_root]
+        del derived[fake_root]
+        del sketches[fake_root]
 
         return (derived, sketches)
 
@@ -502,12 +495,24 @@ class Sketches(Loggable):
         self.solver = solver
         self.dependencies: Dict[DerivedTypeVariable, Set[DerivedTypeVariable]] = {}
 
+    def ref_node(self, node: SketchNode) -> SketchNode:
+        '''Add a reference to the given node (no copy)
+        '''
+        if isinstance(node, LabelNode):
+            return node
+        if node.dtv in self.lookup:
+            return self.lookup[node.dtv]
+        self.lookup[node.dtv] = node
+        return node
+
     def make_node(self, variable: DerivedTypeVariable) -> SketchNode:
         '''Make a node from a DTV. Compute its atom from its access path.
         '''
         if variable in self.lookup:
             return self.lookup[variable]
         variance = variable.path_variance
+        # XXX I think this was backwards? At least the results on unit tests look better
+        # when I swap it.
         if variance == Variance.COVARIANT:
             result = SketchNode(variable, self.solver.program.types.top)
         else:
@@ -606,6 +611,7 @@ class Sketches(Loggable):
             elif isinstance(succ, LabelNode):
                 suffix = succ.target.get_suffix(origin.dtv)
                 if suffix is None:
+                    continue # FIXME: this exception below is firing!
                     raise ValueError(f'Suffix is None {origin.dtv} --> {succ.target}')
                 succ_dtv = onto.dtv.remove_suffix(suffix)
                 assert succ_dtv
@@ -628,6 +634,16 @@ class Sketches(Loggable):
                 # updated inside of _copy_inner.
                 self._copy_inner(dest, origin, old_sketches, dependencies, seen)
 
+    # Given INTER.out <= INTRA, we need to grab all the constraints on INTER.out from INTER's
+    # sketches and substitute them into INTRA.
+    #
+    #  Example:
+    #    INTER.out <= INTRA
+    #    X <= INTRA.store.s4@4              // This only affects INTRA (it already does)
+    #
+    #    INTER.out --> INTER.out.load.s4@4  // This should get copied in as-is on INTRA ->
+    #
+
     def copy_inter(self,
                    dependencies: Dict[SketchNode, Set[SketchNode]],
                    sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
@@ -637,6 +653,8 @@ class Sketches(Loggable):
         go to a temporary variable, so no fixed point calculation is needed.
         '''
         self.debug("copy_inter: %s", dependencies)
+        # FIXME how can this work? Don't we need to check _either_ side of the constraint to
+        # see which side is the interprocedural dep?
         for dest in dependencies.keys():
             for origin in dependencies.get(dest, set()):
                 seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
@@ -644,10 +662,54 @@ class Sketches(Loggable):
                 # If we have funcvar <= globalvar, the global variable won't yet be in
                 # the sketches_map.
                 if origin_base in sketches_map:
+                    self.debug("Copying %s<--%s from %s sketch", dest, origin, origin_base)
                     self._copy_inner(dest, origin, sketches_map[origin_base].sketches,
                                      dependencies, seen, populate_source=True)
 
+    def copy_globals(self,
+                     nodes: Set[DerivedTypeVariable],
+                     callgraph: networkx.DiGraph,
+                     global_vars: Set[DerivedTypeVariable],
+                     sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        """
+        Copy all the global information from downstream functions (callees) to the current
+        sketch context.
+
+        This is how global types are discovered, by propagating up the call-graph.
+        """
+        # This purposefully re-uses nodes to save memory. The only downside of this is the atoms
+        # of nodes in callees can get mutated by callers; since they are globals, this seems like
+        # a reasonable trade-off. The memory usage can get quite massive otherwise.
+        callees = set()
+        # Get all direct callees
+        for n in nodes:
+            for _, callee in callgraph.out_edges(n):
+                callees.add(callee)
+
+        def copy_rec(node: SketchNode, sketches: Sketches) -> None:
+            our_node = self.ref_node(node)
+            if node in sketches.sketches.nodes:
+                for _, dst in sketches.sketches.out_edges(node):
+                    our_dst = dst
+                    if not isinstance(dst, LabelNode):
+                        our_dst = copy_rec(dst, sketches)
+                    self._add_edge(node, our_dst, sketches.sketches[node][dst]["label"])
+            return node
+
+        for callee in callees:
+            # This happens in recursive relationships, and is ok
+            if callee not in sketches_map:
+                continue
+            sketches = sketches_map[callee]
+            for g in global_vars:
+                node = sketches.lookup.get(g)
+                if node is None:
+                    continue
+                copy_rec(node, sketches)
+
     def add_constraints(self,
+                        callgraph: networkx.DiGraph,
+                        global_vars: Set[DerivedTypeVariable],
                         constraints: ConstraintSet,
                         nodes: Set[DerivedTypeVariable],
                         sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
@@ -666,18 +728,19 @@ class Sketches(Loggable):
             right_base_var = right.base_var
             # Skip constraints X <= LatticeType, they get handled at the bottom of this function
             if right_base_var in self.solver.program.types.internal_types:
+                self.debug("Skipping %s (internal type)", constraint)
                 continue
             # Type variables are generated only to break cycles in the constraint graph. If the rhs
             # is a type variable, that means that the relationship between the sketches is
             # intraprocedural and not interprocedural.
             elif right_base_var in self.solver._type_vars:
-                self.debug("Found in type_vars: %s" % right_base_var)
+                self.debug("Copying %s (intra-procedural)", constraint)
                 intra_dependencies.setdefault(left_node, set()).add(right_node)
             # If the right-hand side is not a type variable, it must be an interesting node (a
             # function or global). The left and right base nodes may be different or the same;
             # either way, treat it as an interprocedural dependency
-            elif left_base_var in nodes:
-                self.debug("Have %d nodes" % len(nodes))
+            elif not (left_base_var in nodes and right_base_var in nodes):
+                self.debug("Copying %s (inter-procedural)", constraint)
                 inter_dependencies.setdefault(left_node, set()).add(right_node)
         # Intra-SCC dependencies just get instantiated using "this" set of sketches
         if intra_dependencies:
@@ -688,14 +751,18 @@ class Sketches(Loggable):
         if inter_dependencies:
             self.copy_inter(inter_dependencies, sketches_map)
 
+        self.copy_globals(nodes, callgraph, global_vars, sketches_map)
+
         for constraint in constraints:
             left = self.solver.reverse_type_var(constraint.left)
             right = self.solver.reverse_type_var(constraint.right)
             if left in self.solver.program.types.internal_types:
                 node = self.lookup[right]
+                self.debug("JOIN: %s, %s", node, left)
                 node.atom = self.solver.program.types.join(node.atom, left)
             if right in self.solver.program.types.internal_types:
                 node = self.lookup[left]
+                self.debug("MEET: %s, %s", node, left)
                 node.atom = self.solver.program.types.meet(node.atom, right)
 
     def to_dot(self, dtv: DerivedTypeVariable) -> str:
