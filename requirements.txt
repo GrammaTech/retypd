@@ -1,2 +1,2 @@
 networkx
-pandas
+tqdm

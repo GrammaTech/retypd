@@ -26,9 +26,11 @@
 from abc import ABC
 from enum import Enum, unique
 from functools import reduce
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, Generic, Iterable, Iterator, List, Optional, Sequence, \
+        Set, Tuple, TypeVar, Union
 import logging
 import os
+import networkx
 
 
 logging.basicConfig()
@@ -215,10 +217,11 @@ class DerivedTypeVariable:
             self.path: Sequence[AccessPathLabel] = ()
         else:
             self.path = tuple(path)
+
+    def format(self, separator: str = '.') -> str:
         if self.path:
-            self._str: str = f'{self.base}.{".".join(map(str, self.path))}'
-        else:
-            self._str: str = self.base
+            return f'{self.base}.{".".join(map(str, self.path))}'
+        return self.base
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, DerivedTypeVariable) and
@@ -233,6 +236,7 @@ class DerivedTypeVariable:
     def __hash__(self) -> int:
         return hash(self.base) ^ hash(self.path)
 
+    @property
     def largest_prefix(self) -> Optional['DerivedTypeVariable']:
         '''Return the prefix obtained by removing the last item from the type variable's path. If
         there is no path, return None.
@@ -240,6 +244,16 @@ class DerivedTypeVariable:
         if self.path:
             return DerivedTypeVariable(self.base, self.path[:-1])
         return None
+
+    def all_prefixes(self) -> Set['DerivedTypeVariable']:
+        '''Return all prefixes of self, including self.
+        '''
+        var = self
+        result: Set['DerivedTypeVariable'] = set()
+        while var:
+            result.add(var)
+            var = var.largest_prefix
+        return result
 
     def get_suffix(self, other: 'DerivedTypeVariable') -> Optional[Sequence[AccessPathLabel]]:
         '''If self is a prefix of other, return the suffix of other's path that is not part of self.
@@ -254,6 +268,15 @@ class DerivedTypeVariable:
                 return None
         return other.path[len(self.path):]
 
+    def remove_suffix(self, suffix: Sequence[AccessPathLabel]) -> Optional['DerivedTypeVariable']:
+        result = DerivedTypeVariable(self.base, self.path)
+        for label in reversed(suffix):
+            if not result.path or result.path[-1] != label:
+                return None
+            result = result.largest_prefix
+        return result
+
+    @property
     def tail(self) -> AccessPathLabel:
         '''Retrieve the last item in the access path, if any. Return None if
         the path is empty.
@@ -270,6 +293,11 @@ class DerivedTypeVariable:
         path.append(suffix)
         return DerivedTypeVariable(self.base, path)
 
+    def extend(self, suffix: Iterable[AccessPathLabel]) -> 'DerivedTypeVariable':
+        path: List[AccessPathLabel] = list(self.path)
+        path.extend(suffix)
+        return DerivedTypeVariable(self.base, path)
+
     def get_single_suffix(self, prefix: 'DerivedTypeVariable') -> Optional[AccessPathLabel]:
         '''If :param:`prefix` is a prefix of :param:`self` with exactly one additional
         :py:class:`AccessPathLabel`, return the additional label. If not, return `None`.
@@ -278,8 +306,13 @@ class DerivedTypeVariable:
                 len(self.path) != (len(prefix.path) + 1) or
                 self.path[:-1] != prefix.path):
             return None
-        return self.tail()
+        return self.tail
 
+    @property
+    def base_var(self) -> 'DerivedTypeVariable':
+        return DerivedTypeVariable(self.base)
+
+    @property
     def path_variance(self) -> Variance:
         '''Determine the variance of the access path.
         '''
@@ -287,7 +320,10 @@ class DerivedTypeVariable:
         return reduce(Variance.combine, variances, Variance.COVARIANT)
 
     def __str__(self) -> str:
-        return self._str
+        return self.format()
+
+    def __repr__(self) -> str:
+        return self.format('$')
 
 
 class SubtypeConstraint:
@@ -313,6 +349,9 @@ class SubtypeConstraint:
     def __str__(self) -> str:
         return f'{self.left} ⊑ {self.right}'
 
+    def __repr__(self) -> str:
+        return str(self)
+
 
 class ConstraintSet:
     '''A (partitioned) set of type constraints
@@ -336,112 +375,88 @@ class ConstraintSet:
         self.subtype.add(constraint)
         return True
 
+    def __or__(self, other: 'ConstraintSet') -> 'ConstraintSet':
+        return ConstraintSet(self.subtype | other.subtype)
+
     def __str__(self) -> str:
         nt = os.linesep + '\t'
         return f'ConstraintSet:{nt}{nt.join(map(str,self.subtype))}'
 
+    def __repr__(self) -> str:
+        return f'ConstraintSet({repr(self.subtype)})'
+
+    def __iter__(self) -> Iterator[SubtypeConstraint]:
+        return iter(self.subtype)
 
 
-class EdgeLabel:
-    '''A forget or recall label in the graph. Instances should never be mutated.
+T = TypeVar('T')
+
+class Lattice(ABC, Generic[T]):
+    @property
+    def atomic_types(self) -> FrozenSet[T]:
+        pass
+
+    @property
+    def internal_types(self) -> FrozenSet[T]:
+        pass
+
+    @property
+    def top(self) -> T:
+        pass
+
+    @property
+    def bottom(self) -> T:
+        pass
+
+    def meet(self, t: T, v: T) -> T:
+        pass
+
+    def join(self, t: T, v: T) -> T:
+        pass
+
+
+MaybeVar = Union[DerivedTypeVariable, str]
+
+def maybe_to_var(mv: MaybeVar) -> DerivedTypeVariable:
+    if isinstance(mv, str):
+        return DerivedTypeVariable(mv)
+    return mv
+
+
+Key = TypeVar('Key')
+Value = TypeVar('Value')
+MaybeDict = Union[Dict[Key, Value], Iterable[Tuple[Key, Value]]]
+
+def maybe_to_bindings(md: MaybeDict[Key, Value]) -> Iterable[Tuple[Key, Value]]:
+    if isinstance(md, dict):
+        return md.items()
+    return md
+
+
+class Program:
+    '''An entire binary. Contains a set of global variables, a mapping from procedures to sets of
+    constraints, and a call graph.
     '''
-    @unique
-    class Kind(Enum):
-        FORGET = 1
-        RECALL = 2
-
-    def __init__(self, capability: AccessPathLabel, kind: Kind) -> None:
-        self.capability = capability
-        self.kind = kind
-        if self.kind == EdgeLabel.Kind.FORGET:
-            type_str = 'forget'
-        else:
-            type_str = 'recall'
-        self._str = f'{type_str} {self.capability}'
-        self._hash = hash(self.capability) ^ hash(self.kind)
-
-    def __eq__(self, other: Any) -> bool:
-        return (isinstance(other, EdgeLabel) and
-                self.capability == other.capability and
-                self.kind == other.kind)
-
-    def __hash__(self) -> int:
-        return self._hash
-
-    def __str__(self) -> str:
-        return self._str
-
-
-class Node:
-    '''A node in the graph of constraints. Node objects are immutable.
-
-    Unforgettable is a flag used to differentiate between two subgraphs later in the algorithm. See
-    :py:method:`Solver._unforgettable_subgraph_split` for details.
-    '''
-
-    @unique
-    class Unforgettable(Enum):
-        PRE_RECALL = 0
-        POST_RECALL = 1
-
     def __init__(self,
-                 base: DerivedTypeVariable,
-                 suffix_variance: Variance,
-                 unforgettable: Unforgettable = Unforgettable.PRE_RECALL) -> None:
-        self.base = base
-        self.suffix_variance = suffix_variance
-        if suffix_variance == Variance.COVARIANT:
-            variance = '.⊕'
-            summary = 2
-        else:
-            variance = '.⊖'
-            summary = 0
-        self._unforgettable = unforgettable
-        if unforgettable == Node.Unforgettable.POST_RECALL:
-            self._str = 'R:' + str(self.base) + variance
-            summary += 1
-        else:
-            self._str = str(self.base) + variance
-        self._hash = hash(self.base) ^ hash(summary)
-
-    def __eq__(self, other: Any) -> bool:
-        return (isinstance(other, Node) and
-                self.base == other.base and
-                self.suffix_variance == other.suffix_variance and
-                self._unforgettable == other._unforgettable)
-
-    def __hash__(self) -> int:
-        return self._hash
-
-    def forget_once(self) -> Tuple[Optional[AccessPathLabel], Optional['Node']]:
-        '''"Forget" the last element in the access path, creating a new Node. The new Node has
-        variance that reflects this change.
-        '''
-        if self.base.path:
-            prefix_path = list(self.base.path)
-            last = prefix_path.pop()
-            prefix = DerivedTypeVariable(self.base.base, prefix_path)
-            return (last, Node(prefix, Variance.combine(last.variance(), self.suffix_variance)))
-        return (None, None)
-
-    def recall(self, label: AccessPathLabel) -> 'Node':
-        '''"Recall" label, creating a new Node. The new Node has variance that reflects this
-        change.
-        '''
-        path = list(self.base.path)
-        path.append(label)
-        variance = Variance.combine(self.suffix_variance, label.variance())
-        return Node(DerivedTypeVariable(self.base.base, path), variance)
-
-    def __str__(self) -> str:
-        return self._str
-
-    def split_unforgettable(self) -> 'Node':
-        '''Get a duplicate of self for use in the post-recall subgraph.
-        '''
-        return Node(self.base, self.suffix_variance, Node.Unforgettable.POST_RECALL)
-
-    def inverse(self) -> 'Node':
-        '''Get a Node identical to this one but with inverted variance.
-        '''
-        return Node(self.base, Variance.invert(self.suffix_variance), self._unforgettable)
+                 types: Lattice[DerivedTypeVariable],
+                 global_vars: Iterable[MaybeVar],
+                 proc_constraints: MaybeDict[MaybeVar, ConstraintSet],
+                 callgraph: Union[MaybeDict[MaybeVar, Iterable[MaybeVar]],
+                                  networkx.DiGraph]) -> None:
+        self.types = types
+        self.global_vars = {maybe_to_var(glob) for glob in global_vars}
+        self.proc_constraints: Dict[DerivedTypeVariable, ConstraintSet] = {}
+        for name, constraints in maybe_to_bindings(proc_constraints):
+            var = maybe_to_var(name)
+            if var in self.proc_constraints:
+                raise ValueError(f'Procedure doubly bound: {name}')
+            self.proc_constraints[var] = constraints
+        if isinstance(callgraph, networkx.DiGraph):
+            self.callgraph = callgraph
+        else: # Dict or Iterable[Tuple]
+            self.callgraph = networkx.DiGraph()
+            for caller, callees in maybe_to_bindings(callgraph):
+                caller_var = maybe_to_var(caller)
+                self.callgraph.add_node(caller_var)
+                for callee in callees:
+                    self.callgraph.add_edge(caller_var, maybe_to_var(callee))
