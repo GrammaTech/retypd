@@ -43,7 +43,7 @@ class VoidType(CType):
         return 0
 
     def __str__(self) -> str:
-        return f'void'
+        return 'void'
 
 
 class IntType(CType):
@@ -59,7 +59,7 @@ class IntType(CType):
         signed_tag = ''
         if not self.signed:
             signed_tag = 'u'
-        return f'{signed_tag}int{self.width}_t'
+        return f'{signed_tag}int{self.width*8}_t'
 
 
 class FloatType(CType):
@@ -112,7 +112,7 @@ class PointerType(CType):
 
     @property
     def size(self) -> int:
-        raise NotImplemented
+        raise NotImplementedError()
 
     def __str__(self) -> str:
         return f'{self.target_type}*'
@@ -134,7 +134,7 @@ class FunctionType(CType):
 
     @property
     def size(self) -> int:
-        raise NotImplemented
+        raise NotImplementedError()
 
     def __str__(self) -> str:
         return self.name
@@ -182,17 +182,24 @@ class CompoundType(CType):
 
 class StructType(CompoundType):
     next_id = 0
-    def __init__(self, fields: Iterable[Field], name: Optional[str]=None) -> None:
-        self._fields = sorted(fields, key=lambda f: f.offset)
+
+    def __init__(self, name: Optional[str]=None) -> None:
         if name:
             self._name = name
         else:
             self._name = f'struct_{StructType.next_id}'
             StructType.next_id += 1
 
+    def set_fields(self, fields: Iterable[Field]):
+        """
+        We need to be able to construct a Struct before populating it so that we can
+        represent recursive types.
+        """
+        self._fields = sorted(fields, key=lambda f: f.offset)
+
     @property
     def size(self) -> int:
-        raise NotImplemented
+        raise NotImplementedError()
 
     @property
     def compound_type(self) -> str:

@@ -388,6 +388,9 @@ class ConstraintSet:
     def __iter__(self) -> Iterator[SubtypeConstraint]:
         return iter(self.subtype)
 
+    def __len__(self) -> int:
+        return len(self.subtype)
+
 
 T = TypeVar('T')
 

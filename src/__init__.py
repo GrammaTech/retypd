@@ -31,5 +31,5 @@ object is the set of constraints generated from the analysis.
 from .graph import EdgeLabel, Node
 from .dummylattice import DummyLattice
 from .schema import ConstraintSet, DerefLabel, DerivedTypeVariable, InLabel, LoadLabel, OutLabel, Program, StoreLabel, SubtypeConstraint, Variance
-from .solver import Solver
+from .solver import Solver, SolverConfig
 from .parser import SchemaParser

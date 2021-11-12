@@ -64,19 +64,19 @@ class EdgeLabel:
 class Node:
     '''A node in the graph of constraints. Node objects are immutable.
 
-    Unforgettable is a flag used to differentiate between two subgraphs later in the algorithm. See
-    :py:method:`Solver._unforgettable_subgraph_split` for details.
+    Forgotten is a flag used to differentiate between two subgraphs later in the algorithm. See
+    :py:method:`Solver._recall_forget_split` for details.
     '''
 
     @unique
-    class Unforgettable(Enum):
-        PRE_RECALL = 0
-        POST_RECALL = 1
+    class Forgotten(Enum):
+        PRE_FORGET = 0
+        POST_FORGET = 1
 
     def __init__(self,
                  base: DerivedTypeVariable,
                  suffix_variance: Variance,
-                 unforgettable: Unforgettable = Unforgettable.PRE_RECALL) -> None:
+                 forgotten: Forgotten = Forgotten.PRE_FORGET) -> None:
         self.base = base
         self.suffix_variance = suffix_variance
         if suffix_variance == Variance.COVARIANT:
@@ -85,9 +85,9 @@ class Node:
         else:
             variance = '.⊖'
             summary = 0
-        self._unforgettable = unforgettable
-        if unforgettable == Node.Unforgettable.POST_RECALL:
-            self._str = 'R:' + str(self.base) + variance
+        self._forgotten = forgotten
+        if forgotten == Node.Forgotten.POST_FORGET:
+            self._str = 'F:' + str(self.base) + variance
             summary += 1
         else:
             self._str = str(self.base) + variance
@@ -97,7 +97,7 @@ class Node:
         return (isinstance(other, Node) and
                 self.base == other.base and
                 self.suffix_variance == other.suffix_variance and
-                self._unforgettable == other._unforgettable)
+                self._forgotten == other._forgotten)
 
     def __hash__(self) -> int:
         return self._hash
@@ -125,15 +125,15 @@ class Node:
     def __str__(self) -> str:
         return self._str
 
-    def split_unforgettable(self) -> 'Node':
+    def split_recall_forget(self) -> 'Node':
         '''Get a duplicate of self for use in the post-recall subgraph.
         '''
-        return Node(self.base, self.suffix_variance, Node.Unforgettable.POST_RECALL)
+        return Node(self.base, self.suffix_variance, Node.Forgotten.POST_FORGET)
 
     def inverse(self) -> 'Node':
         '''Get a Node identical to this one but with inverted variance.
         '''
-        return Node(self.base, Variance.invert(self.suffix_variance), self._unforgettable)
+        return Node(self.base, Variance.invert(self.suffix_variance), self._forgotten)
 
 
 class ConstraintGraph:
