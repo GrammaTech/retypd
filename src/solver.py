@@ -37,9 +37,9 @@ import os
 import itertools
 import networkx
 import tqdm
-from collections import defaultdict
 from dataclasses import dataclass
 from graphviz import Digraph
+from enum import Enum
 
 
 def dump_labeled_graph(graph, label, filename):
@@ -55,18 +55,23 @@ def dump_labeled_graph(graph, label, filename):
     G.render(filename, format='svg', view=False)
 
 
+class LogLevel(int, Enum):
+    QUIET = 0
+    INFO = 1
+    DEBUG = 2
+
 # Unfortunable, the python logging class is a bit flawed and overly complex for what we need
 # When you use info/debug you can use %s/%d/etc formatting ala logging to lazy evaluate
 class Loggable:
-    def __init__(self, verbose: int = 0):
+    def __init__(self, verbose: LogLevel = LogLevel.QUIET):
         self.verbose = verbose
 
     def info(self, *args):
-        if self.verbose > 0:
+        if self.verbose >= LogLevel.INFO:
             print(str(args[0]) % tuple(args[1:]))
 
     def debug(self, *args):
-        if self.verbose > 1:
+        if self.verbose >= LogLevel.DEBUG:
             print(str(args[0]) % tuple(args[1:]))
 
 @dataclass
@@ -102,7 +107,7 @@ class Solver(Loggable):
     def __init__(self,
                  program: Program,
                  config: SolverConfig = SolverConfig(),
-                 verbose: int = 0) -> None:
+                 verbose: LogLevel = LogLevel.QUIET) -> None:
         super(Solver, self).__init__(verbose)
         self.program = program
         # TODO possibly make these values shared across a function
@@ -488,7 +493,7 @@ class Sketches(Loggable):
     '''The set of sketches from a set of constraints. Intended to be updated incrementally, per the
     Solver's reverse topological ordering.
     '''
-    def __init__(self, solver: Solver, verbose: int = 0) -> None:
+    def __init__(self, solver: Solver, verbose: LogLevel = LogLevel.QUIET) -> None:
         super(Sketches, self).__init__(verbose)
         self.sketches = networkx.DiGraph()
         self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
@@ -693,8 +698,8 @@ class Sketches(Loggable):
                     our_dst = dst
                     if not isinstance(dst, LabelNode):
                         our_dst = copy_rec(dst, sketches)
-                    self._add_edge(node, our_dst, sketches.sketches[node][dst]["label"])
-            return node
+                    self._add_edge(our_node, our_dst, sketches.sketches[node][dst]["label"])
+            return our_node
 
         for callee in callees:
             # This happens in recursive relationships, and is ok
@@ -726,7 +731,7 @@ class Sketches(Loggable):
             # F.in_0.load.σ4@0's base variable is F.
             left_base_var = left.base_var
             right_base_var = right.base_var
-            # Skip constraints X <= LatticeType, they get handled at the bottom of this function
+            # Skip constraints X <= LatticeType (they get handled at the bottom of this function)
             if right_base_var in self.solver.program.types.internal_types:
                 self.debug("Skipping %s (internal type)", constraint)
                 continue
