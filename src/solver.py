@@ -129,6 +129,11 @@ class GlobalHandler:
 
 
 class PreciseGlobalHandler(GlobalHandler):
+    """
+    Handle globals precisely, by bubbling sketches up the callgraph, accumulating more and more
+    globals (and sketch nodes) as it goes. Once it reaches the roots of the callgraph, we have
+    all the globals and these are the final sketches.
+    """
     def __init__(self,
                  global_vars: Set[DerivedTypeVariable],
                  callgraph: networkx.DiGraph,
@@ -139,6 +144,9 @@ class PreciseGlobalHandler(GlobalHandler):
 
 
     def cleanse_globals(self, sketches: "Sketches"):
+        """
+        Delete all the global nodes from a particular sketch graph.
+        """
         for dtv, node in list(sketches.lookup.items()):
             if dtv.base_var in self.global_vars:
                 if node in sketches.sketches.nodes:
@@ -147,6 +155,10 @@ class PreciseGlobalHandler(GlobalHandler):
 
 
     def pre_scc(self, scc_node: Any) -> None:
+        """
+        Sets up a list of all SCCs that still have callers to be processing. See post_scc for
+        what happens when all callers have been processed.
+        """
         caller_scc_set = set()
         for src_id, _ in self.scc_dag.in_edges(scc_node):
             caller_scc = self.scc_dag.nodes[src_id]["members"]
@@ -159,6 +171,13 @@ class PreciseGlobalHandler(GlobalHandler):
     def post_scc(self,
                  scc_node: Any,
                  sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        """
+        Checks each SCC to see if all callers of that SCC have been processed. If so, all the
+        globals for that SCC can be cleaned up from the sketches (they will have been copied
+        into the callers, and live on).
+
+        Cleaning up like this gives massive reduction in RAM usage for large programs.
+        """
         # Cleanup anything we can
         scc = self.scc_dag.nodes[scc_node]["members"]
         not_cleaned_up_new = []
@@ -204,6 +223,10 @@ class PreciseGlobalHandler(GlobalHandler):
 
 
 class UnionGlobalHandler(GlobalHandler):
+    """
+    Ignore globals (but leave them in sketches) during the call-graph pass, and at the end
+    collect all the global sketches from all the functions.
+    """
     def pre_scc(self, scc_node: Any) -> None:
         pass
     def post_scc(self,
@@ -650,7 +673,7 @@ class Sketches(Loggable):
     '''The set of sketches from a set of constraints. Intended to be updated incrementally, per the
     Solver's reverse topological ordering.
     '''
-    def __init__(self, solver: Solver, verbose: int = 0) -> None:
+    def __init__(self, solver: Solver, verbose: LogLevel = LogLevel.QUIET) -> None:
         super(Sketches, self).__init__(verbose)
         self.sketches = networkx.DiGraph()
         self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
@@ -841,6 +864,8 @@ class Sketches(Loggable):
                                      dependencies, seen, populate_source=True)
 
     def _copy_global_recursive(self, node: SketchNode, sketches: "Sketches") -> SketchNode:
+        # TODO: this probably needs to handle atoms properly, using the Lattice. Needs
+        # some thought.
         our_node = self.ref_node(node)
         if node in sketches.sketches.nodes:
             for _, dst in sketches.sketches.out_edges(node):
