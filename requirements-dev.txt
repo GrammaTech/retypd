@@ -1,0 +1,8 @@
+flake8
+pkginfo
+pytest
+pytest-cov
+requests
+sphinx
+sphinx_rtd_theme
+twine
