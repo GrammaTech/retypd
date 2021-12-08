@@ -32,9 +32,9 @@ jobs = auto
 
 ########## VERBOSITY ##########
 
-# Increase the verbosity of Flake8's output.
+# Increase the verbosity of Flake8s output.
 verbose = 0
-# Decrease the verbosity of Flake8's output.
+# Decrease the verbosity of Flake8s output.
 quiet = 0
 
 
@@ -91,7 +91,7 @@ disable-noqa = False
 max-line-length = 100
 # Set the maximum allowed McCabe complexity value for a block of code.
 max-complexity = 10
-# Toggle whether pycodestyle should enforce matching the indentation of the opening bracket's line.
+# Toggle whether pycodestyle should enforce matching the indentation of the opening brackets line.
 # incluences E131 and E133
 hang-closing = True
 
@@ -107,8 +107,6 @@ hang-closing = True
 # Specify a list of codes to ignore.
 ignore = D4
 # Specify the list of error codes you wish Flake8 to report.
-# For now we only use the pyflakes errors, but in the future we may want to add
-# more (too noisy right now)
 select = F, E9
 # Enable off-by-default extensions.
 enable-extensions =
@@ -127,4 +125,3 @@ exclude-in-doctest =
 # tell flake8-rst-docstrings plugin to ignore some custom roles
 # this prevents FP RST303 and RST304
 rst-roles = py:meth, py:class, py:obj
-
