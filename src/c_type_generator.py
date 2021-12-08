@@ -39,6 +39,8 @@ from .c_types import (
     IntType,
     UnionType,
     Field,
+    FloatType,
+    CharType,
 )
 from .loggable import Loggable
 from typing import Set, Dict, Optional
