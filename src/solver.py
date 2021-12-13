@@ -655,6 +655,8 @@ class Sketches(Loggable):
     '''
     def __init__(self, solver: Solver, verbose: LogLevel = LogLevel.QUIET) -> None:
         super(Sketches, self).__init__(verbose)
+        # We maintain the invariant that if a node is in `lookup` then it should also be in
+        # `sketches` as a node (even if there are no edges)
         self.sketches = networkx.DiGraph()
         self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
         self.solver = solver
@@ -668,6 +670,7 @@ class Sketches(Loggable):
         if node.dtv in self.lookup:
             return self.lookup[node.dtv]
         self.lookup[node.dtv] = node
+        self.sketches.add_node(node)
         return node
 
     def make_node(self,

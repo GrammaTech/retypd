@@ -42,11 +42,10 @@ from .c_types import (
     FloatType,
     CharType,
 )
-from .loggable import Loggable
+from .loggable import Loggable, LogLevel
 from typing import Set, Dict, Optional
 from collections import defaultdict
 import itertools
-import sys
 
 
 class CTypeGenerationError(Exception):
@@ -63,7 +62,7 @@ class CTypeGenerator(Loggable):
                  sketch_map: Dict[DerivedTypeVariable, Sketches],
                  lattice_ctypes: LatticeCTypes,
                  default_int_size: int,
-                 verbose: int = 0):
+                 verbose: LogLevel = LogLevel.DEBUG):
         super(CTypeGenerator, self).__init__(verbose)
         self.default_int_size = default_int_size
         self.sketch_map = sketch_map
@@ -140,7 +139,12 @@ class CTypeGenerator(Loggable):
     def c_type_from_nodeset(self,
                             base_dtv: DerivedTypeVariable,
                             sketches: Sketches,
-                            ns: Set[SketchNode]):
+                            ns: Set[SketchNode]) -> Optional[CType]:
+        """
+        Given a derived type var, sketches, and a set of nodes, produce a C-like type. The
+        set of nodes must be all for the same access path (e.g., foo[0]), but can be different
+        _ways_ of accessing it (e.g., foo.load.s8@0 and foo.store.s8@0).
+        """
         ns = set([self.resolve_label(sketches, n) for n in ns])
         assert None not in ns
 
@@ -153,6 +157,7 @@ class CTypeGenerator(Loggable):
         children = list(itertools.chain(
             *[self._succ_no_loadstore(base_dtv, sketches, n, set()) for n in ns]
         ))
+        print(f"Children of {ns} -> {children}")
         if len(children) == 0:
             rv = None
             for n in ns:
@@ -181,7 +186,7 @@ class CTypeGenerator(Loggable):
             for c in children:
                 tail = c.dtv.tail
                 if not isinstance(tail, DerefLabel):
-                    print(f"ERROR: {c.dtv} does not end in DerefLabel", file=sys.stderr)
+                    print(f"WARNING: {c.dtv} does not end in DerefLabel")
                     continue
                 #assert isinstance(tail, DerefLabel)
                 children_by_offset[tail.offset].add(c)
@@ -246,22 +251,25 @@ class CTypeGenerator(Loggable):
             # First, see if it is a function
             params = []
             rtype = None
+            is_func = False
             for succ in self._succ_no_loadstore(base_dtv, sketches, node, set()):
                 assert isinstance(succ, SketchNode)
                 if isinstance(succ.dtv.tail, InLabel):
-                    self.debug("Processing %s", succ.dtv)
+                    self.debug("(1) Processing %s", succ.dtv)
                     p = self.c_type_from_nodeset(base_dtv, sketches, {succ})
                     params.append(p)
+                    is_func = True
                 elif isinstance(succ.dtv.tail, OutLabel):
-                    self.debug("Processing %s", succ.dtv)
+                    self.debug("(2) Processing %s", succ.dtv)
                     assert (rtype is None)
                     rtype = self.c_type_from_nodeset(base_dtv, sketches, {succ})
+                    is_func = True
             # Not a function
-            if rtype is None and not params:
-                self.debug("Processing %s", base_dtv)
-                dtv_to_type[base_dtv] = self.c_type_from_nodeset(base_dtv, sketches, {node})
-            else:
+            if is_func:
                 dtv_to_type[base_dtv] = FunctionType(rtype, params, name=str(base_dtv))
+            else:
+                self.debug("(3) Processing %s", base_dtv)
+                dtv_to_type[base_dtv] = self.c_type_from_nodeset(base_dtv, sketches, {node})
 
         if simplify_pointers:
             self.debug("Simplifying pointers")
