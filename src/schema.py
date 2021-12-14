@@ -185,27 +185,40 @@ class OutLabel(AccessPathLabel):
 
 class DerefLabel(AccessPathLabel):
     '''Represents a dereference in an access path. Specifies a size (the number of bytes read or
-    written) and an offset (the number of bytes from the base).
+    written) and an offset (the number of bytes from the base) and an optional count (for array-
+    like accesses that do size*count accesses in a loop).
     '''
-    def __init__(self, size: int, offset: int) -> None:
+    # An unknown number of elements
+    COUNT_NOBOUND = -1
+    # A null-terminated string
+    COUNT_NULLTERM = -2
+
+    def __init__(self, size: int, offset: int, count: int = 1) -> None:
         self.size = size
         self.offset = offset
+        self.count = count
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, DerefLabel) and
                 self.size == other.size and
-                self.offset == other.offset)
+                self.offset == other.offset and
+                self.count == other.count)
 
     def _less_than(self, other: 'DerefLabel') -> bool:
-        if self.offset == other.offset:
-            return self.size < other.size
-        return self.offset < other.offset
+        return (self.offset, self.size, self.count) < (other.offset, other.size, other.count)
 
     def __hash__(self) -> int:
-        return hash(self.offset) ^ hash(self.size)
+        return hash( (self.offset, self.size, self.count) )
 
     def __str__(self) -> str:
-        return f'σ{self.size}@{self.offset}'
+        srep = f'σ{self.size}@{self.offset}'
+        if self.count > 1:
+            srep += f'*[{self.count}]'
+        elif self.count == self.COUNT_NOBOUND:
+            srep += '*[nobound]'
+        elif self.count == self.COUNT_NULLTERM:
+            srep += '*[nullterm]'
+        return srep
 
 
 class DerivedTypeVariable:

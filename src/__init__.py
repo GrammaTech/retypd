@@ -41,6 +41,8 @@ from .schema import (
     StoreLabel,
     SubtypeConstraint,
     Variance,
+    Lattice,
+    LatticeCTypes,
 )
 from .solver import Solver, SolverConfig
 from .parser import SchemaParser
