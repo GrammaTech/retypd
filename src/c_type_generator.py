@@ -62,7 +62,7 @@ class CTypeGenerator(Loggable):
                  sketch_map: Dict[DerivedTypeVariable, Sketches],
                  lattice_ctypes: LatticeCTypes,
                  default_int_size: int,
-                 verbose: LogLevel = LogLevel.DEBUG):
+                 verbose: LogLevel = LogLevel.QUIET):
         super(CTypeGenerator, self).__init__(verbose)
         self.default_int_size = default_int_size
         self.sketch_map = sketch_map
@@ -71,6 +71,11 @@ class CTypeGenerator(Loggable):
         self.lattice_ctypes = lattice_ctypes
 
     def union_types(self, a: CType, b: CType):
+        """
+        This function decides how to merge two CTypes for the same access path. This differs from
+        the lattice, which only considers "atomic" or "terminal" types. This can take, for example,
+        two pointers to structs. Or an integer and a pointer to a struct.
+        """
         if a is None:
             return b
         if b is None:
@@ -157,7 +162,6 @@ class CTypeGenerator(Loggable):
         children = list(itertools.chain(
             *[self._succ_no_loadstore(base_dtv, sketches, n, set()) for n in ns]
         ))
-        print(f"Children of {ns} -> {children}")
         if len(children) == 0:
             rv = None
             for n in ns:
