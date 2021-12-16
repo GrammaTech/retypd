@@ -62,9 +62,11 @@ class CTypeGenerator(Loggable):
                  sketch_map: Dict[DerivedTypeVariable, Sketches],
                  lattice_ctypes: LatticeCTypes,
                  default_int_size: int,
+                 default_ptr_size: int,
                  verbose: LogLevel = LogLevel.QUIET):
         super(CTypeGenerator, self).__init__(verbose)
         self.default_int_size = default_int_size
+        self.default_ptr_size = default_ptr_size
         self.sketch_map = sketch_map
         self.struct_types = {}
         self.dtv2type = defaultdict(dict)
@@ -179,7 +181,7 @@ class CTypeGenerator(Loggable):
             # We could recurse on types below, so we populate the struct _first_
             s = StructType()
             self.struct_types[s.name] = s
-            rv = PointerType(s)
+            rv = PointerType(s, self.default_ptr_size)
             for n in ns:
                 self.dtv2type[base_dtv][n.dtv] = rv
 
@@ -218,10 +220,14 @@ class CTypeGenerator(Loggable):
             if isinstance(typ.target_type, StructType):
                 s = typ.target_type
                 if len(s.fields) == 1 and s.fields[0].offset == 0:
-                    rv = PointerType(self._simplify_pointers(s.fields[0].ctype, seen_structs))
+                    rv = PointerType(
+                        self._simplify_pointers(s.fields[0].ctype, seen_structs),
+                        self.default_ptr_size)
                     self.info("Simplified pointer: %s", rv)
                     return rv
-            return PointerType(self._simplify_pointers(typ.target_type, seen_structs))
+            return PointerType(
+                self._simplify_pointers(typ.target_type, seen_structs),
+                self.default_ptr_size)
         elif isinstance(typ, FunctionType):
             params = [self._simplify_pointers(t, seen_structs) for t in typ.params]
             rt = self._simplify_pointers(typ.return_type, seen_structs)

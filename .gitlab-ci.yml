@@ -29,4 +29,5 @@ export_module:
     - kubernetes
   rules:
     - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_COMMIT_BRANCH == "ddehaas/gt-main"'
     - if: '$CI_COMMIT_REF_NAME =~ /^release-.*/'

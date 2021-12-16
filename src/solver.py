@@ -544,9 +544,10 @@ class Solver(Loggable):
             if self.config.keep_output_constraints:
                 derived[g] = derived[fake_root]
             sketches_map[g] = sketches_map[fake_root]
-        if self.config.keep_output_constraints:
+        if self.config.keep_output_constraints and fake_root in derived:
             del derived[fake_root]
-        del sketches_map[fake_root]
+        if fake_root in sketches_map:
+            del sketches_map[fake_root]
 
         return (derived, sketches_map)
 

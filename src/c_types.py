@@ -107,12 +107,13 @@ class ArrayType(CType):
 
 
 class PointerType(CType):
-    def __init__(self, target_type: CType) -> None:
+    def __init__(self, target_type: CType, width: int) -> None:
         self.target_type = target_type
+        self.width = width
 
     @property
     def size(self) -> int:
-        raise NotImplementedError()
+        return self.width
 
     def __str__(self) -> str:
         return f'{self.target_type}*'
