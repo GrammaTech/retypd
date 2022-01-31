@@ -24,8 +24,9 @@
 '''
 
 import re
-from .schema import AccessPathLabel, DerefLabel, DerivedTypeVariable, EdgeLabel, \
-        InLabel, LoadLabel, OutLabel, StoreLabel, SubtypeConstraint, Variance, Node
+from .schema import AccessPathLabel, DerefLabel, DerivedTypeVariable, InLabel, LoadLabel, \
+        OutLabel, StoreLabel, SubtypeConstraint, Variance
+from .graph import EdgeLabel, Node
 from typing import Dict, Tuple
 
 

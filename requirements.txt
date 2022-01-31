@@ -1,2 +1,4 @@
+dataclasses
+graphviz
 networkx
-pandas
+tqdm
