@@ -815,8 +815,6 @@ class Sketches(Loggable):
             # Otherwise, it's a regular (non-label) node that hasn't been seen, so emit it and
             # explore its successors.
             else:
-                # TODO: this should probably make use of meet/join to combine the atomic type
-                # from the callee (succ) into the caller (the new node)
                 succ_node = self.make_node(onto.dtv.add_suffix(label),
                                            lower_bound=succ.lower_bound,
                                            upper_bound=succ.upper_bound)
@@ -863,6 +861,9 @@ class Sketches(Loggable):
                     self.debug("Copying %s<--%s from %s sketch", dest, origin, origin_base)
                     origin_node = sketches_map[origin_base].lookup.get(origin.dtv)
                     if origin_node is not None:
+                        # Compute a least upper bound (join) on the lower bounds for the DTV.
+                        # Analogously, compute a greatest upper bound (meet) on the upper bounds for
+                        # the DTV.
                         dest.lower_bound = self.solver.program.types.join(origin_node.lower_bound,
                                                                           dest.lower_bound)
                         dest.upper_bound = self.solver.program.types.meet(origin_node.upper_bound,
