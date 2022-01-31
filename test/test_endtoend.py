@@ -8,6 +8,9 @@ import unittest
 from retypd import ConstraintSet, DummyLattice, Program, SchemaParser, Solver
 
 
+VERBOSE_TESTS = False
+
+
 class RecursiveSchemaTest(unittest.TestCase):
     def test_recursive(self):
         '''A test based on the running example from the paper (Figure 2 on p. 3) and the slides
@@ -29,15 +32,18 @@ class RecursiveSchemaTest(unittest.TestCase):
         constraints[close].add(SchemaParser.parse_constraint("#SuccessZ ⊑ close.out"))
 
         program = Program(DummyLattice(), {}, constraints, {F: [close]})
-        solver = Solver(program)
+        solver = Solver(program, verbose=VERBOSE_TESTS)
         (gen_const, sketches) = solver()
 
-        tv = solver.lookup_type_var('φ')
-        self.assertTrue(SchemaParser.parse_constraint('#SuccessZ ⊑ F.out') in gen_const[F])
-        self.assertTrue(SchemaParser.parse_constraint(f'F.in_0 ⊑ {tv}') in gen_const[F])
-        self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@0 ⊑ {tv}') in gen_const[F])
-        self.assertTrue(SchemaParser.parse_constraint(f'{tv}.load.σ4@4 ⊑ #FileDescriptor') in
-                gen_const[F])
+        # Inter-procedural results (sketches)
+        fd = SchemaParser.parse_variable("#FileDescriptor")
+        F_sketches = sketches[F]
+        # Equivalent to "#SuccessZ ⊑ F.out"
+        self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable("F.out")].lower_bound,
+                         SchemaParser.parse_variable("#SuccessZ"))
+        self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable(f"φ.load.σ4@4")].upper_bound,
+                         SchemaParser.parse_variable("#FileDescriptor"))
+
 
 
 if __name__ == '__main__':

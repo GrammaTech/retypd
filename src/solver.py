@@ -23,7 +23,7 @@
 '''The driver for the retypd analysis.
 '''
 
-from typing import Dict, List, Optional, Set, Tuple, Union, Any, Callable
+from typing import Dict, List, Optional, Set, Tuple, Union, Any
 from .graph import EdgeLabel, Node, ConstraintGraph
 from .schema import (
     ConstraintSet,
@@ -63,7 +63,7 @@ class LogLevel(int, Enum):
 # Unfortunable, the python logging class is a bit flawed and overly complex for what we need
 # When you use info/debug you can use %s/%d/etc formatting ala logging to lazy evaluate
 class Loggable:
-    def __init__(self, verbose: LogLevel = LogLevel.QUIET):
+    def __init__(self, verbose: LogLevel = LogLevel.QUIET) -> None:
         self.verbose = verbose
 
     def info(self, *args):
@@ -73,6 +73,7 @@ class Loggable:
     def debug(self, *args):
         if self.verbose >= LogLevel.DEBUG:
             print(str(args[0]) % tuple(args[1:]))
+
 
 @dataclass
 class SolverConfig:
@@ -85,6 +86,170 @@ class SolverConfig:
     max_paths_per_root: int = 2**64
     # Maximum paths total to explore per SCC
     max_total_paths: int = 2**64
+    # Keep output constraints after use; set to False to save memory
+    keep_output_constraints: bool = True
+    # More precise global handling
+    # By default, we propagate globals up the callgraph, inlining them into the sketches as we
+    # go, and the global sketches in the final (synthetic) root of the callgraph are the results
+    # However, this can be slow and for large binaries the extra precision may not be worth the
+    # time cost. If this is set to False we do a single unification of globals at the end, instead
+    # of pulling them up the callgraph.
+    precise_globals: bool = True
+
+
+class GlobalHandler:
+    def __init__(self,
+                 global_vars: Set[DerivedTypeVariable],
+                 callgraph: networkx.DiGraph,
+                 scc_dag: networkx.DiGraph,
+                 fake_root: DerivedTypeVariable) -> None:
+        self.scc_dag = scc_dag
+        self.callgraph = callgraph
+        self.global_vars = global_vars
+        self.fake_root = fake_root
+
+    def pre_scc(self, scc_node: Any):
+        raise NotImplementedError("Child class must implement")
+
+    def post_scc(self,
+                 scc_node: Any,
+                 sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        raise NotImplementedError("Child class must implement")
+
+    def copy_globals(self,
+                     current_sketch: "Sketches",
+                     nodes: Set[DerivedTypeVariable],
+                     sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        raise NotImplementedError("Child class must implement")
+
+    def finalize(self,
+                 solver: "Solver",
+                 sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        raise NotImplementedError("Child class must implement")
+
+
+class PreciseGlobalHandler(GlobalHandler):
+    """
+    Handle globals precisely, by bubbling sketches up the callgraph, accumulating more and more
+    globals (and sketch nodes) as it goes. Once it reaches the roots of the callgraph, we have
+    all the globals and these are the final sketches.
+    """
+    def __init__(self,
+                 global_vars: Set[DerivedTypeVariable],
+                 callgraph: networkx.DiGraph,
+                 scc_dag: networkx.DiGraph,
+                 fake_root: DerivedTypeVariable) -> None:
+        super(PreciseGlobalHandler, self).__init__(global_vars, callgraph, scc_dag, fake_root)
+        # SCCs that have not yet had their sketches cleansed of globals
+        # TODO get proper type annotations
+        self.not_cleaned_up: List[Tuple[Any, Set[Any]]] = []
+
+
+    def cleanse_globals(self, sketches: "Sketches"):
+        """
+        Delete all the global nodes from a particular sketch graph.
+        """
+        for dtv, node in list(sketches.lookup.items()):
+            if dtv.base_var in self.global_vars:
+                if node in sketches.sketches.nodes:
+                    sketches.sketches.remove_node(node)
+                del sketches.lookup[dtv]
+
+
+    def pre_scc(self, scc_node: Any) -> None:
+        """
+        Sets up a list of all SCCs that still have callers to be processing. See post_scc for
+        what happens when all callers have been processed.
+        """
+        # TODO proper type annotation
+        caller_scc_set: Set[Any] = set()
+        for src_id, _ in self.scc_dag.in_edges(scc_node):
+            caller_scc = self.scc_dag.nodes[src_id]["members"]
+            caller_scc_set |= caller_scc
+        scc = self.scc_dag.nodes[scc_node]["members"]
+        if scc != {self.fake_root}:
+            self.not_cleaned_up.append( (scc, caller_scc_set) )
+
+
+    def post_scc(self,
+                 scc_node: Any,
+                 sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        """
+        Checks each SCC to see if all callers of that SCC have been processed. If so, all the
+        globals for that SCC can be cleaned up from the sketches (they will have been copied
+        into the callers, and live on).
+
+        Cleaning up like this gives massive reduction in RAM usage for large programs.
+        """
+        # Cleanup anything we can
+        scc = self.scc_dag.nodes[scc_node]["members"]
+        not_cleaned_up_new = []
+        for other_scc, other_scc_callers in self.not_cleaned_up:
+            other_scc_callers -= scc
+            if len(other_scc_callers) == 0:
+                for item in other_scc:
+                    self.cleanse_globals(sketches_map[item])
+            else:
+                not_cleaned_up_new.append( (other_scc, other_scc_callers) )
+        self.not_cleaned_up = not_cleaned_up_new
+
+
+    def copy_globals(self,
+                     current_sketch: "Sketches",
+                     nodes: Set[DerivedTypeVariable],
+                     sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        """
+        Copy all the global information from downstream functions (callees) to the current
+        sketch context.
+        """
+        # This purposefully re-uses nodes to save memory. The only downside of this is the atoms
+        # of nodes in callees can get mutated by callers; since they are globals, this seems like
+        # a reasonable trade-off. The memory usage can get quite massive otherwise.
+        callees = set()
+        # Get all direct callees
+        for n in nodes:
+            for _, callee in self.callgraph.out_edges(n):
+                callees.add(callee)
+
+        for callee in callees:
+            # This happens in recursive relationships, and is ok
+            if callee not in sketches_map:
+                continue
+            sketches = sketches_map[callee]
+            current_sketch.copy_globals_from_sketch(self.global_vars, sketches)
+
+
+    def finalize(self,
+                 solver: "Solver",
+                 sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        pass
+
+
+class UnionGlobalHandler(GlobalHandler):
+    """
+    Ignore globals (but leave them in sketches) during the call-graph pass, and at the end
+    collect all the global sketches from all the functions.
+    """
+    def pre_scc(self, scc_node: Any) -> None:
+        pass
+    def post_scc(self,
+                 scc_node: Any,
+                 sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        pass
+    def copy_globals(self,
+                     current_sketch: "Sketches",
+                     nodes: Set[DerivedTypeVariable],
+                     sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        pass
+
+    def finalize(self,
+                 solver: "Solver",
+                 sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
+        global_sketches = Sketches(solver)
+        for func_sketches in sketches_map.values():
+            global_sketches.copy_globals_from_sketch(
+                self.global_vars, func_sketches)
+        sketches_map[self.fake_root] = global_sketches
 
 
 # There are two main aspects created by the solver: output constraints and sketches. The output
@@ -307,30 +472,24 @@ class Solver(Loggable):
             explore(origin)
         return constraints
 
+
     def _solve_topo_graph(self,
-                          callgraph: networkx.DiGraph,
-                          global_vars: Set[DerivedTypeVariable],
+                          global_handler: GlobalHandler,
                           scc_dag: networkx.DiGraph,
                           constraint_map: Dict[Any, ConstraintSet],
                           sketches_map: Dict[DerivedTypeVariable, "Sketches"],
-                          derived: Dict[DerivedTypeVariable, ConstraintSet],
-                          constraint_visitor: Optional[Callable[[SubtypeConstraint], None]] = None):
+                          derived: Dict[DerivedTypeVariable, ConstraintSet]):
         def show_progress(iterable):
             if self.verbose:
                 return tqdm.tqdm(iterable)
             return iterable
 
         for scc_node in show_progress(reversed(list(networkx.topological_sort(scc_dag)))):
+            global_handler.pre_scc(scc_node)
             scc = scc_dag.nodes[scc_node]['members']
             scc_graph = networkx.DiGraph()
             for proc_or_global in scc:
                 constraints = constraint_map.get(proc_or_global, ConstraintSet())
-                if constraint_visitor is not None:
-                    new_constraints = ConstraintSet()
-                    for c in constraints:
-                        if constraint_visitor(c):
-                            new_constraints.add(c)
-                    constraints = new_constraints
                 graph = ConstraintGraph(constraints)
                 for head, tail in graph.graph.edges:
                     label = graph.graph[head][tail].get('label')
@@ -340,8 +499,7 @@ class Solver(Loggable):
                         scc_graph.add_edge(head, tail)
 
             # Uncomment this out to dump the constraint graph
-            #name = "_".join([str(s) for s in scc])
-            #print(f"SCC: {name}")
+            self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
             #dump_labeled_graph(scc_graph, name, f"/tmp/scc_{name}")
 
             # make a copy; some of this analysis mutates the graph
@@ -351,11 +509,15 @@ class Solver(Loggable):
 
             # The sketches for this SCC; note it may pull in data from other sketches
             scc_sketches = Sketches(self, self.verbose)
-            scc_sketches.add_constraints(callgraph, global_vars, generated, scc, sketches_map)
+            scc_sketches.add_constraints(global_handler, self.program.global_vars,
+                                         generated, scc, sketches_map)
 
             for proc_or_global in scc:
                 sketches_map[proc_or_global] = scc_sketches
-                derived[proc_or_global] = generated
+                if self.config.keep_output_constraints:
+                    derived[proc_or_global] = generated
+
+            global_handler.post_scc(scc_node, sketches_map)
 
 
     def __call__(self) -> Tuple[Dict[DerivedTypeVariable, ConstraintSet],
@@ -364,7 +526,7 @@ class Solver(Loggable):
         '''
 
         derived: Dict[DerivedTypeVariable, ConstraintSet] = {}
-        sketches: Dict[DerivedTypeVariable, Sketches] = {}
+        sketches_map: Dict[DerivedTypeVariable, Sketches] = {}
 
         def find_roots(digraph: networkx.DiGraph):
             roots = []
@@ -386,18 +548,30 @@ class Solver(Loggable):
         for r in find_roots(callgraph):
             callgraph.add_edge(fake_root, r)
         scc_dag = networkx.condensation(callgraph)
-        self._solve_topo_graph(callgraph, self.program.global_vars, scc_dag,
-                               self.program.proc_constraints, sketches, derived)
+
+        if self.config.precise_globals:
+            global_handler = PreciseGlobalHandler(self.program.global_vars, callgraph,
+                                                  scc_dag, fake_root)
+        else:
+            global_handler = UnionGlobalHandler(self.program.global_vars, callgraph,
+                                                scc_dag, fake_root)
+
+        self._solve_topo_graph(global_handler, scc_dag, self.program.proc_constraints,
+                               sketches_map, derived)
+        global_handler.finalize(self, sketches_map)
+
         # Note: all globals point to the same "Sketches" graph, which has all the globals
         # in it. It would be nice to separate them out, but not a priority right now (clients
         # can do it easily).
         for g in self.program.global_vars:
-            derived[g] = derived[fake_root]
-            sketches[g] = sketches[fake_root]
-        del derived[fake_root]
-        del sketches[fake_root]
+            if self.config.keep_output_constraints:
+                derived[g] = derived[fake_root]
+            sketches_map[g] = sketches_map[fake_root]
+        if self.config.keep_output_constraints:
+            del derived[fake_root]
+        del sketches_map[fake_root]
 
-        return (derived, sketches)
+        return (derived, sketches_map)
 
     @staticmethod
     def _recall_forget_split(graph: networkx.DiGraph) -> None:
@@ -440,11 +614,23 @@ class Solver(Loggable):
 
 
 class SketchNode:
-    def __init__(self, dtv: DerivedTypeVariable, atom: DerivedTypeVariable) -> None:
-        self.dtv = dtv
-        self.atom = atom
-        # Reference to SketchNode's (in other SCCs) that this node came from
-        self.source = set()
+    def __init__(self, dtv: DerivedTypeVariable,
+                 lower_bound: DerivedTypeVariable,
+                 upper_bound: DerivedTypeVariable) -> None:
+        self._dtv = dtv
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        # Reference to SketchNodes (in other SCCs) that this node came from
+        self.source: Set[SketchNode] = set()
+        self._hash = hash(self._dtv)
+
+    @property
+    def dtv(self):
+        return self._dtv
+
+    @dtv.setter
+    def dtv(self, value):
+        raise NotImplementedError("Read-only property")
 
     # the atomic type of a DTV is an annotation, not part of its identity
     def __eq__(self, other) -> bool:
@@ -453,13 +639,17 @@ class SketchNode:
         return False
 
     def __hash__(self) -> int:
-        return hash(self.dtv)
+        return self._hash
 
     def __str__(self) -> str:
-        return f'{self.dtv}({self.atom})'
+        return f'({self.lower_bound} <= {self.dtv} <= {self.upper_bound})'
 
     def __repr__(self) -> str:
         return f'SketchNode({self})'
+
+    def get_usable_type(self) -> DerivedTypeVariable:
+        # TODO this might not always be the right solution
+        return self.lower_bound
 
 
 class LabelNode:
@@ -510,18 +700,18 @@ class Sketches(Loggable):
         self.lookup[node.dtv] = node
         return node
 
-    def make_node(self, variable: DerivedTypeVariable) -> SketchNode:
+    def make_node(self,
+                  variable: DerivedTypeVariable,
+                  *,
+                  lower_bound: Optional[DerivedTypeVariable] = None,
+                  upper_bound: Optional[DerivedTypeVariable] = None) -> SketchNode:
         '''Make a node from a DTV. Compute its atom from its access path.
         '''
-        if variable in self.lookup:
-            return self.lookup[variable]
-        variance = variable.path_variance
-        # XXX I think this was backwards? At least the results on unit tests look better
-        # when I swap it.
-        if variance == Variance.COVARIANT:
-            result = SketchNode(variable, self.solver.program.types.top)
-        else:
-            result = SketchNode(variable, self.solver.program.types.bottom)
+        if lower_bound is None:
+            lower_bound = self.solver.program.types.bottom
+        if upper_bound is None:
+            upper_bound = self.solver.program.types.top
+        result = SketchNode(variable, lower_bound, upper_bound)
         self.lookup[variable] = result
         return result
 
@@ -601,6 +791,7 @@ class Sketches(Loggable):
         # node we are looking at.
         if origin not in other_sketches.nodes:
             return
+        # Tells us where the type information came from; just auxiliary information for sketches
         if populate_source:
             onto.source.add(origin)
 
@@ -616,15 +807,17 @@ class Sketches(Loggable):
             elif isinstance(succ, LabelNode):
                 suffix = succ.target.get_suffix(origin.dtv)
                 if suffix is None:
-                    continue # FIXME: this exception below is firing!
-                    raise ValueError(f'Suffix is None {origin.dtv} --> {succ.target}')
+                    self.info("ERROR: Suffix is None %s --> %s", origin.dtv, succ.target)
+                    continue # FIXME: this needs investigation
                 succ_dtv = onto.dtv.remove_suffix(suffix)
                 assert succ_dtv
                 self._add_edge(onto, LabelNode(succ_dtv), label=label)
             # Otherwise, it's a regular (non-label) node that hasn't been seen, so emit it and
             # explore its successors.
             else:
-                succ_node = self.make_node(onto.dtv.add_suffix(label))
+                succ_node = self.make_node(onto.dtv.add_suffix(label),
+                                           lower_bound=succ.lower_bound,
+                                           upper_bound=succ.upper_bound)
                 self._add_edge(onto, succ_node, label=label)
                 seen[succ_node] = onto
                 self._copy_inner(succ_node, succ, other_sketches, dependencies, seen)
@@ -658,8 +851,6 @@ class Sketches(Loggable):
         go to a temporary variable, so no fixed point calculation is needed.
         '''
         self.debug("copy_inter: %s", dependencies)
-        # FIXME how can this work? Don't we need to check _either_ side of the constraint to
-        # see which side is the interprocedural dep?
         for dest in dependencies.keys():
             for origin in dependencies.get(dest, set()):
                 seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
@@ -668,52 +859,47 @@ class Sketches(Loggable):
                 # the sketches_map.
                 if origin_base in sketches_map:
                     self.debug("Copying %s<--%s from %s sketch", dest, origin, origin_base)
+                    origin_node = sketches_map[origin_base].lookup.get(origin.dtv)
+                    if origin_node is not None:
+                        # Compute a least upper bound (join) on the lower bounds for the DTV.
+                        # Analogously, compute a greatest upper bound (meet) on the upper bounds for
+                        # the DTV.
+                        dest.lower_bound = self.solver.program.types.join(origin_node.lower_bound,
+                                                                          dest.lower_bound)
+                        dest.upper_bound = self.solver.program.types.meet(origin_node.upper_bound,
+                                                                          dest.upper_bound)
                     self._copy_inner(dest, origin, sketches_map[origin_base].sketches,
                                      dependencies, seen, populate_source=True)
 
-    def copy_globals(self,
-                     nodes: Set[DerivedTypeVariable],
-                     callgraph: networkx.DiGraph,
-                     global_vars: Set[DerivedTypeVariable],
-                     sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
-        """
-        Copy all the global information from downstream functions (callees) to the current
-        sketch context.
+    def _copy_global_recursive(self, node: SketchNode, sketches: "Sketches") -> SketchNode:
+        # TODO: this probably needs to handle atoms properly, using the Lattice. Needs
+        # some thought.
+        our_node = self.ref_node(node)
+        if node in sketches.sketches.nodes:
+            for _, dst in sketches.sketches.out_edges(node):
+                our_dst = dst
+                if not isinstance(dst, LabelNode):
+                    our_dst = self._copy_global_recursive(dst, sketches)
+                self._add_edge(our_node, our_dst, sketches.sketches[node][dst]["label"])
+        return our_node
 
-        This is how global types are discovered, by propagating up the call-graph.
-        """
-        # This purposefully re-uses nodes to save memory. The only downside of this is the atoms
-        # of nodes in callees can get mutated by callers; since they are globals, this seems like
-        # a reasonable trade-off. The memory usage can get quite massive otherwise.
-        callees = set()
-        # Get all direct callees
-        for n in nodes:
-            for _, callee in callgraph.out_edges(n):
-                callees.add(callee)
 
-        def copy_rec(node: SketchNode, sketches: Sketches) -> None:
-            our_node = self.ref_node(node)
-            if node in sketches.sketches.nodes:
-                for _, dst in sketches.sketches.out_edges(node):
-                    our_dst = dst
-                    if not isinstance(dst, LabelNode):
-                        our_dst = copy_rec(dst, sketches)
-                    self._add_edge(our_node, our_dst, sketches.sketches[node][dst]["label"])
-            return our_node
-
-        for callee in callees:
-            # This happens in recursive relationships, and is ok
-            if callee not in sketches_map:
+    def copy_globals_from_sketch(self,
+                                 global_vars: Set[DerivedTypeVariable],
+                                 sketches: "Sketches"):
+        global_roots = set()
+        for dtv, node in sketches.lookup.items():
+            if dtv.base_var in global_vars:
+                global_roots.add(dtv.base_var)
+        for g in global_roots:
+            node = sketches.lookup.get(g)
+            if node is None:
                 continue
-            sketches = sketches_map[callee]
-            for g in global_vars:
-                node = sketches.lookup.get(g)
-                if node is None:
-                    continue
-                copy_rec(node, sketches)
+            self._copy_global_recursive(node, sketches)
+
 
     def add_constraints(self,
-                        callgraph: networkx.DiGraph,
+                        global_handler: GlobalHandler,
                         global_vars: Set[DerivedTypeVariable],
                         constraints: ConstraintSet,
                         nodes: Set[DerivedTypeVariable],
@@ -731,8 +917,12 @@ class Sketches(Loggable):
             # F.in_0.load.σ4@0's base variable is F.
             left_base_var = left.base_var
             right_base_var = right.base_var
-            # Skip constraints X <= LatticeType (they get handled at the bottom of this function)
-            if right_base_var in self.solver.program.types.internal_types:
+            if {left_base_var, right_base_var} & global_vars:
+                self.debug("Skipping %s (global)", constraint)
+                continue
+            # Skip constraints X <= LatticeType and LatticeType <= X; they get handled at the bottom
+            # of this function
+            if {left_base_var, right_base_var} & self.solver.program.types.internal_types:
                 self.debug("Skipping %s (internal type)", constraint)
                 continue
             # Type variables are generated only to break cycles in the constraint graph. If the rhs
@@ -744,9 +934,12 @@ class Sketches(Loggable):
             # If the right-hand side is not a type variable, it must be an interesting node (a
             # function or global). The left and right base nodes may be different or the same;
             # either way, treat it as an interprocedural dependency
-            elif not (left_base_var in nodes and right_base_var in nodes):
-                self.debug("Copying %s (inter-procedural)", constraint)
+            elif right_base_var not in nodes and right_base_var not in global_vars:
+                self.debug("Copying right %s (inter-procedural)", constraint)
                 inter_dependencies.setdefault(left_node, set()).add(right_node)
+            elif left_base_var not in nodes and left_base_var not in global_vars:
+                self.debug("Copying left %s (inter-procedural)", constraint)
+                inter_dependencies.setdefault(right_node, set()).add(left_node)
         # Intra-SCC dependencies just get instantiated using "this" set of sketches
         if intra_dependencies:
             self.instantiate_intra(intra_dependencies)
@@ -756,7 +949,8 @@ class Sketches(Loggable):
         if inter_dependencies:
             self.copy_inter(inter_dependencies, sketches_map)
 
-        self.copy_globals(nodes, callgraph, global_vars, sketches_map)
+        # Copy globals from our callees, if we are analyzing globals precisely.
+        global_handler.copy_globals(self, nodes, sketches_map)
 
         for constraint in constraints:
             left = self.solver.reverse_type_var(constraint.left)
@@ -764,11 +958,13 @@ class Sketches(Loggable):
             if left in self.solver.program.types.internal_types:
                 node = self.lookup[right]
                 self.debug("JOIN: %s, %s", node, left)
-                node.atom = self.solver.program.types.join(node.atom, left)
+                node.lower_bound = self.solver.program.types.join(node.lower_bound, left)
+                self.debug("   --> %s", node)
             if right in self.solver.program.types.internal_types:
                 node = self.lookup[left]
                 self.debug("MEET: %s, %s", node, left)
-                node.atom = self.solver.program.types.meet(node.atom, right)
+                node.upper_bound = self.solver.program.types.meet(node.upper_bound, right)
+                self.debug("   --> %s", node)
 
     def to_dot(self, dtv: DerivedTypeVariable) -> str:
         nt = f'{os.linesep}\t'
@@ -796,7 +992,7 @@ class Sketches(Loggable):
                     graph_str += f'"{node}" [label="{node.dtv}"];'
                 elif node.dtv.base_var == dtv:
                     graph_str += nt
-                    graph_str += f'"{node}" [label="{node.atom}"];'
+                    graph_str += f'"{node}" [label="{node.lower_bound}..{node.upper_bound}"];'
             elif node.target.base_var == dtv:
                 graph_str += nt
                 graph_str += f'"{node}" [label="{node.target}", shape=house];'
@@ -807,5 +1003,7 @@ class Sketches(Loggable):
     def __str__(self) -> str:
         if self.lookup:
             nt = f'{os.linesep}\t'
-            return f'nodes:{nt}{nt.join(map(lambda k: f"{k} ({self.lookup[k].atom})", self.lookup))})'
+            def format(k: DerivedTypeVariable) -> str:
+                return str(self.lookup[k])
+            return f'nodes:{nt}{nt.join(map(str, self.lookup))})'
         return 'no sketches'
