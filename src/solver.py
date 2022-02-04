@@ -989,5 +989,5 @@ class Sketches(Loggable):
             nt = f'{os.linesep}\t'
             def format(k: DerivedTypeVariable) -> str:
                 return str(self.lookup[k])
-            return f'nodes:{nt}{nt.join(map(str, self.lookup))})'
+            return f'nodes:{nt}{nt.join(map(format, self.lookup.keys()))})'
         return 'no sketches'

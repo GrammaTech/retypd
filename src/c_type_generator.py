@@ -215,7 +215,7 @@ class CTypeGenerator(Loggable):
         if isinstance(typ, Field):
             return Field(self._simplify_pointers(typ.ctype, seen_structs), typ.offset)
         elif isinstance(typ, ArrayType):
-            return ArrayType(self._simplify_pointers(typ.member_type, seen_structs))
+            return ArrayType(self._simplify_pointers(typ.member_type, seen_structs), typ.length)
         elif isinstance(typ, PointerType):
             if isinstance(typ.target_type, StructType):
                 s = typ.target_type
