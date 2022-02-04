@@ -39,11 +39,9 @@ class RecursiveSchemaTest(unittest.TestCase):
         fd = SchemaParser.parse_variable("#FileDescriptor")
         F_sketches = sketches[F]
         # Equivalent to "#SuccessZ ⊑ F.out"
-        self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable("F.out")].atom,
+        self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable("F.out")].lower_bound,
                          SchemaParser.parse_variable("#SuccessZ"))
-        # FIXME: Peter needs to look at this one. The rest of my changes to this test all make
-        # sense to me, this one is less clear.
-        self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable(f"φ.load.σ4@4")].atom,
+        self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable(f"φ.load.σ4@4")].upper_bound,
                          SchemaParser.parse_variable("#FileDescriptor"))
 
 

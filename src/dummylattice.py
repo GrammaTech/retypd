@@ -92,7 +92,7 @@ class DummyLattice(Lattice[DerivedTypeVariable]):
         types = {t, v}
         # dominance
         if DummyLattice._top in types:
-            return DummyLattice._bottom
+            return DummyLattice._top
         # the two types are not equal and neither is TOP or BOTTOM, so if either is STR then the two
         # are incomparable
         if DummyLattice._str in types:

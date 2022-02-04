@@ -82,7 +82,7 @@ class GlobalHandler:
                  global_vars: Set[DerivedTypeVariable],
                  callgraph: networkx.DiGraph,
                  scc_dag: networkx.DiGraph,
-                 fake_root: DerivedTypeVariable):
+                 fake_root: DerivedTypeVariable) -> None:
         self.scc_dag = scc_dag
         self.callgraph = callgraph
         self.global_vars = global_vars
@@ -118,9 +118,11 @@ class PreciseGlobalHandler(GlobalHandler):
                  global_vars: Set[DerivedTypeVariable],
                  callgraph: networkx.DiGraph,
                  scc_dag: networkx.DiGraph,
-                 fake_root: DerivedTypeVariable):
+                 fake_root: DerivedTypeVariable) -> None:
         super(PreciseGlobalHandler, self).__init__(global_vars, callgraph, scc_dag, fake_root)
-        self.not_cleaned_up = [] # SCCs that have not yet had their sketches cleansed of globals
+        # SCCs that have not yet had their sketches cleansed of globals
+        # TODO get proper type annotations
+        self.not_cleaned_up: List[Tuple[Any, Set[Any]]] = []
 
 
     def cleanse_globals(self, sketches: "Sketches"):
@@ -139,7 +141,8 @@ class PreciseGlobalHandler(GlobalHandler):
         Sets up a list of all SCCs that still have callers to be processing. See post_scc for
         what happens when all callers have been processed.
         """
-        caller_scc_set = set()
+        # TODO proper type annotation
+        caller_scc_set: Set[Any] = set()
         for src_id, _ in self.scc_dag.in_edges(scc_node):
             caller_scc = self.scc_dag.nodes[src_id]["members"]
             caller_scc_set |= caller_scc
@@ -592,11 +595,14 @@ class Solver(Loggable):
 
 
 class SketchNode:
-    def __init__(self, dtv: DerivedTypeVariable, atom: DerivedTypeVariable) -> None:
+    def __init__(self, dtv: DerivedTypeVariable,
+                 lower_bound: DerivedTypeVariable,
+                 upper_bound: DerivedTypeVariable) -> None:
         self._dtv = dtv
-        self.atom = atom
-        # Reference to SketchNode's (in other SCCs) that this node came from
-        self.source = set()
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        # Reference to SketchNodes (in other SCCs) that this node came from
+        self.source: Set[SketchNode] = set()
         self._hash = hash(self._dtv)
 
     @property
@@ -617,10 +623,14 @@ class SketchNode:
         return self._hash
 
     def __str__(self) -> str:
-        return f'{self.dtv}({self.atom})'
+        return f'({self.lower_bound} <= {self.dtv} <= {self.upper_bound})'
 
     def __repr__(self) -> str:
         return f'SketchNode({self})'
+
+    def get_usable_type(self) -> DerivedTypeVariable:
+        # TODO this might not always be the right solution
+        return self.lower_bound
 
 
 class LabelNode:
@@ -676,20 +686,16 @@ class Sketches(Loggable):
 
     def make_node(self,
                   variable: DerivedTypeVariable,
-                  atom: Optional[DerivedTypeVariable] = None) -> SketchNode:
+                  *,
+                  lower_bound: Optional[DerivedTypeVariable] = None,
+                  upper_bound: Optional[DerivedTypeVariable] = None) -> SketchNode:
         '''Make a node from a DTV. Compute its atom from its access path.
         '''
-        if variable in self.lookup:
-            return self.lookup[variable]
-        variance = variable.path_variance
-        if atom is None:
-            # XXX I think this was backwards? At least the results on unit tests look better
-            # when I swap it.
-            if variance != Variance.COVARIANT:
-                atom = self.solver.program.types.top
-            else:
-                atom = self.solver.program.types.bottom
-        result = SketchNode(variable, atom)
+        if lower_bound is None:
+            lower_bound = self.solver.program.types.bottom
+        if upper_bound is None:
+            upper_bound = self.solver.program.types.top
+        result = SketchNode(variable, lower_bound, upper_bound)
         self.lookup[variable] = result
         return result
 
@@ -793,9 +799,9 @@ class Sketches(Loggable):
             # Otherwise, it's a regular (non-label) node that hasn't been seen, so emit it and
             # explore its successors.
             else:
-                # TODO: this should probably make use of meet/join to combine the atomic type
-                # from the callee (succ) into the caller (the new node)
-                succ_node = self.make_node(onto.dtv.add_suffix(label), atom=succ.atom)
+                succ_node = self.make_node(onto.dtv.add_suffix(label),
+                                           lower_bound=succ.lower_bound,
+                                           upper_bound=succ.upper_bound)
                 self._add_edge(onto, succ_node, label=label)
                 seen[succ_node] = onto
                 self._copy_inner(succ_node, succ, other_sketches, dependencies, seen)
@@ -829,8 +835,6 @@ class Sketches(Loggable):
         go to a temporary variable, so no fixed point calculation is needed.
         '''
         self.debug("copy_inter: %s", dependencies)
-        # FIXME how can this work? Don't we need to check _either_ side of the constraint to
-        # see which side is the interprocedural dep?
         for dest in dependencies.keys():
             for origin in dependencies.get(dest, set()):
                 seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
@@ -841,9 +845,13 @@ class Sketches(Loggable):
                     self.debug("Copying %s<--%s from %s sketch", dest, origin, origin_base)
                     origin_node = sketches_map[origin_base].lookup.get(origin.dtv)
                     if origin_node is not None:
-                        # TODO: this should probably make use of meet/join to combine the atomic
-                        # type from the callee (succ) into the caller (the new node)
-                        dest.atom = origin_node.atom
+                        # Compute a least upper bound (join) on the lower bounds for the DTV.
+                        # Analogously, compute a greatest upper bound (meet) on the upper bounds for
+                        # the DTV.
+                        dest.lower_bound = self.solver.program.types.join(origin_node.lower_bound,
+                                                                          dest.lower_bound)
+                        dest.upper_bound = self.solver.program.types.meet(origin_node.upper_bound,
+                                                                          dest.upper_bound)
                     self._copy_inner(dest, origin, sketches_map[origin_base].sketches,
                                      dependencies, seen, populate_source=True)
 
@@ -896,7 +904,8 @@ class Sketches(Loggable):
             if {left_base_var, right_base_var} & global_vars:
                 self.debug("Skipping %s (global)", constraint)
                 continue
-            # Skip constraints X <= LatticeType (they get handled at the bottom of this function)
+            # Skip constraints X <= LatticeType and LatticeType <= X; they get handled at the bottom
+            # of this function
             if {left_base_var, right_base_var} & self.solver.program.types.internal_types:
                 self.debug("Skipping %s (internal type)", constraint)
                 continue
@@ -933,12 +942,12 @@ class Sketches(Loggable):
             if left in self.solver.program.types.internal_types:
                 node = self.lookup[right]
                 self.debug("JOIN: %s, %s", node, left)
-                node.atom = self.solver.program.types.join(node.atom, left)
+                node.lower_bound = self.solver.program.types.join(node.lower_bound, left)
                 self.debug("   --> %s", node)
             if right in self.solver.program.types.internal_types:
                 node = self.lookup[left]
                 self.debug("MEET: %s, %s", node, left)
-                node.atom = self.solver.program.types.meet(node.atom, right)
+                node.upper_bound = self.solver.program.types.meet(node.upper_bound, right)
                 self.debug("   --> %s", node)
 
     def to_dot(self, dtv: DerivedTypeVariable) -> str:
@@ -967,7 +976,7 @@ class Sketches(Loggable):
                     graph_str += f'"{node}" [label="{node.dtv}"];'
                 elif node.dtv.base_var == dtv:
                     graph_str += nt
-                    graph_str += f'"{node}" [label="{node.atom}"];'
+                    graph_str += f'"{node}" [label="{node.lower_bound}..{node.upper_bound}"];'
             elif node.target.base_var == dtv:
                 graph_str += nt
                 graph_str += f'"{node}" [label="{node.target}", shape=house];'
@@ -978,5 +987,7 @@ class Sketches(Loggable):
     def __str__(self) -> str:
         if self.lookup:
             nt = f'{os.linesep}\t'
-            return f'nodes:{nt}{nt.join(map(lambda k: f"{k} ({self.lookup[k].atom}) sources={self.lookup[k].source}", self.lookup))})'
+            def format(k: DerivedTypeVariable) -> str:
+                return str(self.lookup[k])
+            return f'nodes:{nt}{nt.join(map(str, self.lookup))})'
         return 'no sketches'
