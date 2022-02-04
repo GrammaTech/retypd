@@ -172,7 +172,7 @@ class CTypeGenerator(Loggable):
                     byte_size = tail.size
                 else:
                     byte_size = self.default_int_size
-                ntype = self.lattice_ctypes.atom_to_ctype(n.atom, byte_size)
+                ntype = self.lattice_ctypes.atom_to_ctype(n.get_usable_type(), byte_size)
                 rv = self.union_types(rv, ntype)
             for n in ns:
                 self.dtv2type[base_dtv][n.dtv] = rv
