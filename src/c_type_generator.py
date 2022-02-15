@@ -94,16 +94,24 @@ class CTypeGenerator(Loggable):
                     return IntType(a.width, a.signed or b.signed)
             elif at in (FloatType, CharType) and a.width == b.width:
                 return a
+            elif at == ArrayType:
+                am = a.member_type
+                bm = b.member_type
+                if (
+                    a.length == b.length
+                    and self.union_types(am, bm) in (am, bm)
+                ):
+                    return a
 
         unioned_types = []
         if at == UnionType:
             unioned_types.extend(a.fields)
         else:
-            unioned_types.append(a)
+            unioned_types.append(Field(a))
         if bt == UnionType:
             unioned_types.extend(b.fields)
         else:
-            unioned_types.append(b)
+            unioned_types.append(Field(b))
         self.debug("Unioning: %s", unioned_types)
         return UnionType(unioned_types)
 
