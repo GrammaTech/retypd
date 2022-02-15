@@ -176,7 +176,7 @@ class CompoundType(CType):
 
     def declare(self, name: str) -> str:
         nt = f'{os.linesep}\t'
-        result = f'self.compound_type {name} {{'
+        result = f'{self.compound_type} {name} {{'
         for index, field in enumerate(self.fields):
             name = f'field_{index}'
             result += f'{nt}{field.ctype.declare(name)};'
