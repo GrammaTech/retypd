@@ -26,7 +26,7 @@ implementation for reference.
 
 from typing import FrozenSet, Any
 from .schema import DerivedTypeVariable, Lattice, LatticeCTypes
-from .c_types import IntType, PointerType
+from .c_types import IntType, PointerType, CharType, ArrayType
 
 
 class DummyLattice(Lattice[DerivedTypeVariable]):
@@ -108,4 +108,4 @@ class DummyLatticeCTypes(LatticeCTypes):
             DummyLattice._success: IntType(byte_size, True),
             DummyLattice._fd: IntType(byte_size, False),
             DummyLattice._str: PointerType(CharType(1), byte_size)
-        }.get(atom, ArrayType(IntType(1, False), byte_size))
+        }.get(atom_lower, ArrayType(IntType(1, False), byte_size))
