@@ -37,7 +37,7 @@ class SchemaParser:
 
     subtype_pattern = re.compile(r'(\S*) (?:⊑|<=) (\S*)')
     in_pattern = re.compile('in_([0-9]+)')
-    deref_pattern = re.compile('σ([0-9]+)@([0-9]+)')
+    deref_pattern = re.compile('σ([0-9]+)@(-?[0-9]+)(\*(-?[0-9]+))?')
     node_pattern = re.compile(r'(\S+)\.([⊕⊖])')
     edge_pattern = re.compile(r'(\S+)\s+(?:→|->)\s+(\S+)(\s+\((forget|recall) (\S*)\))?')
     whitespace_pattern = re.compile(r'\s')
@@ -57,7 +57,9 @@ class SchemaParser:
             return InLabel(int(in_match.group(1)))
         deref_match = SchemaParser.deref_pattern.match(label)
         if deref_match:
-            return DerefLabel(int(deref_match.group(1)), int(deref_match.group(2)))
+            count = deref_match.group(4)
+            count = 1 if count is None else int(count)
+            return DerefLabel(int(deref_match.group(1)), int(deref_match.group(2)), count)
         raise ValueError
 
     @staticmethod

@@ -102,6 +102,13 @@ class CTypeGenerator(Loggable):
                     and self.union_types(am, bm) in (am, bm)
                 ):
                     return a
+            elif at == PointerType:
+                ap = a.target_type
+                bp = b.target_type
+
+                if self.union_types(ap, bp) in (ap, bp):
+                    return a
+
 
         unioned_types = []
         if at == UnionType:
@@ -180,7 +187,8 @@ class CTypeGenerator(Loggable):
                     byte_size = tail.size
                 else:
                     byte_size = self.default_int_size
-                ntype = self.lattice_ctypes.atom_to_ctype(n.get_usable_type(), byte_size)
+                ntype = self.lattice_ctypes.atom_to_ctype(
+                    n.lower_bound, n.upper_bound, byte_size)
                 rv = self.union_types(rv, ntype)
             for n in ns:
                 self.dtv2type[base_dtv][n.dtv] = rv

@@ -24,9 +24,9 @@
 implementation for reference.
 '''
 
-from typing import FrozenSet
+from typing import FrozenSet, Any
 from .schema import DerivedTypeVariable, Lattice, LatticeCTypes
-from .c_types import IntType
+from .c_types import IntType, PointerType
 
 
 class DummyLattice(Lattice[DerivedTypeVariable]):
@@ -102,6 +102,10 @@ class DummyLattice(Lattice[DerivedTypeVariable]):
         return DummyLattice._int
 
 class DummyLatticeCTypes(LatticeCTypes):
-    def atom_to_ctype(self, atom, byte_size):
-        return {DummyLattice._int: IntType(byte_size, True)}.get(atom)
-
+    def atom_to_ctype(self, atom_lower: Any, atom_upper: Any, byte_size: int):
+        return {
+            DummyLattice._int: IntType(byte_size, True),
+            DummyLattice._success: IntType(byte_size, True),
+            DummyLattice._fd: IntType(byte_size, False),
+            DummyLattice._str: PointerType(CharType(1), byte_size)
+        }.get(atom, ArrayType(IntType(1, False), byte_size))

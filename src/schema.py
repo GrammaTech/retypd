@@ -454,7 +454,7 @@ class LatticeCTypes:
     """
     Class for converting a Lattice type to a CType.
     """
-    def atom_to_ctype(self, atom: Any, byte_size: int):
+    def atom_to_ctype(self, atom_lower: Any, atom_upper: Any, byte_size: int):
         raise NotImplementedError("Child class must implemented")
 
 
