@@ -103,9 +103,10 @@ class DummyLattice(Lattice[DerivedTypeVariable]):
 
 class DummyLatticeCTypes(LatticeCTypes):
     def atom_to_ctype(self, atom_lower: Any, atom_upper: Any, byte_size: int):
+        best = atom_lower if atom_lower != DummyLattice._bottom else atom_upper
         return {
             DummyLattice._int: IntType(byte_size, True),
             DummyLattice._success: IntType(byte_size, True),
             DummyLattice._fd: IntType(byte_size, False),
             DummyLattice._str: PointerType(CharType(1), byte_size)
-        }.get(atom_lower, ArrayType(IntType(1, False), byte_size))
+        }.get(best, ArrayType(IntType(1, False), byte_size))

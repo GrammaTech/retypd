@@ -28,6 +28,7 @@ from .schema import (
     DerefLabel,
     DerivedTypeVariable,
     LatticeCTypes,
+    Lattice,
 )
 from .solver import SketchNode, Sketches, LabelNode
 from .c_types import (
@@ -60,6 +61,7 @@ class CTypeGenerator(Loggable):
     """
     def __init__(self,
                  sketch_map: Dict[DerivedTypeVariable, Sketches],
+                 lattice: Lattice,
                  lattice_ctypes: LatticeCTypes,
                  default_int_size: int,
                  default_ptr_size: int,
@@ -70,6 +72,7 @@ class CTypeGenerator(Loggable):
         self.sketch_map = sketch_map
         self.struct_types = {}
         self.dtv2type = defaultdict(dict)
+        self.lattice = lattice
         self.lattice_ctypes = lattice_ctypes
 
     def union_types(self, a: CType, b: CType):
@@ -158,6 +161,18 @@ class CTypeGenerator(Loggable):
         """
         return my_type
 
+    def merge_counts(self, count_set: Set[int]) -> int:
+        """
+        Given a set of element counts from a node, merge them into a single count.
+        """
+        if not count_set:
+            return 1
+        elif len(count_set) == 1:
+            return list(count_set)[0]
+        elif DerefLabel.COUNT_NULLTERM in count_set:
+            return DerefLabel.COUNT_NULLTERM
+        return DerefLabel.COUNT_NOBOUND
+
     def c_type_from_nodeset(self,
                             base_dtv: DerivedTypeVariable,
                             sketches: Sketches,
@@ -180,16 +195,37 @@ class CTypeGenerator(Loggable):
             *[self._succ_no_loadstore(base_dtv, sketches, n, set()) for n in ns]
         ))
         if len(children) == 0:
-            rv = None
+            # Compute the atomic type bounds and size bound
+            lb = self.lattice.bottom
+            ub = self.lattice.top
+            sz = 0
+            counts = set()
             for n in ns:
                 tail = n.dtv.tail
                 if tail is not None and isinstance(tail, DerefLabel):
                     byte_size = tail.size
+                    counts.add(tail.count)
                 else:
                     byte_size = self.default_int_size
-                ntype = self.lattice_ctypes.atom_to_ctype(
-                    n.lower_bound, n.upper_bound, byte_size)
-                rv = self.union_types(rv, ntype)
+                lb = self.lattice.join(lb, n.lower_bound)
+                ub = self.lattice.meet(ub, n.upper_bound)
+                sz = max(sz, byte_size)
+
+            # Convert it to a CType
+            rv = self.lattice_ctypes.atom_to_ctype(lb, ub, sz)
+            count = self.merge_counts(counts)
+            if count > 1:
+                rv = ArrayType(rv, count)
+            elif count == DerefLabel.COUNT_NULLTERM:
+                # C type for null terminated string is [w]char[_t]*
+                if rv.size in (1, 2, 4): # Valid character sizes
+                    rv = CharType(rv.size)
+                else:
+                    self.info("Unexpected character size for null-terminated string: %d", rv.size)
+            # In C, unbounded arrays are represented as pointers, which is what this deref
+            # will be represented as default. XXX in future we could change ArrayType to allow
+            # for representing unboundedness.
+
             for n in ns:
                 self.dtv2type[base_dtv][n.dtv] = rv
             self.debug("Terminal type: %s -> %s", ns, rv)
@@ -197,13 +233,17 @@ class CTypeGenerator(Loggable):
             # We could recurse on types below, so we populate the struct _first_
             s = StructType()
             self.struct_types[s.name] = s
-            rv = PointerType(s, self.default_ptr_size)
+            count = self.merge_counts(
+                [n.dtv.tail.count for n in ns if isinstance(n.dtv.tail, DerefLabel)]
+            )
+            if count > 1:
+                rv = ArrayType(s, count)
+            else:
+                rv = PointerType(s, self.default_ptr_size)
             for n in ns:
                 self.dtv2type[base_dtv][n.dtv] = rv
 
             self.debug("%s has %d children", ns, len(children))
-            # XXX this is aggressively merging different edges for the same deref offset, no
-            # matter the atom (TOP, BOTTOM, lattice type, ...)
             children_by_offset = defaultdict(set)
             for c in children:
                 tail = c.dtv.tail
