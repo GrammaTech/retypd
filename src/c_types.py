@@ -33,7 +33,7 @@ class CType(ABC):
     def comment(self) -> Optional[str]:
         return None
 
-    def declare(self, name: str) -> str:
+    def pretty_print(self, name: str) -> str:
         return f'{self} {name}'
 
 
@@ -102,17 +102,18 @@ class ArrayType(CType):
     def __str__(self) -> str:
         return f'{self.member_type}[{self.length}]'
 
-    def declare(self, name: str) -> str:
+    def pretty_print(self, name: str) -> str:
         return f'{self.member_type} {name}[{self.length}]'
 
 
 class PointerType(CType):
-    def __init__(self, target_type: CType) -> None:
+    def __init__(self, target_type: CType, width: int) -> None:
         self.target_type = target_type
+        self.width = width
 
     @property
     def size(self) -> int:
-        raise NotImplementedError()
+        return self.width
 
     def __str__(self) -> str:
         return f'{self.target_type}*'
@@ -139,14 +140,18 @@ class FunctionType(CType):
     def __str__(self) -> str:
         return self.name
 
-    def declare(self, _name: str) -> str:
+    def pretty_print(self, _name: str) -> str:
         return f'{self.return_type} {self.name}({", ".join(map(str, self.params))});'
 
 
 class Field:
-    def __init__(self, ctype: CType, offset: Optional[int]=None) -> None:
+    def __init__(self,
+                 ctype: CType,
+                 offset: Optional[int]=None,
+                 name: str="") -> None:
         self.ctype = ctype
         self.offset = offset
+        self.name = name
 
     @property
     def size(self) -> int:
@@ -169,12 +174,12 @@ class CompoundType(CType):
     def __str__(self) -> str:
         return f'{self.compound_type} {self.name}'
 
-    def declare(self, name: str) -> str:
+    def pretty_print(self, name: str) -> str:
         nt = f'{os.linesep}\t'
-        result = f'self.compound_type {name} {{'
+        result = f'{self.compound_type} {name} {{'
         for index, field in enumerate(self.fields):
             name = f'field_{index}'
-            result += f'{nt}{field.ctype.declare(name)};'
+            result += f'{nt}{field.ctype.pretty_print(name)};'
             if field.offset is not None:
                 result += f' // offset {field.offset}'
         return f'{result}{os.linesep}}};'
@@ -183,7 +188,8 @@ class CompoundType(CType):
 class StructType(CompoundType):
     next_id = 0
 
-    def __init__(self, name: Optional[str]=None) -> None:
+    def __init__(self, fields: Iterable[Field] = [], name: Optional[str]=None) -> None:
+        self.set_fields(fields)
         if name:
             self._name = name
         else:
@@ -199,7 +205,9 @@ class StructType(CompoundType):
 
     @property
     def size(self) -> int:
-        raise NotImplementedError()
+        if not self.fields:
+            return 0
+        return self.fields[-1].offset + self.fields[-1].size
 
     @property
     def compound_type(self) -> str:

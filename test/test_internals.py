@@ -6,10 +6,26 @@ from abc import ABC
 import networkx
 import unittest
 
-from retypd import ConstraintSet, DummyLattice, Program, SchemaParser, Solver
+from retypd import ConstraintSet, DummyLattice, Program, SchemaParser, Solver, DerefLabel
 
 
 class BasicSchemaTest(unittest.TestCase):
+    def test_parse_label(self):
+        l = SchemaParser.parse_label('σ8@0')
+        self.assertEqual( (l.size, l.offset, l.count), (8, 0, 1) )
+        l = SchemaParser.parse_label('σ0@10000')
+        self.assertEqual( (l.size, l.offset, l.count), (0, 10000, 1) )
+        l = SchemaParser.parse_label('σ4@-32')
+        self.assertEqual( (l.size, l.offset, l.count), (4, -32, 1) )
+        l = SchemaParser.parse_label('σ2@32*[1000]')
+        self.assertEqual( (l.size, l.offset, l.count), (2, 32, 1000) )
+        l = SchemaParser.parse_label('σ2@32*[nobound]')
+        self.assertEqual( (l.size, l.offset, l.count), (2, 32, DerefLabel.COUNT_NOBOUND) )
+        l = SchemaParser.parse_label('σ2@32*[nullterm]')
+        self.assertEqual( (l.size, l.offset, l.count), (2, 32, DerefLabel.COUNT_NULLTERM) )
+
+        with self.assertRaises(ValueError) as context:
+            l = SchemaParser.parse_label('σ-9@100')
 
     def test_simple_constraints(self):
         '''A simple test from the paper (the right side of Figure 4 on p. 6). This one has no

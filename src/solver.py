@@ -32,6 +32,7 @@ from .schema import (
     SubtypeConstraint,
     Variance,
 )
+from .loggable import Loggable, LogLevel
 from .parser import SchemaParser
 import os
 import itertools
@@ -39,7 +40,6 @@ import networkx
 import tqdm
 from dataclasses import dataclass
 from graphviz import Digraph
-from enum import Enum
 
 
 def dump_labeled_graph(graph, label, filename):
@@ -53,26 +53,6 @@ def dump_labeled_graph(graph, label, filename):
         label = str(graph.get_edge_data(head, tail).get("label", "<NO LABEL>"))
         G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
     G.render(filename, format='svg', view=False)
-
-
-class LogLevel(int, Enum):
-    QUIET = 0
-    INFO = 1
-    DEBUG = 2
-
-# Unfortunable, the python logging class is a bit flawed and overly complex for what we need
-# When you use info/debug you can use %s/%d/etc formatting ala logging to lazy evaluate
-class Loggable:
-    def __init__(self, verbose: LogLevel = LogLevel.QUIET) -> None:
-        self.verbose = verbose
-
-    def info(self, *args):
-        if self.verbose >= LogLevel.INFO:
-            print(str(args[0]) % tuple(args[1:]))
-
-    def debug(self, *args):
-        if self.verbose >= LogLevel.DEBUG:
-            print(str(args[0]) % tuple(args[1:]))
 
 
 @dataclass
@@ -567,9 +547,10 @@ class Solver(Loggable):
             if self.config.keep_output_constraints:
                 derived[g] = derived[fake_root]
             sketches_map[g] = sketches_map[fake_root]
-        if self.config.keep_output_constraints:
+        if self.config.keep_output_constraints and fake_root in derived:
             del derived[fake_root]
-        del sketches_map[fake_root]
+        if fake_root in sketches_map:
+            del sketches_map[fake_root]
 
         return (derived, sketches_map)
 
@@ -685,6 +666,8 @@ class Sketches(Loggable):
     '''
     def __init__(self, solver: Solver, verbose: LogLevel = LogLevel.QUIET) -> None:
         super(Sketches, self).__init__(verbose)
+        # We maintain the invariant that if a node is in `lookup` then it should also be in
+        # `sketches` as a node (even if there are no edges)
         self.sketches = networkx.DiGraph()
         self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
         self.solver = solver
@@ -698,6 +681,7 @@ class Sketches(Loggable):
         if node.dtv in self.lookup:
             return self.lookup[node.dtv]
         self.lookup[node.dtv] = node
+        self.sketches.add_node(node)
         return node
 
     def make_node(self,
@@ -1005,5 +989,5 @@ class Sketches(Loggable):
             nt = f'{os.linesep}\t'
             def format(k: DerivedTypeVariable) -> str:
                 return str(self.lookup[k])
-            return f'nodes:{nt}{nt.join(map(str, self.lookup))})'
+            return f'nodes:{nt}{nt.join(map(format, self.lookup.keys()))})'
         return 'no sketches'

@@ -20,30 +20,24 @@
 # reflect the position or policy of the Government and no official
 # endorsement should be inferred.
 
-'''An implementation of retypd based on the paper and slides included in the reference subdirectory.
+from enum import Enum
 
-To invoke, create a Program, which requires a lattice of atomic types, a set of global variables of
-interest, a mapping from functions to constraints generated from them, and a call graph. Then,
-instantiate a Solver with the Program. Lastly, invoke the solver. The result of calling the solver
-object is the set of constraints generated from the analysis.
-'''
 
-from .graph import EdgeLabel, Node
-from .dummylattice import DummyLattice, DummyLatticeCTypes
-from .schema import (
-    ConstraintSet,
-    DerefLabel,
-    DerivedTypeVariable,
-    InLabel,
-    LoadLabel,
-    OutLabel,
-    Program,
-    StoreLabel,
-    SubtypeConstraint,
-    Variance,
-    Lattice,
-    LatticeCTypes,
-)
-from .solver import Solver, SolverConfig
-from .parser import SchemaParser
-from .c_type_generator import CTypeGenerator, CTypeGenerationError
+class LogLevel(int, Enum):
+    QUIET = 0
+    INFO = 1
+    DEBUG = 2
+
+# Unfortunable, the python logging class is a bit flawed and overly complex for what we need
+# When you use info/debug you can use %s/%d/etc formatting ala logging to lazy evaluate
+class Loggable:
+    def __init__(self, verbose: LogLevel = LogLevel.QUIET):
+        self.verbose = verbose
+
+    def info(self, *args):
+        if self.verbose >= LogLevel.INFO:
+            print(str(args[0]) % tuple(args[1:]))
+
+    def debug(self, *args):
+        if self.verbose >= LogLevel.DEBUG:
+            print(str(args[0]) % tuple(args[1:]))
