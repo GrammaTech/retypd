@@ -62,9 +62,13 @@ class RecursiveSchemaTest(unittest.TestCase):
 
 class CTypeTest(unittest.TestCase):
     def test_simple_struct(self):
-        #     /-> F2  (part of struct fields)
-        # F1 -
-        #     \-> F3  (other part of struct fields)
+        """
+        Verify that we will combine fields inferred from different callees.
+
+            |-> F2  (part of struct fields)
+         F1 -
+            |-> F3  (other part of struct fields)
+        """
         F1 = SchemaParser.parse_variable('F1')
         F2 = SchemaParser.parse_variable('F2')
         F3 = SchemaParser.parse_variable('F3')
@@ -103,8 +107,10 @@ class CTypeTest(unittest.TestCase):
         #print(list(map(lambda x: type(x.ctype), struct.fields)))
 
     def test_string_in_struct(self):
-        # Model that strcpy() is called with a field from a struct as the destination, which
-        # _should_ tell us that the given field is a string.
+        """
+        Model that strcpy() is called with a field from a struct as the destination, which
+        _should_ tell us that the given field is a string.
+        """
         F1 = SchemaParser.parse_variable('F1')
         strcpy = SchemaParser.parse_variable('strcpy')
 
@@ -132,8 +138,9 @@ class CTypeTest(unittest.TestCase):
             self.assertEqual(f.offset, 8)
 
     def test_global_array(self):
-        # Model that strcpy() is called with a field from a struct as the destination, which
-        # _should_ tell us that the given field is a string.
+        """
+        Illustration of how a model of memcpy might work.
+        """
         F1 = SchemaParser.parse_variable('F1')
         memcpy = SchemaParser.parse_variable('memcpy')
         some_global = SchemaParser.parse_variable('some_global')
@@ -156,6 +163,40 @@ class CTypeTest(unittest.TestCase):
         self.assertEqual(type(t.target_type), ArrayType)
         self.assertEqual(t.target_type.length, 10)
         self.assertEqual(t.target_type.member_type.size, 4)
+
+    def test_load_v_store(self):
+        """
+        Half of struct fields are only loaded and half are only stored, should still result
+        in all fields being properly inferred.
+        """
+        F1 = SchemaParser.parse_variable('F1')
+        some_global = SchemaParser.parse_variable('some_global')
+
+        constraints = {F1: ConstraintSet()}
+        constraints[F1].add(SchemaParser.parse_constraint("some_global ⊑ A"))
+        constraints[F1].add(SchemaParser.parse_constraint("A.load.σ4@0 ⊑ int"))
+        constraints[F1].add(SchemaParser.parse_constraint("int ⊑ A.store.σ4@4"))
+        constraints[F1].add(SchemaParser.parse_constraint("A.load.σ4@8 ⊑ int"))
+        constraints[F1].add(SchemaParser.parse_constraint("int ⊑ A.store.σ4@12"))
+        constraints[F1].add(SchemaParser.parse_constraint("A.load.σ4@16 ⊑ int"))
+        constraints[F1].add(SchemaParser.parse_constraint("int ⊑ A.store.σ4@20"))
+
+        lattice = DummyLattice()
+        lattice_ctypes = DummyLatticeCTypes()
+        program = Program(lattice, {some_global}, constraints, {F1: []})
+        solver = Solver(program, verbose=VERBOSE_TESTS)
+        (gen_const, sketches) = solver()
+        #print(sketches[some_global])
+
+        gen = CTypeGenerator(sketches, lattice, lattice_ctypes, 8, 8)
+        dtv2type = gen()
+        t = dtv2type[some_global]
+        self.assertEqual(type(t), PointerType)
+        self.assertEqual(type(t.target_type), StructType)
+        self.assertEqual(len(t.target_type.fields), 6)
+        self.assertEqual(max([f.offset for f in t.target_type.fields]), 20)
+        self.assertEqual(min([f.offset for f in t.target_type.fields]), 0)
+
 
 
 if __name__ == '__main__':
