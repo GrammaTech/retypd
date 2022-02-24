@@ -30,7 +30,12 @@ from .schema import (
     LatticeCTypes,
     Lattice,
 )
-from .solver import SketchNode, Sketches, LabelNode
+from .solver import (
+    SketchNode,
+    Sketches,
+    LabelNode,
+    SkNode,
+)
 from .c_types import (
     CType,
     PointerType,
@@ -44,7 +49,7 @@ from .c_types import (
     CharType,
 )
 from .loggable import Loggable, LogLevel
-from typing import Set, Dict, Optional
+from typing import Set, Dict, Optional, List
 from collections import defaultdict
 import itertools
 
@@ -75,7 +80,7 @@ class CTypeGenerator(Loggable):
         self.lattice = lattice
         self.lattice_ctypes = lattice_ctypes
 
-    def union_types(self, a: CType, b: CType):
+    def union_types(self, a: Optional[CType], b: Optional[CType]) -> Optional[CType]:
         """
         This function decides how to merge two CTypes for the same access path. This differs from
         the lattice, which only considers "atomic" or "terminal" types. This can take, for example,
@@ -125,13 +130,17 @@ class CTypeGenerator(Loggable):
         self.debug("Unioning: %s", unioned_types)
         return UnionType(unioned_types)
 
-    def resolve_label(self, sketches, node):
+    def resolve_label(self, sketches: Sketches, node: SkNode) -> SketchNode:
         if isinstance(node, LabelNode):
             self.info("Resolved label: %s", node)
             return sketches.lookup.get(node.target)
         return node
 
-    def _succ_no_loadstore(self, base_dtv, sketches, node, seen):
+    def _succ_no_loadstore(self,
+                           base_dtv: DerivedTypeVariable,
+                           sketches: Sketches,
+                           node: SketchNode,
+                           seen: Set[SketchNode]) -> List[SketchNode]:
         successors = []
         if node not in seen:
             seen.add(node)
@@ -146,7 +155,10 @@ class CTypeGenerator(Loggable):
         self.debug("Successors %s --> %s", node, successors)
         return successors
 
-    def examine_sources(self, sources: Set[SketchNode], my_node: SketchNode, my_type: CType):
+    def examine_sources(self,
+                        sources: Set[SketchNode],
+                        my_node: SketchNode,
+                        my_type: CType) -> CType:
         """
         Callback that is invoked on every C type creation on a SketchNode that was generated from
         other nodes (e.g., callee information). This gives the client code an opportunity to see
@@ -256,14 +268,13 @@ class CTypeGenerator(Loggable):
             fields = []
             for offset, siblings in children_by_offset.items():
                 child_type = self.c_type_from_nodeset(base_dtv, sketches, siblings)
-                # TODO
-                #if c.source:
-                #    child_type = self.examine_sources(c.source, c, child_type)
+                if c.source:
+                    child_type = self.examine_sources(c.source, c, child_type)
                 fields.append(Field(child_type, offset=offset))
             s.set_fields(fields=fields)
         return rv
 
-    def _simplify_pointers(self, typ: CType, seen_structs: Set[CType]):
+    def _simplify_pointers(self, typ: CType, seen_structs: Set[CType]) -> CType:
         """
         Look for all Pointer(Struct(FieldType)) patterns where the struct has a single field at
         offset = 0 and convert it to Pointer(FieldType).
@@ -297,7 +308,10 @@ class CTypeGenerator(Loggable):
             return s
         return typ
 
-    def __call__(self, simplify_pointers=True, filter_to: Optional[Set[DerivedTypeVariable]] = None):
+    def __call__(self,
+                 simplify_pointers: bool = True,
+                 filter_to: Optional[Set[DerivedTypeVariable]] = None
+                 ) -> Dict[DerivedTypeVariable, CType]:
         """
         Generate CTypes.
 
