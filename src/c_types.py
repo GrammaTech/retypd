@@ -33,7 +33,7 @@ class CType(ABC):
     def comment(self) -> Optional[str]:
         return None
 
-    def declare(self, name: str) -> str:
+    def pretty_print(self, name: str) -> str:
         return f'{self} {name}'
 
 
@@ -102,7 +102,7 @@ class ArrayType(CType):
     def __str__(self) -> str:
         return f'{self.member_type}[{self.length}]'
 
-    def declare(self, name: str) -> str:
+    def pretty_print(self, name: str) -> str:
         return f'{self.member_type} {name}[{self.length}]'
 
 
@@ -140,7 +140,7 @@ class FunctionType(CType):
     def __str__(self) -> str:
         return self.name
 
-    def declare(self, _name: str) -> str:
+    def pretty_print(self, _name: str) -> str:
         return f'{self.return_type} {self.name}({", ".join(map(str, self.params))});'
 
 
@@ -174,12 +174,12 @@ class CompoundType(CType):
     def __str__(self) -> str:
         return f'{self.compound_type} {self.name}'
 
-    def declare(self, name: str) -> str:
+    def pretty_print(self, name: str) -> str:
         nt = f'{os.linesep}\t'
         result = f'{self.compound_type} {name} {{'
         for index, field in enumerate(self.fields):
             name = f'field_{index}'
-            result += f'{nt}{field.ctype.declare(name)};'
+            result += f'{nt}{field.ctype.pretty_print(name)};'
             if field.offset is not None:
                 result += f' // offset {field.offset}'
         return f'{result}{os.linesep}}};'
