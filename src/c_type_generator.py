@@ -329,15 +329,17 @@ class CTypeGenerator(Loggable):
             if filter_to is not None and base_dtv not in filter_to:
                 continue
             # First, see if it is a function
-            params = []
+            succs = self._succ_no_loadstore(base_dtv, sketches, node, set())
+            n_params = max((s.dtv.tail.index+1 for s in succs if isinstance(s.dtv.tail,InLabel)),default=0)
+            params = [None] * n_params
             rtype = None
             is_func = False
-            for succ in self._succ_no_loadstore(base_dtv, sketches, node, set()):
+            for succ in succs:
                 assert isinstance(succ, SketchNode)
                 if isinstance(succ.dtv.tail, InLabel):
                     self.debug("(1) Processing %s", succ.dtv)
                     p = self.c_type_from_nodeset(base_dtv, sketches, {succ})
-                    params.append(p)
+                    params[succ.dtv.tail.index] = p
                     is_func = True
                 elif isinstance(succ.dtv.tail, OutLabel):
                     self.debug("(2) Processing %s", succ.dtv)
