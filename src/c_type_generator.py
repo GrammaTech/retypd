@@ -274,37 +274,37 @@ class CTypeGenerator(Loggable):
             s.set_fields(fields=fields)
         return rv
 
-    def _simplify_pointers(self, typ: CType, seen_structs: Set[CType]) -> CType:
+    def _simplify_pointers(self, typ: CType, seen: Set[CType]) -> CType:
         """
         Look for all Pointer(Struct(FieldType)) patterns where the struct has a single field at
         offset = 0 and convert it to Pointer(FieldType).
         """
+        if typ in seen:
+            return typ
+        seen.add(typ)
         if isinstance(typ, Field):
-            return Field(self._simplify_pointers(typ.ctype, seen_structs), typ.offset)
+            return Field(self._simplify_pointers(typ.ctype, seen), typ.offset)
         elif isinstance(typ, ArrayType):
-            return ArrayType(self._simplify_pointers(typ.member_type, seen_structs), typ.length)
+            return ArrayType(self._simplify_pointers(typ.member_type, seen), typ.length)
         elif isinstance(typ, PointerType):
             if isinstance(typ.target_type, StructType):
                 s = typ.target_type
                 if len(s.fields) == 1 and s.fields[0].offset == 0:
                     rv = PointerType(
-                        self._simplify_pointers(s.fields[0].ctype, seen_structs),
+                        self._simplify_pointers(s.fields[0].ctype, seen),
                         self.default_ptr_size)
                     self.info("Simplified pointer: %s", rv)
                     return rv
             return PointerType(
-                self._simplify_pointers(typ.target_type, seen_structs),
+                self._simplify_pointers(typ.target_type, seen),
                 self.default_ptr_size)
         elif isinstance(typ, FunctionType):
-            params = [self._simplify_pointers(t, seen_structs) for t in typ.params]
-            rt = self._simplify_pointers(typ.return_type, seen_structs)
+            params = [self._simplify_pointers(t, seen) for t in typ.params]
+            rt = self._simplify_pointers(typ.return_type, seen)
             return FunctionType(rt, params, name=typ.name)
         elif isinstance(typ, StructType):
-            if typ in seen_structs:
-                return typ
-            seen_structs.add(typ)
             s = StructType(name=typ.name)
-            s.set_fields([self._simplify_pointers(t, seen_structs) for t in typ.fields])
+            s.set_fields([self._simplify_pointers(t, seen) for t in typ.fields])
             return s
         return typ
 

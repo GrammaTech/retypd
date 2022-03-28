@@ -59,6 +59,47 @@ class RecursiveSchemaTest(unittest.TestCase):
         self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable(f"φ.load.σ4@4")].upper_bound,
                          SchemaParser.parse_variable("#FileDescriptor"))
 
+    def test_regression1(self):
+        """
+        When more than one typevar gets instantiated in a chain of constraints,
+        we weren't following the entire chain (transitively) to get the atomic
+        type information (for the lattice).
+        """
+        nf_apply = SchemaParser.parse_variable("nf")
+
+        constraints = {nf_apply: ConstraintSet()}
+        constraint_str = """
+        v_41 ⊑ int
+        v_162.load.σ4@0 ⊑ v_52
+        v_55 ⊑ v_114
+        v_73 ⊑ v_162.store.σ4@0
+        v_162.load.σ4@4 ⊑ v_73
+        v_41 ⊑ v_55
+        nf.in_0 ⊑ v_162
+        v_52 ⊑ v_55
+        v_55 ⊑ v_162.store.σ4@4
+        v_162.load.σ4@4 ⊑ v_41
+        v_52 ⊑ int
+        v_114 ⊑ nf.out
+        """
+        for line in constraint_str.split("\n"):
+            line = line.strip()
+            if line.strip():
+                constraints[nf_apply].add(SchemaParser.parse_constraint(line))
+
+        program = Program(DummyLattice(), {}, constraints, {nf_apply: []})
+        solver = Solver(program, verbose=True)
+        (gen_const, sketches) = solver()
+
+        nf_sketches = sketches[nf_apply]
+        self.assertEqual(
+            nf_sketches.lookup[SchemaParser.parse_variable(f"nf.in_0.load.σ4@4")].upper_bound,
+            SchemaParser.parse_variable("int"))
+        self.assertEqual(
+            nf_sketches.lookup[SchemaParser.parse_variable(f"nf.in_0.load.σ4@0")].upper_bound,
+            SchemaParser.parse_variable("int"))
+
+
 
 class CTypeTest(unittest.TestCase):
     def test_simple_struct(self):
