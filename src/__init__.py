@@ -47,3 +47,19 @@ from .schema import (
 from .solver import Solver, SolverConfig
 from .parser import SchemaParser
 from .c_type_generator import CTypeGenerator, CTypeGenerationError
+from .clattice import CLattice, CLatticeCTypes
+from .c_types import (
+    CType,
+    VoidType,
+    IntType,
+    FloatType,
+    CharType,
+    BoolType,
+    ArrayType,
+    PointerType,
+    FunctionType,
+    Field,
+    CompoundType,
+    StructType,
+    UnionType,
+)
