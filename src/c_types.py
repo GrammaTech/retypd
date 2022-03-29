@@ -87,6 +87,18 @@ class CharType(CType):
         return f'char{self.width}_t'
 
 
+class BoolType(CType):
+    def __init__(self, width: int) -> None:
+        self.width = width
+
+    @property
+    def size(self) -> int:
+        return self.width
+
+    def __str__(self) -> str:
+        return f'bool{self.width}_t'
+
+
 class ArrayType(CType):
     next_id = 0
     def __init__(self, member_type: CType, length: int) -> None:

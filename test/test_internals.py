@@ -6,7 +6,23 @@ from abc import ABC
 import networkx
 import unittest
 
-from retypd import ConstraintSet, DummyLattice, Program, SchemaParser, Solver, DerefLabel
+from retypd import (
+    CLattice,
+    ConstraintSet,
+    DerivedTypeVariable,
+    DummyLattice,
+    Program,
+    SchemaParser,
+    Solver,
+    DerefLabel,
+    CType,
+    CLatticeCTypes,
+    BoolType,
+    CharType,
+    FloatType,
+    IntType,
+    VoidType,
+)
 
 
 class BasicSchemaTest(unittest.TestCase):
@@ -84,6 +100,56 @@ class ForgetsTest(unittest.TestCase):
         (gen_const, sketches) = solver()
 
         self.assertTrue(constraint in gen_const[F])
+
+
+class CLatticesTest(unittest.TestCase):
+    def assertJoin(self, lhs: str, rhs: str, equals: str):
+        '''Validate that when two DTVs are joined, they equal a known value '''
+        lhs_dtv = DerivedTypeVariable(lhs)
+        rhs_dtv = DerivedTypeVariable(rhs)
+        equal_dtv = DerivedTypeVariable(equals)
+        self.assertEqual(CLattice().join(lhs_dtv, rhs_dtv), equal_dtv)
+
+    def test_join(self):
+        '''Test C-lattice join operations against known values'''
+        self.assertJoin("float", "uint", "┬")
+        self.assertJoin("uint", "int", "uint")
+        self.assertJoin("char", "int", "uint")
+        self.assertJoin("int64", "int", "int")
+        self.assertJoin("uint32", "uint64", "uint")
+
+    def assertCType(self, name: str, ctype: CType, size: int = None):
+        '''Validate that an atomic DTV is translated to a known high-level 
+           CType 
+        '''
+        atom = DerivedTypeVariable(name)
+        lattice = CLatticeCTypes()
+        ctype_lhs = lattice.atom_to_ctype(atom, CLattice._top, size)
+        ctype_rhs = lattice.atom_to_ctype(CLattice._bottom, atom, size)
+
+        self.assertEqual(str(ctype), str(ctype_lhs))
+        self.assertEqual(str(ctype), str(ctype_rhs))
+
+    def test_atom_to_ctype(self):
+        '''Test C-lattice are converted to C-types correctly'''
+        self.assertCType("int", IntType(4, True), 4)
+        self.assertCType("int8", IntType(1, True))
+        self.assertCType("int16", IntType(2, True))
+        self.assertCType("int32", IntType(4, True))
+        self.assertCType("int64", IntType(8, True))
+
+        self.assertCType("uint", IntType(4, False), 4)
+        self.assertCType("uint8", IntType(1, False))
+        self.assertCType("uint16", IntType(2, False))
+        self.assertCType("uint32", IntType(4, False))
+        self.assertCType("uint64", IntType(8, False))
+
+        self.assertCType("void", VoidType())
+        self.assertCType("char", CharType(1), 1)
+        self.assertCType("bool", BoolType(1), 1)
+        self.assertCType("float", FloatType(4))
+        self.assertCType("double", FloatType(8))
+
 
 if __name__ == '__main__':
     unittest.main()
