@@ -754,7 +754,28 @@ class Sketches(Loggable):
                     dependencies: Dict[SketchNode, Set[SketchNode]],
                     seen: Dict[SketchNode, SketchNode],
                     populate_source: bool = False) -> None:
+        """
+        This function takes a target node (onto) that we are copying data onto. The data we are
+        copying comes from a type constraint which tells us that a source node (origin) should have
+        its type properties applied to onto.
+
+        There are two kinds of information that we are collecting (recursively) from origin:
+        1. Structural information. This comes in the form of SketchNode successors (children in the
+           (DTV form). A typical example of this would be that a callee accesses fields in a struct
+           that a caller does not, and so we copying those "accesses" as new sketch nodes.
+        2. Atomic type information. When type variables are involved, we may not have a straight-
+           forward path from onto -> (atomic type) in the output constraint graph. These typevars
+           are specifically there to prevent looping in that graph. However, there may still be
+           useful information in those typevars (like one of them indicates it is a "float", e.g.)
+           We use the lattice to merge this information in the target node (onto).
+        """
+        # Compute a least upper bound (join) on the lower bounds for the DTV.
+        # Analogously, compute a greatest upper bound (meet) on the upper bounds for
+        # the DTV.
+        onto.lower_bound = self.solver.program.types.join(origin.lower_bound, onto.lower_bound)
+        onto.upper_bound = self.solver.program.types.meet(origin.upper_bound, onto.upper_bound)
         seen[origin] = onto
+
         # If the dependencies graph says that onto is a subtype of origin, copy all of origin's
         # outgoing edges and their targets. If this introduces a loop, create a label instead of
         # a loop.
@@ -810,21 +831,11 @@ class Sketches(Loggable):
         self.debug("instantiate_intra: %s", dependencies)
         old_sketches = networkx.DiGraph(self.sketches)
         for dest in dependencies.keys():
+            seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
             for origin in dependencies.get(dest, set()):
-                seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
                 # Each iteration we take a copy of the current sketches because they will be
                 # updated inside of _copy_inner.
                 self._copy_inner(dest, origin, old_sketches, dependencies, seen)
-
-    # Given INTER.out <= INTRA, we need to grab all the constraints on INTER.out from INTER's
-    # sketches and substitute them into INTRA.
-    #
-    #  Example:
-    #    INTER.out <= INTRA
-    #    X <= INTRA.store.s4@4              // This only affects INTRA (it already does)
-    #
-    #    INTER.out --> INTER.out.load.s4@4  // This should get copied in as-is on INTRA ->
-    #
 
     def copy_inter(self,
                    dependencies: Dict[SketchNode, Set[SketchNode]],
@@ -836,22 +847,20 @@ class Sketches(Loggable):
         '''
         self.debug("copy_inter: %s", dependencies)
         for dest in dependencies.keys():
+            seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
             for origin in dependencies.get(dest, set()):
-                seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
                 origin_base = origin.dtv.base_var
                 # If we have funcvar <= globalvar, the global variable won't yet be in
                 # the sketches_map.
                 if origin_base in sketches_map:
                     self.debug("Copying %s<--%s from %s sketch", dest, origin, origin_base)
+                    # If the node exists in the interprocedural sketch, use that one, otherwise
+                    # just use the one we started with. It is possible to have interesting
+                    # constraints on interprocedural deps without having a sketch for the dep
+                    # (consider models for external functions)
                     origin_node = sketches_map[origin_base].lookup.get(origin.dtv)
                     if origin_node is not None:
-                        # Compute a least upper bound (join) on the lower bounds for the DTV.
-                        # Analogously, compute a greatest upper bound (meet) on the upper bounds for
-                        # the DTV.
-                        dest.lower_bound = self.solver.program.types.join(origin_node.lower_bound,
-                                                                          dest.lower_bound)
-                        dest.upper_bound = self.solver.program.types.meet(origin_node.upper_bound,
-                                                                          dest.upper_bound)
+                        origin = origin_node
                     self._copy_inner(dest, origin, sketches_map[origin_base].sketches,
                                      dependencies, seen, populate_source=True)
 
@@ -890,13 +899,51 @@ class Sketches(Loggable):
                         sketches_map: Dict[DerivedTypeVariable, "Sketches"]) -> None:
         '''Extend the set of sketches with the new set of constraints.
         '''
+
+        # Step 1: Apply constraints that make use of lattice types, so that we have the seeds
+        # for atomic types in our sketch graph
+        for constraint in constraints:
+            left = self.solver.reverse_type_var(constraint.left)
+            right = self.solver.reverse_type_var(constraint.right)
+            # We don't want to add nodes for lattice types. This makes lots of things unpleasant.
+            if left not in self.solver.program.types.internal_types:
+                if left.base_var in self.solver.program.types.internal_types:
+                    continue
+            left_node = self.add_variable(left)
+            if right not in self.solver.program.types.internal_types:
+                if right.base_var in self.solver.program.types.internal_types:
+                    continue
+            right_node = self.add_variable(right)
+
+            if left in self.solver.program.types.internal_types:
+                self.debug("JOIN: %s, %s", right_node, left)
+                right_node.lower_bound = self.solver.program.types.join(right_node.lower_bound, left)
+                self.debug("   --> %s", right_node)
+            if right in self.solver.program.types.internal_types:
+                self.debug("MEET: %s, %s", left_node, left)
+                left_node.upper_bound = self.solver.program.types.meet(left_node.upper_bound, right)
+                self.debug("   --> %s", left_node)
+
+        # Step 2: Now we've seeded our sketch graph with the interesting atomic types from this
+        # SCC, we need to propagate the information. We do this two ways:
+        #  1. Intraprocedurally, through typevars. Here we follow all typevar constraints as edges
+        #     and copy any successors as new nodes in our sketch graph, and use the lattice to
+        #     collect information from reachable atomic types as well.
+        #  2. Interprocedurally, we do the same thing except we copy the information from callees
+        #     and their sketches.
         inter_dependencies: Dict[SketchNode, Set[SketchNode]] = {}
         intra_dependencies: Dict[SketchNode, Set[SketchNode]] = {}
         for constraint in constraints:
             left = self.solver.reverse_type_var(constraint.left)
             right = self.solver.reverse_type_var(constraint.right)
-            left_node = self.add_variable(left)
-            right_node = self.add_variable(right)
+            left_typevar = (left != constraint.left)
+            right_typevar = (right != constraint.right)
+            # Constraints that contain a lattice type will not have nodes, they are handled
+            # in Step 1 above.
+            left_node = self.lookup.get(left)
+            right_node = self.lookup.get(right)
+            if left_node is None or right_node is None:
+                continue
             # Base variables are the type variable in question without the access path; e.g.,
             # F.in_0.load.σ4@0's base variable is F.
             left_base_var = left.base_var
@@ -904,26 +951,21 @@ class Sketches(Loggable):
             if {left_base_var, right_base_var} & global_vars:
                 self.debug("Skipping %s (global)", constraint)
                 continue
-            # Skip constraints X <= LatticeType and LatticeType <= X; they get handled at the bottom
-            # of this function
-            if {left_base_var, right_base_var} & self.solver.program.types.internal_types:
-                self.debug("Skipping %s (internal type)", constraint)
-                continue
-            # Type variables are generated only to break cycles in the constraint graph. If the rhs
-            # is a type variable, that means that the relationship between the sketches is
-            # intraprocedural and not interprocedural.
-            elif right_base_var in self.solver._type_vars:
-                self.debug("Copying %s (intra-procedural)", constraint)
-                intra_dependencies.setdefault(left_node, set()).add(right_node)
             # If the right-hand side is not a type variable, it must be an interesting node (a
             # function or global). The left and right base nodes may be different or the same;
             # either way, treat it as an interprocedural dependency
-            elif right_base_var not in nodes and right_base_var not in global_vars:
+            elif right_base_var not in nodes and not right_typevar:
                 self.debug("Copying right %s (inter-procedural)", constraint)
                 inter_dependencies.setdefault(left_node, set()).add(right_node)
-            elif left_base_var not in nodes and left_base_var not in global_vars:
+            elif left_base_var not in nodes and not left_typevar:
                 self.debug("Copying left %s (inter-procedural)", constraint)
                 inter_dependencies.setdefault(right_node, set()).add(left_node)
+            # Type variables are generated only to break cycles in the constraint graph. If the rhs
+            # is a type variable, that means that the relationship between the sketches is
+            # intraprocedural and not interprocedural.
+            elif left_typevar or right_typevar:
+                self.debug("Copying %s (intra-procedural)", constraint)
+                intra_dependencies.setdefault(left_node, set()).add(right_node)
         # Intra-SCC dependencies just get instantiated using "this" set of sketches
         if intra_dependencies:
             self.instantiate_intra(intra_dependencies)
@@ -936,20 +978,7 @@ class Sketches(Loggable):
         # Copy globals from our callees, if we are analyzing globals precisely.
         global_handler.copy_globals(self, nodes, sketches_map)
 
-        for constraint in constraints:
-            left = self.solver.reverse_type_var(constraint.left)
-            right = self.solver.reverse_type_var(constraint.right)
-            if left in self.solver.program.types.internal_types:
-                node = self.lookup[right]
-                self.debug("JOIN: %s, %s", node, left)
-                node.lower_bound = self.solver.program.types.join(node.lower_bound, left)
-                self.debug("   --> %s", node)
-            if right in self.solver.program.types.internal_types:
-                node = self.lookup[left]
-                self.debug("MEET: %s, %s", node, left)
-                node.upper_bound = self.solver.program.types.meet(node.upper_bound, right)
-                self.debug("   --> %s", node)
-
+        
     def to_dot(self, dtv: DerivedTypeVariable) -> str:
         nt = f'{os.linesep}\t'
         graph_str = f'digraph {dtv} {{'
