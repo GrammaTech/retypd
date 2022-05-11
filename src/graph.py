@@ -81,14 +81,11 @@ class Node:
         self.suffix_variance = suffix_variance
         if suffix_variance == Variance.COVARIANT:
             variance = '.⊕'
-            summary = 2
         else:
             variance = '.⊖'
-            summary = 0
         self._forgotten = forgotten
         if forgotten == Node.Forgotten.POST_FORGET:
             self._str = 'F:' + str(self.base) + variance
-            summary += 1
         else:
             self._str = str(self.base) + variance
         self._hash = hash( (self.base, self.suffix_variance, self._forgotten) )
