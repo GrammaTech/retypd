@@ -63,3 +63,4 @@ from .c_types import (
     StructType,
     UnionType,
 )
+from .loggable import LogLevel
