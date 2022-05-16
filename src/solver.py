@@ -956,7 +956,7 @@ class Sketches(Loggable):
                 if left_typevar:
                     intra_dependencies.setdefault(right_node, set()).add(left_node)
                 else:
-                intra_dependencies.setdefault(left_node, set()).add(right_node)
+                    intra_dependencies.setdefault(left_node, set()).add(right_node)
         # Intra-SCC dependencies just get instantiated using "this" set of sketches
         if intra_dependencies:
             self.instantiate_intra(intra_dependencies)
