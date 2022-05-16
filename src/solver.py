@@ -953,6 +953,9 @@ class Sketches(Loggable):
             # intraprocedural and not interprocedural.
             elif left_typevar or right_typevar:
                 self.debug("Copying %s (intra-procedural)", constraint)
+                if left_typevar:
+                    intra_dependencies.setdefault(right_node, set()).add(left_node)
+                else:
                 intra_dependencies.setdefault(left_node, set()).add(right_node)
         # Intra-SCC dependencies just get instantiated using "this" set of sketches
         if intra_dependencies:

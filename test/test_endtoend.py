@@ -242,7 +242,7 @@ class CTypeTest(unittest.TestCase):
         self.assertEqual(max([f.offset for f in t.target_type.fields]), 20)
         self.assertEqual(min([f.offset for f in t.target_type.fields]), 0)
 
-    def test_tight_bounds(self):
+    def test_tight_bounds_in(self):
         constraints = ConstraintSet()
         constraints.add(SchemaParser.parse_constraint('f.in_0 ⊑ A'))
         constraints.add(SchemaParser.parse_constraint('int ⊑ A'))
@@ -260,6 +260,26 @@ class CTypeTest(unittest.TestCase):
         f_ft = output[f]
         self.assertTrue(isinstance(f_ft, FunctionType))
         self.assertTrue(isinstance(f_ft.params[0], IntType))
+
+    def test_tight_bounds_out(self):
+        constraints = ConstraintSet()
+        constraints.add(SchemaParser.parse_constraint('A ⊑ f.out'))
+        constraints.add(SchemaParser.parse_constraint('int ⊑ A'))
+        constraints.add(SchemaParser.parse_constraint('A ⊑ int'))
+        f = SchemaParser.parse_variable('f')
+        program = Program(DummyLattice(), set(), {f: constraints}, {f: {}})
+        solver = Solver(program, verbose = LogLevel.DEBUG)
+        (gen_const, sketches) = solver()
+        print(gen_const[f])
+        print(sketches[f])
+        f_out = SchemaParser.parse_variable('f.out')
+        self.assertEqual(sketches[f].lookup[f_out].lower_bound, CLattice._int)
+        self.assertEqual(sketches[f].lookup[f_out].upper_bound, CLattice._int)
+        gen = CTypeGenerator(sketches, CLattice(), CLatticeCTypes(), 4, 4, verbose=LogLevel.DEBUG)
+        output = gen()
+        f_ft = output[f]
+        self.assertTrue(isinstance(f_ft, FunctionType))
+        self.assertTrue(isinstance(f_ft.return_type, IntType))
 
 if __name__ == '__main__':
     unittest.main()
