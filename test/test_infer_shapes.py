@@ -17,12 +17,17 @@ from retypd import (
 )
 from typing import Dict,List
 
+from retypd.schema import Lattice
+
 
 VERBOSE_TESTS = False
 
 
-def compute_sketches(cs:Dict[str,List[str]], callgraph:Dict[str,List[str]]):
-
+def compute_sketches(cs:Dict[str,List[str]], callgraph:Dict[str,List[str]], lattice:Lattice = DummyLattice()):
+    """
+    Auxiliary function that parses constraints, callgraph 
+    and solves the sketches using a default lattice.
+    """
     parsed_cs = {}
     for proc,proc_cs in cs.items():
 
@@ -32,7 +37,6 @@ def compute_sketches(cs:Dict[str,List[str]], callgraph:Dict[str,List[str]]):
         parsed_cs[DerivedTypeVariable(proc)] = proc_parsed_cs
 
     parsed_callgraph = {DerivedTypeVariable(proc): [DerivedTypeVariable(callee) for callee in callees] for proc,callees in callgraph.items()}
-    lattice = DummyLattice()
     program = Program(lattice, {}, parsed_cs, parsed_callgraph)
     solver = Solver(program, verbose=VERBOSE_TESTS)
     return solver()

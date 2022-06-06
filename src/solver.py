@@ -486,15 +486,14 @@ class Solver(Loggable):
 
         Side-effects: update the map of typevars.
         '''
-        forget_graph = networkx.DiGraph(graph)
-        recall_graph = networkx.DiGraph(graph)
+        forget_graph = networkx.DiGraph()
+        recall_graph = networkx.DiGraph()
         for head, tail in graph.edges:
             label = graph[head][tail].get('label')
-            if label:
-                if label.kind == EdgeLabel.Kind.FORGET:
-                    recall_graph.remove_edge(head, tail)
-                else:
-                    forget_graph.remove_edge(head, tail)
+            if not label or label.kind != EdgeLabel.Kind.FORGET:
+                recall_graph.add_edge(head, tail)
+            if not label or label.kind != EdgeLabel.Kind.RECALL:
+                forget_graph.add_edge(head, tail)
         typevars: Set[DerivedTypeVariable] = set()
         for fr_graph in [forget_graph, recall_graph]:
             condensation = networkx.condensation(fr_graph)
@@ -559,15 +558,6 @@ class Solver(Loggable):
         '''
         npaths = 0
         constraints = ConstraintSet()
-        # As per the algorithm we only allow paths that follow the regular language
-        # (recall _)* (forget _)*
-        # We enforce this by looking for inversions from forget->recall.
-        def matches_language(string):
-            if len(string) >= 2 \
-               and string[-2].kind == EdgeLabel.Kind.FORGET \
-               and string[-1].kind == EdgeLabel.Kind.RECALL:
-                return False
-            return True
         # On large procedures, the graph this is exploring can be quite large (hundreds of nodes,
         # thousands of edges). This can result in an insane number of paths - most of which do not
         # result in a constraint, and most of the ones that do result in constraints are redundant.
@@ -585,8 +575,6 @@ class Solver(Loggable):
                 return
             if current_node in path:
                 npaths += 1
-                return
-            if not matches_language(string):
                 return
             if path and current_node.base in all_endpoints:
                 constraint = self._maybe_constraint(path[0], current_node, string)
@@ -727,6 +715,8 @@ class Solver(Loggable):
 
         return (derived, sketches_map)
 
+
+    # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
     @staticmethod
     def _recall_forget_split(graph: networkx.DiGraph) -> None:
         '''The algorithm, after saturation, only admits paths such that recall edges all precede

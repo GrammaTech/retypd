@@ -40,10 +40,6 @@ class SketchNode:
     def __repr__(self) -> str:
         return f'SketchNode({self})'
 
-    def get_usable_type(self) -> DerivedTypeVariable:
-        # TODO this might not always be the right solution
-        return self.lower_bound
-
 
 class LabelNode:
     counter = 0
