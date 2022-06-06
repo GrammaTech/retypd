@@ -30,7 +30,7 @@ from .schema import (
     LatticeCTypes,
     Lattice,
 )
-from .solver import (
+from .sketches import (
     SketchNode,
     Sketches,
     LabelNode,

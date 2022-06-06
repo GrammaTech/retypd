@@ -56,7 +56,7 @@ class RecursiveSchemaTest(unittest.TestCase):
         # Equivalent to "#SuccessZ ⊑ F.out"
         self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable("F.out")].lower_bound,
                          SchemaParser.parse_variable("#SuccessZ"))
-        self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable(f"φ.load.σ4@4")].upper_bound,
+        self.assertEqual(F_sketches.lookup[SchemaParser.parse_variable(f"F.in_0.load.σ4@4")].upper_bound,
                          SchemaParser.parse_variable("#FileDescriptor"))
 
     def test_regression1(self):

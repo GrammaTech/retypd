@@ -24,7 +24,7 @@
 '''
 
 from __future__ import annotations
-from typing import Dict, FrozenSet, Iterable, List, Optional, Set, Tuple, Union, Any
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Union, Any
 from .graph import EdgeLabel, Node, ConstraintGraph
 from .schema import (
     ConstraintSet,
@@ -37,10 +37,9 @@ from .schema import (
     StoreLabel
 )
 
-from .sketches import LabelNode,SkNode, SketchNode
+from .sketches import LabelNode, SketchNode, Sketches
 from .loggable import Loggable, LogLevel
 from .parser import SchemaParser
-import os
 import itertools
 import networkx
 import tqdm
@@ -238,6 +237,59 @@ class UnionGlobalHandler(GlobalHandler):
         sketches_map[self.fake_root] = global_sketches
 
 
+def instantiate_calls(cs:ConstraintSet,sketch_map:Dict[DerivedTypeVariable, Sketches], types:Lattice[DerivedTypeVariable]) -> ConstraintSet:
+    """
+    For every constraint involving a procedure that appears in the sketch map
+    Generate constraints that summarize the contents of the sketch.
+    """
+    fresh_var_counter = 0
+
+    def instantiate_sketch(proc:DerivedTypeVariable, sketch: Sketches,types:Lattice[DerivedTypeVariable]) -> ConstraintSet:
+        nonlocal fresh_var_counter
+        all_constraints = ConstraintSet()
+        for node in sketch.sketches.nodes:
+            if isinstance(node,SketchNode) and node.dtv.base_var == proc:
+                constraints = []
+                # if the node has some type, capture that in a constraint
+                if node.lower_bound != types.bottom:
+                    constraints.append(SubtypeConstraint(node.lower_bound,node.dtv))
+                if node.upper_bound != types.top:
+                    constraints.append(SubtypeConstraint(node.dtv,node.upper_bound))
+                # if the node is a leaf, capture the capability using fake variables
+                # this could be avoided if we support capability constraints  (Var x.l) in
+                # addition to subtype constraints 
+                if len(constraints) == 0 and len(list(sketch.sketches.successors(node))) == 0:
+                    fresh_var = DerivedTypeVariable(f"$$fresh-var-{fresh_var_counter}$$")
+                    fresh_var_counter +=1
+                    # FIXME check if this should be the other way around
+                    if node.dtv.path_variance == Variance.COVARIANT:
+                        constraints.append(SubtypeConstraint(node.dtv,fresh_var))
+                    else:
+                        constraints.append(SubtypeConstraint(fresh_var,node.dtv))
+                # I am not sure about this, but I think label nodes should
+                # not be completely ignored
+                for succ in sketch.sketches.successors(node):
+                    if isinstance(succ,LabelNode):
+                        label = sketch.sketches[node][succ].get("label")
+                        loop_back = node.dtv.add_suffix(label)
+                        if loop_back.path_variance == Variance.COVARIANT:
+                            constraints.append(SubtypeConstraint(loop_back,succ.target))
+                        else:
+                            constraints.append(SubtypeConstraint(succ.target,loop_back))
+                all_constraints |= ConstraintSet(constraints)
+        return all_constraints
+
+    callees = set()
+    for constraint in cs:
+        for side in [constraint.left,constraint.right]:
+            if side.base_var in sketch_map:
+                callees.add(side.base_var)
+    
+    new_constraints = ConstraintSet()
+    for callee in callees:
+        new_constraints |= instantiate_sketch(callee,sketch_map[callee],types)
+    return new_constraints
+
 class equiv_relation:
     """
     This class represents an equivalence relation
@@ -251,8 +303,8 @@ class equiv_relation:
         for elem in new_set:
             self._equiv_repr[elem] = new_set
     
-    def find_equiv_rep(self,x:DerivedTypeVariable) -> Set[DerivedTypeVariable]:
-        return self._equiv_repr[x]
+    def find_equiv_rep(self,x:DerivedTypeVariable) -> Optional[Set[DerivedTypeVariable]]:
+        return self._equiv_repr.get(x)
 
     def get_equivalence_classes(self)-> Set[FrozenSet[DerivedTypeVariable]]:
         return set(self._equiv_repr.values())
@@ -290,90 +342,61 @@ def compute_quotient_graph(constraints:ConstraintSet) -> Tuple[equiv_relation,ne
     
     return equiv, networkx.quotient_graph(g,equiv.get_equivalence_classes(),create_using=networkx.MultiDiGraph)
 
-def infer_shapes(scc:Set[DerivedTypeVariable],sketches:Sketches, constraints:ConstraintSet) -> Sketches:
+
+
+
+def infer_shapes(scc_and_globals:Set[DerivedTypeVariable],sketches:Sketches, constraints:ConstraintSet) -> Sketches:
     """
     Infer shapes takes a set of constraints and populates shapes of the sketches
     for all DVS in scc.
     """
+    if len(constraints) == 0:
+        return
     equiv,g_quotient = compute_quotient_graph(constraints)
     
-    # I think the sketch graph is basically a projection
-    # of the quotient graph as seen from the proc_var starting
-    # point
-    # We don't actually need to explore all paths, just make
-    # sure they are all reflected in the sketch graph
-    for proc_var in scc:
-        # This is basically a graph per procedure variable
-        correspondence = {equiv.find_equiv_rep(proc_var):proc_var}
-        
-        for (src, dest, edge_num) in networkx.edge_dfs(g_quotient,source=equiv.find_equiv_rep(proc_var)):      
-            if dest not in correspondence:
-                # TODO: Investigate cases with multiple edges with different labels
-                label = g_quotient[src][dest][edge_num].get("label")
-                dest_dvt = correspondence[src].add_suffix(label)
-                correspondence[dest]=dest_dvt
-                sketches.make_node(dest_dvt)
-                sketches.sketches.add_edge(correspondence[src], dest_dvt, label=dest_dvt.tail)
+    # The paper says "By collapsing isomorphic subtrees, we can represent
+    # sketches as deterministic finite state automata with each state labeled by
+    # an element of /\ (the lattice)"
+    # So we don't have to represent sketches as trees. We can have a graph
+    # that summarizes all the trees. In that case, we could just take
+    # the quotient graph and use it as a sketch automaton. The only change
+    # needed is that we have to split some nodes in two so they can have Top or Bottom
+    # depending on the paths that are taken to reach it (their variance).
+
+    # In conclusion, we don't actually have enumerate all paths here!
+    # just have an automaton that accepts the same paths as the quotient graph.
+
+    # However, if we do this, we will have to split some of these nodes in
+    # the future once they start having more detailed type information.
+    # also this idea does not mesh up well with the current implementation of
+    # sketches in which each node has 1 DVT associated. Technically
+    # a SketchNode could have a set of DVTs associated (all the paths reaching a node,
+    # one DVT per isomorphic subtree).
+
+    # For now, create sketches that are trees pending a revision
+    # of the implementation of sketches.
+    def all_paths(curr_quotient_node:FrozenSet[DerivedTypeVariable], visited_nodes:Dict[FrozenSet[DerivedTypeVariable],SketchNode]):
+        curr_node= visited_nodes[curr_quotient_node]
+        for src, dest, label in set(g_quotient.out_edges(curr_quotient_node,data="label")):
+            if dest not in visited_nodes:
+                dest_dvt = curr_node.dtv.add_suffix(label)
+                dest_node=sketches.make_node(dest_dvt)
+                sketches.sketches.add_edge(curr_node, dest_node, label=label)
+                visited_nodes[dest]=dest_node
+                all_paths(dest,visited_nodes)
+                del visited_nodes[dest]
             else:
-                label_node = LabelNode(correspondence[dest])
-                sketches.sketches.add_edge(correspondence[src], label_node, label=correspondence[dest].tail)
+                label_node = LabelNode(visited_nodes[dest])
+                sketches.sketches.add_edge(curr_node, label_node, label=label) 
 
+    for proc_or_global in scc_and_globals:
+        proc_or_global_node = sketches.make_node(proc_or_global)
+        quotient_node = equiv.find_equiv_rep(proc_or_global)
+        if quotient_node is None:
+            continue
+        visited_nodes = {quotient_node:proc_or_global_node}
+        all_paths(quotient_node,visited_nodes)
 
-def instantiate_calls(cs:ConstraintSet,sketch_map:Dict[DerivedTypeVariable, Sketches], types:Lattice[DerivedTypeVariable]) -> ConstraintSet:
-    """
-    For every constraint involving a procedure that appears in the sketch map
-    Generate constraints that summarize the contents of the sketch.
-    """
-    fresh_var_counter = 0
-
-    def instantiate_sketch(proc:DerivedTypeVariable, sketch: Sketches,types:Lattice[DerivedTypeVariable]) -> ConstraintSet:
-        nonlocal fresh_var_counter
-        all_constraints = ConstraintSet()
-        for node in sketch.sketches.nodes:
-            if isinstance(node,SketchNode) and node.dtv.base_var == proc:
-                constraints = []
-                # if the node has some type, capture that in a constraint
-                if node.lower_bound != types.bottom:
-                    constraints.append(SubtypeConstraint(node.lower_bound,node.dtv))
-                if node.upper_bound != types.top:
-                    constraints.append(SubtypeConstraint(node.dtv,node.upper_bound))
-                # if the node is a leaf, capture the capability using fake variables
-                # this could be avoided if we support capability constraints  (Var x.l) in
-                # addition to subtype constraints 
-                if len(constraints) == 0 and len(sketch.sketches.successors(node)) == 0:
-                    fresh_var = DerivedTypeVariable(f"$$fresh-var-{fresh_var_counter}$$")
-                    fresh_var_counter +=1
-                    # FIXME check if this should be the other way around
-                    if node.dtv.path_variance == Variance.COVARIANT:
-                        constraints.append(SubtypeConstraint(node.dtv,fresh_var))
-                    else:
-                        constraints.append(SubtypeConstraint(fresh_var,node.dtv))
-                # I am not sure about this, but I think label nodes should
-                # not be completely ignored
-                for succ in sketch.sketches.successors(node):
-                    if isinstance(succ,LabelNode):
-                        label = sketch.sketches[node][succ].get("label")
-                        loop_back = node.dtv.add_suffix(label)
-                        if loop_back.path_variance == Variance.COVARIANT:
-                            constraints.append(SubtypeConstraint(loop_back,succ.target))
-                        else:
-                            constraints.append(SubtypeConstraint(succ.target,loop_back))
-                all_constraints |= ConstraintSet(constraints)
-        return all_constraints
-
-    callees = set()
-    for constraint in cs:
-        for side in [constraint.left,constraint.right]:
-            if side.base_var in sketch_map:
-                callees.add(side.base_var)
-    
-    new_constraints = ConstraintSet()
-    for callee in callees:
-        new_constraints |= instantiate_sketch(callee,sketch_map[callee],types)
-    return new_constraints
-
-        
-        
 
 # There are two main aspects created by the solver: output constraints and sketches. The output
 # constraints are _intra-procedural_: the constraints for a function f() will not contain
@@ -444,7 +467,7 @@ class Solver(Loggable):
         self.next += 1
         self.debug("Generate type_var: %s", var)
 
-    def _generate_type_vars(self, graph: networkx.DiGraph) -> None:
+    def _generate_type_vars(self, graph: networkx.DiGraph) -> Set[DerivedTypeVariable]:
         '''Identify at least one node in each nontrivial SCC and generate a type variable for it.
         This ensures that the path exploration algorithm will never loop; instead, it will generate
         constraints that are recursive on the type variable.
@@ -461,7 +484,7 @@ class Solver(Loggable):
         variables that have a prefix in the set) and emit type variables for each remaining
         candidate.
 
-        Side-effects: update the set of interesting endpoints, update the map of typevars.
+        Side-effects: update the map of typevars.
         '''
         forget_graph = networkx.DiGraph(graph)
         recall_graph = networkx.DiGraph(graph)
@@ -472,7 +495,7 @@ class Solver(Loggable):
                     recall_graph.remove_edge(head, tail)
                 else:
                     forget_graph.remove_edge(head, tail)
-        endpoints: Set[DerivedTypeVariable] = set()
+        typevars: Set[DerivedTypeVariable] = set()
         for fr_graph in [forget_graph, recall_graph]:
             condensation = networkx.condensation(fr_graph)
             visited = set()
@@ -491,16 +514,13 @@ class Solver(Loggable):
                         if scc_index not in visited:
                             candidates.add(node.base)
                 candidates = Solver._filter_no_prefix(candidates)
-                endpoints |= candidates
+                typevars |= candidates
         # Types from the lattice should never end up pointing at typevars
-        endpoints -= set(self.program.types.internal_types)
-        self.all_endpoints = frozenset(endpoints |
-                                       set(self.program.callgraph) |
-                                       set(self.program.global_vars) |
-                                       self.program.types.internal_types)
-        for var in Solver._filter_no_prefix(endpoints):
+        typevars -= set(self.program.types.internal_types)
+        for var in Solver._filter_no_prefix(typevars):
             self._make_type_var(var)
         self._rev_type_vars = {tv: var for (var, tv) in self._type_vars.items()}
+        return typevars
 
     def _maybe_constraint(self,
                           origin: Node,
@@ -533,7 +553,7 @@ class Solver(Loggable):
                 return SubtypeConstraint(lhs_var, rhs_var)
         return None
 
-    def _generate_constraints(self, graph: networkx.DiGraph) -> ConstraintSet:
+    def _generate_constraints(self, graph: networkx.DiGraph, all_endpoints:Set[DerivedTypeVariable]) -> ConstraintSet:
         '''Now that type variables have been computed, no cycles can be produced. Find paths from
         endpoints to other endpoints and generate constraints.
         '''
@@ -554,7 +574,7 @@ class Solver(Loggable):
         def explore(current_node: Node,
                     path: List[Node] = [],
                     string: List[EdgeLabel] = []) -> None:
-            '''Find all non-empty paths that begin and end on members of self.all_endpoints. Return
+            '''Find all non-empty paths that begin and end on members of all_endpoints. Return
             the list of labels encountered along the way as well as the current_node and destination.
             '''
             nonlocal max_paths_per_root
@@ -568,7 +588,7 @@ class Solver(Loggable):
                 return
             if not matches_language(string):
                 return
-            if path and current_node.base in self.all_endpoints:
+            if path and current_node.base in all_endpoints:
                 constraint = self._maybe_constraint(path[0], current_node, string)
                 if constraint:
                     constraints.add(constraint)
@@ -583,7 +603,7 @@ class Solver(Loggable):
                     if label:
                         new_string.append(label)
                     explore(succ, path, new_string)
-        start_nodes = {node for node in graph.nodes if node.base in self.all_endpoints and
+        start_nodes = {node for node in graph.nodes if node.base in all_endpoints and
                                                        node._forgotten ==
                                                        Node.Forgotten.PRE_FORGET}
         # We evenly distribute the maximum number of paths that we are willing to explore
@@ -611,8 +631,11 @@ class Solver(Loggable):
             global_handler.pre_scc(scc_node)
             scc = scc_dag.nodes[scc_node]['members']
             scc_graph = networkx.DiGraph()
+            scc_initial_constraints = ConstraintSet()
             for proc_or_global in scc:
                 constraints = constraint_map.get(proc_or_global, ConstraintSet())
+                constraints |= instantiate_calls(constraints, sketches_map, self.program.types)
+                scc_initial_constraints |= constraints
                 graph = ConstraintGraph(constraints)
                 for head, tail in graph.graph.edges:
                     label = graph.graph[head][tail].get('label')
@@ -625,21 +648,22 @@ class Solver(Loggable):
             self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
             #dump_labeled_graph(scc_graph, name, f"/tmp/scc_{name}")
 
-            # make a copy; some of this analysis mutates the graph
-            self._generate_type_vars(scc_graph)
-            Solver._recall_forget_split(scc_graph)
-            generated = self._generate_constraints(scc_graph)
-
-            # The sketches for this SCC; note it may pull in data from other sketches
-            scc_initial_constraints = ConstraintSet()
-            for proc_or_global in scc:
-                scc_initial_constraints |= constraint_map.get(proc_or_global, ConstraintSet())
-            scc_complete_constraints = scc_initial_constraints | instantiate_calls(scc_initial_constraints, sketches_map, self.program.types)
             scc_sketches = Sketches(self.program.types, self.verbose)
-            infer_shapes(scc, scc_sketches, scc_complete_constraints)
+            infer_shapes(scc | set(self.program.global_vars), scc_sketches, scc_initial_constraints)
+
+            # make a copy; some of this analysis mutates the graph
+            #typevars = self._generate_type_vars(scc_graph)
+            Solver._recall_forget_split(scc_graph)
+
+            all_endpoints = frozenset(set(scc) |
+                                       set(self.program.global_vars) |
+                                       self.program.types.internal_types)
+
+            generated = self._generate_constraints(scc_graph,all_endpoints)
+
 
             scc_sketches.add_constraints(global_handler, self.program.global_vars,
-                                         generated, scc, sketches_map, self)
+                                         generated, scc, sketches_map)
 
             for proc_or_global in scc:
                 sketches_map[proc_or_global] = scc_sketches
@@ -741,343 +765,3 @@ class Solver(Loggable):
             if emit:
                 selected.add(candidate)
         return selected
-
-
-class Sketches(Loggable):
-    '''The set of sketches from a set of constraints. Intended to be updated incrementally, per the
-    Solver's reverse topological ordering.
-    '''
-    def __init__(self, types: Lattice[DerivedTypeVariable], verbose: LogLevel = LogLevel.QUIET) -> None:
-        super(Sketches, self).__init__(verbose)
-        # We maintain the invariant that if a node is in `lookup` then it should also be in
-        # `sketches` as a node (even if there are no edges)
-        self.sketches = networkx.DiGraph()
-        self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
-        self.types = types
-
-    def ref_node(self, node: SketchNode) -> SketchNode:
-        '''Add a reference to the given node (no copy)
-        '''
-        if isinstance(node, LabelNode):
-            return node
-        if node.dtv in self.lookup:
-            return self.lookup[node.dtv]
-        self.lookup[node.dtv] = node
-        self.sketches.add_node(node)
-        return node
-
-    def make_node(self,
-                  variable: DerivedTypeVariable,
-                  *,
-                  lower_bound: Optional[DerivedTypeVariable] = None,
-                  upper_bound: Optional[DerivedTypeVariable] = None) -> SketchNode:
-        '''Make a node from a DTV. Compute its atom from its access path.
-        '''
-        if lower_bound is None:
-            lower_bound = self.types.bottom
-        if upper_bound is None:
-            upper_bound = self.types.top
-        result = SketchNode(variable, lower_bound, upper_bound)
-        self.lookup[variable] = result
-        return result
-
-    def add_variable(self, variable: DerivedTypeVariable) -> SketchNode:
-        '''Add a variable and its prefixes to the set of sketches. Each node's atomic type is either
-        TOP or BOTTOM, depending on the variance of the variable's access path. If the variable
-        already exists, skip it.
-        '''
-        if variable in self.lookup:
-            return self.lookup[variable]
-        node = self.make_node(variable)
-        created = node
-        self.sketches.add_node(node)
-        prefix = variable.largest_prefix
-        while prefix:
-            prefix_node = self.make_node(prefix)
-            self.sketches.add_edge(prefix_node, node, label=variable.tail)
-            variable = prefix
-            node = prefix_node
-            prefix = variable.largest_prefix
-        return created
-
-
-    def _add_edge(self, head: SketchNode, tail: SkNode, label: str) -> None:
-        # don't emit duplicate edges
-        if (head, tail) not in self.sketches.edges:
-            self.sketches.add_edge(head, tail, label=label)
-
-    def _copy_inner(self,
-                    onto: SketchNode,
-                    origin: SketchNode,
-                    other_sketches: networkx.DiGraph,
-                    dependencies: Dict[SketchNode, Set[SketchNode]],
-                    seen: Dict[SketchNode, SketchNode],
-                    populate_source: bool = False) -> None:
-        """
-        This function takes a target node (onto) that we are copying data onto. The data we are
-        copying comes from a type constraint which tells us that a source node (origin) should have
-        its type properties applied to onto.
-
-        There are two kinds of information that we are collecting (recursively) from origin:
-        1. Structural information. This comes in the form of SketchNode successors (children in the
-           (DTV form). A typical example of this would be that a callee accesses fields in a struct
-           that a caller does not, and so we copying those "accesses" as new sketch nodes.
-        2. Atomic type information. When type variables are involved, we may not have a straight-
-           forward path from onto -> (atomic type) in the output constraint graph. These typevars
-           are specifically there to prevent looping in that graph. However, there may still be
-           useful information in those typevars (like one of them indicates it is a "float", e.g.)
-           We use the lattice to merge this information in the target node (onto).
-        """
-        # Compute a least upper bound (join) on the lower bounds for the DTV.
-        # Analogously, compute a greatest upper bound (meet) on the upper bounds for
-        # the DTV.
-        onto.lower_bound = self.types.join(origin.lower_bound, onto.lower_bound)
-        onto.upper_bound = self.types.meet(origin.upper_bound, onto.upper_bound)
-        seen[origin] = onto
-
-        # If the dependencies graph says that onto is a subtype of origin, copy all of origin's
-        # outgoing edges and their targets. If this introduces a loop, create a label instead of
-        # a loop.
-        for dependency in dependencies.get(origin, set()):
-            if dependency not in other_sketches.nodes:
-                continue
-            if dependency in seen:
-                original = seen[dependency]
-                for succ in other_sketches.successors(dependency):
-                    label = other_sketches[dependency][succ]['label']
-                    new_succ = LabelNode(original.dtv.add_suffix(label))
-                    self._add_edge(onto, new_succ, label=label)
-            else:
-                self._copy_inner(onto, dependency, other_sketches, dependencies, seen)
-
-        # Just because we have a constraint about a downstream base DTV (in the topological
-        # order) doesn't mean that downstream node has any information about the specific
-        # node we are looking at.
-        if origin not in other_sketches.nodes:
-            return
-        # Tells us where the type information came from; just auxiliary information for sketches
-        if populate_source:
-            onto.source.add(origin)
-
-        # Copy all of origin's outgoing edges onto onto.
-        for succ in other_sketches.successors(origin):
-            label = other_sketches[origin][succ]['label']
-
-            # If succ has been seen, look up the last time it was seen and instead create a
-            # label that links to the previous location where it was seen.
-            if succ in seen:
-                self._add_edge(onto, LabelNode(seen[succ].dtv), label=label)
-            # If the successor is a label, translate it into this sketch.
-            elif isinstance(succ, LabelNode):
-                suffix = succ.target.get_suffix(origin.dtv)
-                if suffix is None:
-                    self.info("ERROR: Suffix is None %s --> %s", origin.dtv, succ.target)
-                    continue # FIXME: this needs investigation
-                succ_dtv = onto.dtv.remove_suffix(suffix)
-                assert succ_dtv
-                self._add_edge(onto, LabelNode(succ_dtv), label=label)
-            # Otherwise, it's a regular (non-label) node that hasn't been seen, so emit it and
-            # explore its successors.
-            else:
-                succ_node = self.make_node(onto.dtv.add_suffix(label),
-                                           lower_bound=succ.lower_bound,
-                                           upper_bound=succ.upper_bound)
-                self._add_edge(onto, succ_node, label=label)
-                seen[succ_node] = onto
-                self._copy_inner(succ_node, succ, other_sketches, dependencies, seen)
-
-    def instantiate_intra(self, dependencies: Dict[SketchNode, Set[SketchNode]]) -> None:
-        self.debug("instantiate_intra: %s", dependencies)
-        old_sketches = networkx.DiGraph(self.sketches)
-        for dest in dependencies.keys():
-            seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
-            for origin in dependencies.get(dest, set()):
-                # Each iteration we take a copy of the current sketches because they will be
-                # updated inside of _copy_inner.
-                self._copy_inner(dest, origin, old_sketches, dependencies, seen)
-
-    def copy_inter(self,
-                   dependencies: Dict[SketchNode, Set[SketchNode]],
-                   sketches_map: Dict[DerivedTypeVariable, Sketches]) -> None:
-        '''Copy the structures from self.sketches corresponding to the keys in dependencies to each
-        other simultaneously. Each copy is a DFS that identifies duplicates and replaces them with
-        labels, so the resulting graphs are trees. All reads are from self.sketches and all writes
-        go to a temporary variable, so no fixed point calculation is needed.
-        '''
-        self.debug("copy_inter: %s", dependencies)
-        for dest in dependencies.keys():
-            seen = {self.lookup[n]: self.lookup[n] for n in dest.dtv.all_prefixes()}
-            for origin in dependencies.get(dest, set()):
-                origin_base = origin.dtv.base_var
-                # If we have funcvar <= globalvar, the global variable won't yet be in
-                # the sketches_map.
-                if origin_base in sketches_map:
-                    self.debug("Copying %s<--%s from %s sketch", dest, origin, origin_base)
-                    # If the node exists in the interprocedural sketch, use that one, otherwise
-                    # just use the one we started with. It is possible to have interesting
-                    # constraints on interprocedural deps without having a sketch for the dep
-                    # (consider models for external functions)
-                    origin_node = sketches_map[origin_base].lookup.get(origin.dtv)
-                    if origin_node is not None:
-                        origin = origin_node
-                    self._copy_inner(dest, origin, sketches_map[origin_base].sketches,
-                                     dependencies, seen, populate_source=True)
-
-    def _copy_global_recursive(self, node: SketchNode, sketches: Sketches) -> SketchNode:
-        # TODO: this probably needs to handle atoms properly, using the Lattice. Needs
-        # some thought.
-        our_node = self.ref_node(node)
-        if node in sketches.sketches.nodes:
-            for _, dst in sketches.sketches.out_edges(node):
-                our_dst = dst
-                if not isinstance(dst, LabelNode):
-                    our_dst = self._copy_global_recursive(dst, sketches)
-                self._add_edge(our_node, our_dst, sketches.sketches[node][dst]["label"])
-        return our_node
-
-
-    def copy_globals_from_sketch(self,
-                                 global_vars: Set[DerivedTypeVariable],
-                                 sketches: Sketches):
-        global_roots = set()
-        for dtv, node in sketches.lookup.items():
-            if dtv.base_var in global_vars:
-                global_roots.add(dtv.base_var)
-        for g in global_roots:
-            node = sketches.lookup.get(g)
-            if node is None:
-                continue
-            self._copy_global_recursive(node, sketches)
-
-
-    def add_constraints(self,
-                        global_handler: GlobalHandler,
-                        global_vars: Set[DerivedTypeVariable],
-                        constraints: ConstraintSet,
-                        nodes: Set[DerivedTypeVariable],
-                        sketches_map: Dict[DerivedTypeVariable, Sketches],
-                        solver: Solver
-                        ) -> None:
-        '''Extend the set of sketches with the new set of constraints.
-        '''
-
-        # Step 1: Apply constraints that make use of lattice types, so that we have the seeds
-        # for atomic types in our sketch graph
-        for constraint in constraints:
-            left = solver.reverse_type_var(constraint.left)
-            right = solver.reverse_type_var(constraint.right)
-            # We don't want to add nodes for lattice types. This makes lots of things unpleasant.
-            if left not in self.types.internal_types:
-                if left.base_var in self.types.internal_types:
-                    continue
-            left_node = self.add_variable(left)
-            if right not in self.types.internal_types:
-                if right.base_var in self.types.internal_types:
-                    continue
-            right_node = self.add_variable(right)
-
-            if left in self.types.internal_types:
-                self.debug("JOIN: %s, %s", right_node, left)
-                right_node.lower_bound = self.types.join(right_node.lower_bound, left)
-                self.debug("   --> %s", right_node)
-            if right in self.types.internal_types:
-                self.debug("MEET: %s, %s", left_node, left)
-                left_node.upper_bound = self.types.meet(left_node.upper_bound, right)
-                self.debug("   --> %s", left_node)
-
-        # Step 2: Now we've seeded our sketch graph with the interesting atomic types from this
-        # SCC, we need to propagate the information. We do this two ways:
-        #  1. Intraprocedurally, through typevars. Here we follow all typevar constraints as edges
-        #     and copy any successors as new nodes in our sketch graph, and use the lattice to
-        #     collect information from reachable atomic types as well.
-        #  2. Interprocedurally, we do the same thing except we copy the information from callees
-        #     and their sketches.
-        inter_dependencies: Dict[SketchNode, Set[SketchNode]] = {}
-        intra_dependencies: Dict[SketchNode, Set[SketchNode]] = {}
-        for constraint in constraints:
-            left = solver.reverse_type_var(constraint.left)
-            right = solver.reverse_type_var(constraint.right)
-            left_typevar = (left != constraint.left)
-            right_typevar = (right != constraint.right)
-            # Constraints that contain a lattice type will not have nodes, they are handled
-            # in Step 1 above.
-            left_node = self.lookup.get(left)
-            right_node = self.lookup.get(right)
-            if left_node is None or right_node is None:
-                continue
-            # Base variables are the type variable in question without the access path; e.g.,
-            # F.in_0.load.σ4@0's base variable is F.
-            left_base_var = left.base_var
-            right_base_var = right.base_var
-            if {left_base_var, right_base_var} & global_vars:
-                self.debug("Skipping %s (global)", constraint)
-                continue
-            # If the right-hand side is not a type variable, it must be an interesting node (a
-            # function or global). The left and right base nodes may be different or the same;
-            # either way, treat it as an interprocedural dependency
-            elif right_base_var not in nodes and not right_typevar:
-                self.debug("Copying right %s (inter-procedural)", constraint)
-                inter_dependencies.setdefault(left_node, set()).add(right_node)
-            elif left_base_var not in nodes and not left_typevar:
-                self.debug("Copying left %s (inter-procedural)", constraint)
-                inter_dependencies.setdefault(right_node, set()).add(left_node)
-            # Type variables are generated only to break cycles in the constraint graph. If the rhs
-            # is a type variable, that means that the relationship between the sketches is
-            # intraprocedural and not interprocedural.
-            elif left_typevar or right_typevar:
-                self.debug("Copying %s (intra-procedural)", constraint)
-                intra_dependencies.setdefault(left_node, set()).add(right_node)
-        # Intra-SCC dependencies just get instantiated using "this" set of sketches
-        if intra_dependencies:
-            self.instantiate_intra(intra_dependencies)
-        # Inter-SCC dependencies make use of the sketches_map, which maps each base DTV to its
-        # sketch graph. This way we don't need to copy and iterate over a huge DiGraph for the
-        # entire program when we only need the direct callees (or referents, for globals)
-        if inter_dependencies:
-            self.copy_inter(inter_dependencies, sketches_map)
-
-        # Copy globals from our callees, if we are analyzing globals precisely.
-        global_handler.copy_globals(self, nodes, sketches_map)
-
-        
-    def to_dot(self, dtv: DerivedTypeVariable) -> str:
-        nt = f'{os.linesep}\t'
-        graph_str = f'digraph {dtv} {{'
-        start = self.lookup[dtv]
-        edges_str = ''
-        # emit edges and identify nodes
-        nodes = {start}
-        seen: Set[Tuple[SketchNode, SkNode]] = {(start, start)}
-        frontier = {(start, succ) for succ in self.sketches.successors(start)} - seen
-        while frontier:
-            new_frontier: Set[Tuple[SketchNode, SkNode]] = set()
-            for pred, succ in frontier:
-                edges_str += nt
-                nodes.add(succ)
-                new_frontier |= {(succ, s_s) for s_s in self.sketches.successors(succ)}
-                edges_str += f'"{pred}" -> "{succ}"'
-                edges_str += f' [label="{self.sketches[pred][succ]["label"]}"];'
-            frontier = new_frontier - seen
-        # emit nodes
-        for node in nodes:
-            if isinstance(node, SketchNode):
-                if node.dtv == dtv:
-                    graph_str += nt
-                    graph_str += f'"{node}" [label="{node.dtv}"];'
-                elif node.dtv.base_var == dtv:
-                    graph_str += nt
-                    graph_str += f'"{node}" [label="{node.lower_bound}..{node.upper_bound}"];'
-            elif node.target.base_var == dtv:
-                graph_str += nt
-                graph_str += f'"{node}" [label="{node.target}", shape=house];'
-        graph_str += edges_str
-        graph_str += f'{os.linesep}}}'
-        return graph_str
-
-    def __str__(self) -> str:
-        if self.lookup:
-            nt = f'{os.linesep}\t'
-            def format(k: DerivedTypeVariable) -> str:
-                return str(self.lookup[k])
-            return f'nodes:{nt}{nt.join(map(format, self.lookup.keys()))})'
-        return 'no sketches'

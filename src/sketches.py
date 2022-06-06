@@ -1,7 +1,10 @@
 
-from .schema import DerivedTypeVariable
-
-from typing import Set, Union
+from __future__ import annotations
+from .schema import DerivedTypeVariable, Lattice
+from .loggable import Loggable, LogLevel
+import os
+import networkx
+from typing import Set, Union, Optional, Tuple, Dict
 
 class SketchNode:
     def __init__(self, dtv: DerivedTypeVariable,
@@ -67,3 +70,169 @@ class LabelNode:
 
 
 SkNode = Union[SketchNode, LabelNode]
+
+
+class Sketches(Loggable):
+    '''The set of sketches from a set of constraints. Intended to be updated incrementally, per the
+    Solver's reverse topological ordering.
+    '''
+    def __init__(self, types: Lattice[DerivedTypeVariable], verbose: LogLevel = LogLevel.QUIET) -> None:
+        super(Sketches, self).__init__(verbose)
+        # We maintain the invariant that if a node is in `lookup` then it should also be in
+        # `sketches` as a node (even if there are no edges)
+        self.sketches = networkx.DiGraph()
+        self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
+        self.types = types
+
+    def ref_node(self, node: SketchNode) -> SketchNode:
+        '''Add a reference to the given node (no copy)
+        '''
+        if isinstance(node, LabelNode):
+            return node
+        if node.dtv in self.lookup:
+            return self.lookup[node.dtv]
+        self.lookup[node.dtv] = node
+        self.sketches.add_node(node)
+        return node
+
+    def make_node(self,
+                  variable: DerivedTypeVariable,
+                  *,
+                  lower_bound: Optional[DerivedTypeVariable] = None,
+                  upper_bound: Optional[DerivedTypeVariable] = None) -> SketchNode:
+        '''Make a node from a DTV. Compute its atom from its access path.
+        '''
+        if lower_bound is None:
+            lower_bound = self.types.bottom
+        if upper_bound is None:
+            upper_bound = self.types.top
+        result = SketchNode(variable, lower_bound, upper_bound)
+        self.lookup[variable] = result
+        self.sketches.add_node(result)
+        return result
+
+    def add_variable(self, variable: DerivedTypeVariable) -> SketchNode:
+        '''Add a variable and its prefixes to the set of sketches. Each node's atomic type is either
+        TOP or BOTTOM, depending on the variance of the variable's access path. If the variable
+        already exists, skip it.
+        '''
+        if variable in self.lookup:
+            return self.lookup[variable]
+        node = self.make_node(variable)
+        created = node
+        self.sketches.add_node(node)
+        prefix = variable.largest_prefix
+        while prefix:
+            prefix_node = self.make_node(prefix)
+            self.sketches.add_edge(prefix_node, node, label=variable.tail)
+            variable = prefix
+            node = prefix_node
+            prefix = variable.largest_prefix
+        return created
+
+
+    def _add_edge(self, head: SketchNode, tail: SkNode, label: str) -> None:
+        # don't emit duplicate edges
+        if (head, tail) not in self.sketches.edges:
+            self.sketches.add_edge(head, tail, label=label)
+
+   
+
+    def _copy_global_recursive(self, node: SketchNode, sketches: Sketches) -> SketchNode:
+        # TODO: this probably needs to handle atoms properly, using the Lattice. Needs
+        # some thought.
+        our_node = self.ref_node(node)
+        if node in sketches.sketches.nodes:
+            for _, dst in sketches.sketches.out_edges(node):
+                our_dst = dst
+                if not isinstance(dst, LabelNode):
+                    our_dst = self._copy_global_recursive(dst, sketches)
+                self._add_edge(our_node, our_dst, sketches.sketches[node][dst]["label"])
+        return our_node
+
+
+    def copy_globals_from_sketch(self,
+                                 global_vars: Set[DerivedTypeVariable],
+                                 sketches: Sketches):
+        global_roots = set()
+        for dtv, node in sketches.lookup.items():
+            if dtv.base_var in global_vars:
+                global_roots.add(dtv.base_var)
+        for g in global_roots:
+            node = sketches.lookup.get(g)
+            if node is None:
+                continue
+            self._copy_global_recursive(node, sketches)
+
+
+    def add_constraints(self,
+                        global_handler: GlobalHandler,
+                        global_vars: Set[DerivedTypeVariable],
+                        constraints: ConstraintSet,
+                        nodes: Set[DerivedTypeVariable],
+                        sketches_map: Dict[DerivedTypeVariable, Sketches]
+                        ) -> None:
+        '''Extend the set of sketches with the new set of constraints.
+        '''
+
+        # Step 1: Apply constraints that make use of lattice types, so that we have the seeds
+        # for atomic types in our sketch graph
+        for constraint in constraints:
+            left = constraint.left
+            right = constraint.right
+            if left in self.types.internal_types and right not in self.types.internal_types:
+                right_node = self.lookup[right]
+                self.debug("JOIN: %s, %s", right_node, left)
+                right_node.lower_bound = self.types.join(right_node.lower_bound, left)
+                self.debug("   --> %s", right_node)
+            if right in self.types.internal_types and left not in self.types.internal_types:
+                left_node = self.lookup[left]
+                self.debug("MEET: %s, %s", left_node, left)
+                left_node.upper_bound = self.types.meet(left_node.upper_bound, right)
+                self.debug("   --> %s", left_node)
+
+        # Copy globals from our callees, if we are analyzing globals precisely.
+        global_handler.copy_globals(self, nodes, sketches_map)
+
+        
+    def to_dot(self, dtv: DerivedTypeVariable) -> str:
+        nt = f'{os.linesep}\t'
+        graph_str = f'digraph {dtv} {{'
+        start = self.lookup[dtv]
+        edges_str = ''
+        # emit edges and identify nodes
+        nodes = {start}
+        seen: Set[Tuple[SketchNode, SkNode]] = {(start, start)}
+        frontier = {(start, succ) for succ in self.sketches.successors(start)} - seen
+        while frontier:
+            new_frontier: Set[Tuple[SketchNode, SkNode]] = set()
+            for pred, succ in frontier:
+                edges_str += nt
+                nodes.add(succ)
+                new_frontier |= {(succ, s_s) for s_s in self.sketches.successors(succ)}
+                edges_str += f'"{pred}" -> "{succ}"'
+                edges_str += f' [label="{self.sketches[pred][succ]["label"]}"];'
+            frontier = new_frontier - seen
+        # emit nodes
+        for node in nodes:
+            if isinstance(node, SketchNode):
+                if node.dtv == dtv:
+                    graph_str += nt
+                    graph_str += f'"{node}" [label="{node.dtv}"];'
+                elif node.dtv.base_var == dtv:
+                    graph_str += nt
+                    graph_str += f'"{node}" [label="{node.lower_bound}..{node.upper_bound}"];'
+            elif node.target.base_var == dtv:
+                graph_str += nt
+                graph_str += f'"{node}" [label="{node.target}", shape=house];'
+        graph_str += edges_str
+        graph_str += f'{os.linesep}}}'
+        return graph_str
+
+    def __str__(self) -> str:
+        if self.lookup:
+            nt = f'{os.linesep}\t'
+            def format(k: DerivedTypeVariable) -> str:
+                return str(self.lookup[k])
+            return f'nodes:{nt}{nt.join(map(format, self.lookup.keys()))})'
+        return 'no sketches'
