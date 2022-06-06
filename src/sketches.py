@@ -142,7 +142,7 @@ class Sketches(Loggable):
             prefix = variable.largest_prefix
         return created
 
-    def _add_edge(self, head: SketchNode, tail: SkNode, label: str) -> None:
+    def add_edge(self, head: SketchNode, tail: SkNode, label: str) -> None:
         # don't emit duplicate edges
         if (head, tail) not in self.sketches.edges:
             self.sketches.add_edge(head, tail, label=label)
@@ -158,7 +158,7 @@ class Sketches(Loggable):
                 our_dst = dst
                 if not isinstance(dst, LabelNode):
                     our_dst = self._copy_global_recursive(dst, sketches)
-                self._add_edge(
+                self.add_edge(
                     our_node, our_dst, sketches.sketches[node][dst]["label"]
                 )
         return our_node
@@ -226,12 +226,13 @@ class Sketches(Loggable):
                         loop_back = node.dtv.add_suffix(label)
                         if loop_back.path_variance == Variance.COVARIANT:
                             constraints.append(
-                                SubtypeConstraint(loop_back, succ.target)
+                                SubtypeConstraint(succ.target, loop_back)
                             )
                         else:
                             constraints.append(
-                                SubtypeConstraint(succ.target, loop_back)
+                                SubtypeConstraint(loop_back, succ.target)
                             )
+
                 all_constraints |= ConstraintSet(constraints)
         return all_constraints
 

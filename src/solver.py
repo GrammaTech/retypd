@@ -24,7 +24,7 @@
 """
 
 from __future__ import annotations
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Union, Any
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Any
 from .graph import EdgeLabel, Node, ConstraintGraph
 from .schema import (
     ConstraintSet,
@@ -45,8 +45,6 @@ from .global_handler import (
 
 from .sketches import LabelNode, SketchNode, Sketches
 from .loggable import Loggable, LogLevel
-from .parser import SchemaParser
-import itertools
 import networkx
 import tqdm
 from dataclasses import dataclass
@@ -143,132 +141,7 @@ class Solver(Loggable):
         super(Solver, self).__init__(verbose)
         self.program = program
         # TODO possibly make these values shared across a function
-        self.next = 0
-        self._type_vars: Dict[DerivedTypeVariable, DerivedTypeVariable] = {}
         self.config = config
-
-    def _get_type_var(self, var: DerivedTypeVariable) -> DerivedTypeVariable:
-        """Look up a type variable by name. If it (or a prefix of it) exists in _type_vars, form the
-        appropriate variable by adding the leftover part of the suffix. If not, return the variable
-        as passed in.
-        """
-        # Starting with the longest prefix (just var), check all prefixes against
-        # the existing typevars
-        for prefix in itertools.chain([var], var.all_prefixes()):
-            if prefix in self._type_vars:
-                suffix = prefix.get_suffix(var)
-                if suffix is not None:
-                    type_var = self._type_vars[prefix]
-                    return DerivedTypeVariable(type_var.base, suffix)
-        return var
-
-    def reverse_type_var(
-        self, var: DerivedTypeVariable
-    ) -> DerivedTypeVariable:
-        """Look up the canonical version of a variable; if it begins with a type variable"""
-        base = var.base_var
-        if base in self._rev_type_vars:
-            return self._rev_type_vars[base].extend(var.path)
-        return var
-
-    def lookup_type_var(
-        self, var: Union[str, DerivedTypeVariable]
-    ) -> DerivedTypeVariable:
-        """Take a string, convert it to a DerivedTypeVariable, and if there is a type variable that
-        stands in for a prefix of it, change the prefix to the type variable.
-        """
-        if isinstance(var, str):
-            var = SchemaParser.parse_variable(var)
-        return self._get_type_var(var)
-
-    def _make_type_var(self, base: DerivedTypeVariable) -> None:
-        """Generate a type variable."""
-        if base in self._type_vars:
-            return
-        var = DerivedTypeVariable(f"τ${self.next}")
-        self._type_vars[base] = var
-        self.next += 1
-        self.debug("Generate type_var: %s", var)
-
-    @staticmethod
-    def _filter_no_prefix(
-        variables: Set[DerivedTypeVariable],
-    ) -> Set[DerivedTypeVariable]:
-        """Return a set of elements from variables for which no prefix exists in variables. For
-        example, if variables were the set {A, A.load}, return the set {A}.
-        """
-        selected = set()
-        candidates = sorted(variables, reverse=True)
-        for index, candidate in enumerate(candidates):
-            emit = True
-            for other in candidates[index + 1 :]:
-                # other and candidate cannot be equal because they're distinct elements of a set
-                if other.get_suffix(candidate) is not None:
-                    emit = False
-                    break
-            if emit:
-                selected.add(candidate)
-        return selected
-
-    def _generate_type_vars(
-        self, graph: networkx.DiGraph
-    ) -> Set[DerivedTypeVariable]:
-        """Identify at least one node in each nontrivial SCC and generate a type variable for it.
-        This ensures that the path exploration algorithm will never loop; instead, it will generate
-        constraints that are recursive on the type variable.
-
-        To do so, find strongly connected components (such that loops may contain forget or recall
-        edges but never both). In each nontrivial SCC (in reverse topological order), identify all
-        vertices with predecessors in a strongly connected component that has not yet been visited.
-        If any of the identified variables is a prefix of another (e.g., φ and φ.load.σ8@0),
-        eliminate the longer one. Each of these variables is added to the set of variables at which
-        graph exploration stops. Excepting those with a prefix already in the set, these variables
-        are made into named type variables.
-
-        Once all SCCs have been processed, minimize the set of candidates as before (remove
-        variables that have a prefix in the set) and emit type variables for each remaining
-        candidate.
-
-        Side-effects: update the map of typevars.
-        """
-        forget_graph = networkx.DiGraph()
-        recall_graph = networkx.DiGraph()
-        for head, tail in graph.edges:
-            label = graph[head][tail].get("label")
-            if not label or label.kind != EdgeLabel.Kind.FORGET:
-                recall_graph.add_edge(head, tail)
-            if not label or label.kind != EdgeLabel.Kind.RECALL:
-                forget_graph.add_edge(head, tail)
-        typevars: Set[DerivedTypeVariable] = set()
-        for fr_graph in [forget_graph, recall_graph]:
-            condensation = networkx.condensation(fr_graph)
-            visited = set()
-            for scc_node in reversed(
-                list(networkx.topological_sort(condensation))
-            ):
-                candidates: Set[DerivedTypeVariable] = set()
-                scc = condensation.nodes[scc_node]["members"]
-                visited.add(scc_node)
-                if len(scc) == 1:
-                    continue
-                for node in scc:
-                    # Look in graph for predecessors, not fr_graph; the purpose of fr_graph is
-                    # merely to ensure that the SCCs we examine don't contain both forget and recall
-                    # edges.
-                    for predecessor in graph.predecessors(node):
-                        scc_index = condensation.graph["mapping"][predecessor]
-                        if scc_index not in visited:
-                            candidates.add(node.base)
-                candidates = Solver._filter_no_prefix(candidates)
-                typevars |= candidates
-        # Types from the lattice should never end up pointing at typevars
-        typevars -= set(self.program.types.internal_types)
-        for var in Solver._filter_no_prefix(typevars):
-            self._make_type_var(var)
-        self._rev_type_vars = {
-            tv: var for (var, tv) in self._type_vars.items()
-        }
-        return typevars
 
     @staticmethod
     def instantiate_calls(
@@ -403,6 +276,9 @@ class Solver(Loggable):
             Explore all paths in the quotient graph starting from the curr_quotient_node.
             For each path, create the corresponding Sketch tree.
 
+            Everytime we reach a new node, we create a new sketch node. If we reach
+            a node that we have already visited, we create a label node instead.
+
             The `visited_nodes` dictionary captures the set of visited nodes so far
             and their correspondence to sketch nodes.
             """
@@ -413,17 +289,13 @@ class Solver(Loggable):
                 if dest not in visited_nodes:
                     dest_dvt = curr_node.dtv.add_suffix(label)
                     dest_node = sketches.make_node(dest_dvt)
-                    sketches.sketches.add_edge(
-                        curr_node, dest_node, label=label
-                    )
+                    sketches.add_edge(curr_node, dest_node, label)
                     visited_nodes[dest] = dest_node
                     all_paths(dest, visited_nodes)
                     del visited_nodes[dest]
                 else:
-                    label_node = LabelNode(visited_nodes[dest])
-                    sketches.sketches.add_edge(
-                        curr_node, label_node, label=label
-                    )
+                    label_node = LabelNode(visited_nodes[dest].dtv)
+                    sketches.add_edge(curr_node, label_node, label)
 
         for proc_or_global in scc_and_globals:
             proc_or_global_node = sketches.make_node(proc_or_global)
@@ -459,11 +331,33 @@ class Solver(Loggable):
             lhs.suffix_variance == Variance.COVARIANT
             and rhs.suffix_variance == Variance.COVARIANT
         ):
-            lhs_var = self._get_type_var(lhs.base)
-            rhs_var = self._get_type_var(rhs.base)
+            lhs_var = lhs.base
+            rhs_var = rhs.base
             if lhs_var != rhs_var:
                 return SubtypeConstraint(lhs_var, rhs_var)
         return None
+
+    # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
+    @staticmethod
+    def _recall_forget_split(graph: networkx.DiGraph) -> None:
+        """The algorithm, after saturation, only admits paths such that recall edges all precede
+        the first forget edge (if there is such an edge). To enforce this, we modify the graph by
+        splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
+        in the original graph are changed to point to the 'forgotten' duplicate of their original
+        target. As a result, no recall edges are reachable after traversing a single forget edge.
+        """
+        edges = set(graph.edges)
+        for head, tail in edges:
+            label = graph[head][tail].get("label")
+            if label and label.kind == EdgeLabel.Kind.RECALL:
+                continue
+            forget_head = head.split_recall_forget()
+            forget_tail = tail.split_recall_forget()
+            atts = graph[head][tail]
+            if label and label.kind == EdgeLabel.Kind.FORGET:
+                graph.remove_edge(head, tail)
+                graph.add_edge(head, forget_tail, **atts)
+            graph.add_edge(forget_head, forget_tail, **atts)
 
     def _generate_constraints(
         self, graph: networkx.DiGraph, endpoints: Set[DerivedTypeVariable]
@@ -582,13 +476,6 @@ class Solver(Loggable):
             scc_graph = ConstraintGraph(scc_initial_constraints).graph
             # dump_labeled_graph(scc_graph, name, f"/tmp/scc_{name}")
 
-            # Typevars are only needed if we want to generate type schema for recursive
-            # types (so the typevars can be existentially quantified).
-            # Since we generate sketches directly, we can skip this for now.
-            # We might want to bring it back if we want type schema for doing
-            # two traversals over the callgraph.
-            # typevars = self._generate_type_vars(scc_graph)
-
             # make a copy; some of this analysis mutates the graph
             Solver._recall_forget_split(scc_graph)
             all_endpoints = frozenset(
@@ -673,25 +560,3 @@ class Solver(Loggable):
             del sketches_map[fake_root]
 
         return (derived, sketches_map)
-
-    # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
-    @staticmethod
-    def _recall_forget_split(graph: networkx.DiGraph) -> None:
-        """The algorithm, after saturation, only admits paths such that recall edges all precede
-        the first forget edge (if there is such an edge). To enforce this, we modify the graph by
-        splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
-        in the original graph are changed to point to the 'forgotten' duplicate of their original
-        target. As a result, no recall edges are reachable after traversing a single forget edge.
-        """
-        edges = set(graph.edges)
-        for head, tail in edges:
-            label = graph[head][tail].get("label")
-            if label and label.kind == EdgeLabel.Kind.RECALL:
-                continue
-            forget_head = head.split_recall_forget()
-            forget_tail = tail.split_recall_forget()
-            atts = graph[head][tail]
-            if label and label.kind == EdgeLabel.Kind.FORGET:
-                graph.remove_edge(head, tail)
-                graph.add_edge(head, forget_tail, **atts)
-            graph.add_edge(forget_head, forget_tail, **atts)

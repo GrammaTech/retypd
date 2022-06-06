@@ -103,6 +103,46 @@ class RecursiveSchemaTest(unittest.TestCase):
             SchemaParser.parse_variable("#FileDescriptor"),
         )
 
+    def test_recursive_through_procedures(self):
+        """The type of f.in_0 is recursive.
+        The type of g.in_0 is the same and also recursive.
+
+        This tests that the instantiation of recursive sketches works as expected.
+        """
+        constraints = {
+            "f": [
+                "f.in_0 <= list",
+                "list.load.σ4@0 <= next",
+                "next <= list",
+                "list.load.σ4@4 <= elem",
+                "elem <= int",
+            ],
+            "g": ["g.in_0 <= C", "C <= f.in_0", "C <= g.out"],
+        }
+        callgraph = {"g": ["f"]}
+        lattice = CLattice()
+        (gen_cs, sketches) = compute_sketches(
+            constraints, callgraph, lattice=lattice
+        )
+
+        g_sketch = sketches[DerivedTypeVariable("g")]
+        # assert (
+        #    SchemaParser.parse_variable("g.in_0.load.σ4@0") in g_sketch.lookup
+        # )
+        assert (
+            SchemaParser.parse_variable("g.in_0.load.σ4@4") in g_sketch.lookup
+        )
+        assert (
+            g_sketch.lookup[
+                SchemaParser.parse_variable("g.in_0.load.σ4@4")
+            ].upper_bound
+            == DummyLattice._int
+        )
+        gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+        dtv2type = gen()
+        rec_struct = dtv2type[DerivedTypeVariable("g")].params[0]
+        assert len(rec_struct.target_type.fields) == 2
+
     def test_regression1(self):
         """
         When more than one typevar gets instantiated in a chain of constraints,
