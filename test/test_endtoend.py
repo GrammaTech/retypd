@@ -19,6 +19,7 @@ from retypd import (
     Lattice,
 )
 from retypd.c_types import (
+    FloatType,
     PointerType,
     StructType,
     IntType,
@@ -105,8 +106,13 @@ class RecursiveSchemaTest(unittest.TestCase):
 
     def test_recursive_through_procedures(self):
         """The type of f.in_0 is recursive.
-        The type of g.in_0 is the same and also recursive.
 
+        struct list{
+            list* next;
+            int elem;
+        }
+
+        The type of g.in_0 is the same and also recursive.
         This tests that the instantiation of recursive sketches works as expected.
         """
         constraints = {
@@ -117,7 +123,7 @@ class RecursiveSchemaTest(unittest.TestCase):
                 "list.load.σ4@4 <= elem",
                 "elem <= int",
             ],
-            "g": ["g.in_0 <= C", "C <= f.in_0", "C <= g.out"],
+            "g": ["g.in_0 <= C", "C <= f.in_0"],
         }
         callgraph = {"g": ["f"]}
         lattice = CLattice()
@@ -126,9 +132,6 @@ class RecursiveSchemaTest(unittest.TestCase):
         )
 
         g_sketch = sketches[DerivedTypeVariable("g")]
-        # assert (
-        #    SchemaParser.parse_variable("g.in_0.load.σ4@0") in g_sketch.lookup
-        # )
         assert (
             SchemaParser.parse_variable("g.in_0.load.σ4@4") in g_sketch.lookup
         )
@@ -140,8 +143,76 @@ class RecursiveSchemaTest(unittest.TestCase):
         )
         gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
         dtv2type = gen()
-        rec_struct = dtv2type[DerivedTypeVariable("g")].params[0]
-        assert len(rec_struct.target_type.fields) == 2
+        rec_struct_ptr = dtv2type[DerivedTypeVariable("g")].params[0]
+        rec_struct = rec_struct_ptr.target_type
+        self.assertEqual(len(rec_struct.fields), 2)
+        # the field 0 is a pointer to the same struct
+        self.assertEqual(
+            rec_struct.fields[0].ctype.target_type.name, rec_struct.name
+        )
+        self.assertIsInstance(rec_struct.fields[1].ctype, IntType)
+
+    def test_interleaving_elements(self):
+        """
+        There are two mutually recursive types
+
+        struct A{
+            B* nextB;
+            int elemA;
+        }
+        struct B{
+            A* nextA;
+            float elemB;
+        }
+
+        The type of f.in_0 and  g.in_0 are of type A
+        Tye type of f.in_1 is B
+        """
+        constraints = {
+            "f": [
+                "f.in_0 <= A",
+                "A.load.σ4@0 <= nextB",
+                "nextB <= B",
+                "A.load.σ4@4 <= elemA",
+                "elemA <= int",
+                "B.load.σ4@0 <= nextA",
+                "nextA <= A",
+                "B.load.σ4@4 <= elemB",
+                "elemB <= float",
+                "f.in_1 <= B",
+            ],
+            "g": ["g.in_0 <= C", "C <= f.in_0", "g.in_1 <= D", "D <= f.in_1"],
+        }
+        callgraph = {"g": ["f"]}
+        lattice = CLattice()
+        (gen_cs, sketches) = compute_sketches(
+            constraints, callgraph, lattice=lattice
+        )
+
+        gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+        dtv2type = gen()
+        A_ptr = dtv2type[DerivedTypeVariable("g")].params[0]
+        A_struct = A_ptr.target_type
+        self.assertEqual(len(A_struct.fields), 2)
+        # A contains a pointer to B
+        B_struct = A_struct.fields[0].ctype.target_type
+        self.assertNotEqual(A_struct.name, B_struct.name)
+        # B contains a pointer to A
+        self.assertEqual(
+            B_struct.fields[0].ctype.target_type.name, A_struct.name
+        )
+        # The element type of A is Int
+        self.assertIsInstance(A_struct.fields[1].ctype, IntType)
+        # The element type of B is float
+        self.assertIsInstance(B_struct.fields[1].ctype, FloatType)
+
+        # The type of the second argument is A too
+        # Right now we get a different struct with the same structure
+        # but it wouldn't have to be this way if sketches are not trees
+        # but factor out common subtrees.
+        A_struct2 = dtv2type[DerivedTypeVariable("g")].params[1].target_type
+        self.assertEqual(len(A_struct2.fields), 2)
+        self.assertIsInstance(A_struct.fields[1].ctype, IntType)
 
     def test_regression1(self):
         """
