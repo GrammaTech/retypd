@@ -184,7 +184,7 @@ class RecursiveSchemaTest(unittest.TestCase):
         )
         self.assertIsInstance(rec_struct.fields[1].ctype, IntType)
 
-    def test_multiple_lable_nodes(self):
+    def test_multiple_label_nodes(self):
         """The type of f.in_0 is:
 
         struct list{
@@ -266,6 +266,57 @@ class RecursiveSchemaTest(unittest.TestCase):
             rec_struct.fields[1].ctype.target_type.name, rec_struct.name
         )
         self.assertIsInstance(rec_struct.fields[2].ctype, IntType)
+
+    def test_multiple_label_nodes_store(self):
+        """The type of f.out and g.out is
+        as subtype of:
+
+        struct list{
+            list* next;
+            list* prev;
+            int elem;
+        }
+
+        Example with multiple label nodes that are
+        stores
+        """
+        constraints = {
+            "f": [
+                "f.out <= list",
+                "next <= list.store.σ4@0",
+                "prev <= list.store.σ4@4",
+                "list <= next",
+                "list <= prev",
+                "elem <= list.store.σ4@8",
+                "int <= elem",
+            ],
+            "g": ["C <= g.out", "f.out <= C"],
+        }
+        callgraph = {"g": ["f"]}
+        lattice = CLattice()
+        (gen_cs, sketches) = compute_sketches(
+            constraints, callgraph, lattice=lattice
+        )
+        # check that information is transferred correctly to "g"
+        g_sketch = sketches[DerivedTypeVariable("g")]
+        self.assertIsNotNone(
+            g_sketch.lookup(SchemaParser.parse_variable("g.out.store.σ4@0"))
+        )
+
+        self.assertEqual(
+            g_sketch.lookup(SchemaParser.parse_variable("g.out.store.σ4@0")),
+            g_sketch.lookup(SchemaParser.parse_variable("g.out")),
+        )
+        self.assertEqual(
+            g_sketch.lookup(SchemaParser.parse_variable("g.out.store.σ4@4")),
+            g_sketch.lookup(SchemaParser.parse_variable("g.out")),
+        )
+        self.assertEqual(
+            g_sketch.lookup(
+                SchemaParser.parse_variable("g.out.store.σ4@8")
+            ).lower_bound,
+            lattice._int,
+        )
 
     def test_interleaving_elements(self):
         """
