@@ -360,12 +360,21 @@ class Solver(Loggable):
         return None
 
     def _generate_constraints(
-        self, graph: networkx.DiGraph, endpoints: Set[DerivedTypeVariable]
+        self,
+        initial_constraints: ConstraintSet,
+        endpoints: Set[DerivedTypeVariable],
     ) -> ConstraintSet:
-        """Generate constraints by exploring all paths starting and ending in endpoints.
+        """Generate final constraints from a set of initial constrains
+        by generating a graph and exploring all its paths.
 
         The algorithm avoids cycles by keeping track of the visited nodes so far.
         """
+        graph = ConstraintGraph(initial_constraints).graph
+        # Uncomment this out to dump the constraint graph
+        # name ="graph"
+        # dump_labeled_graph(graph, name, f"/tmp/scc_{name}")
+        Solver._recall_forget_split(graph)
+
         npaths = 0
         constraints = ConstraintSet()
         # On large procedures, the graph this is exploring can be quite large (hundreds of nodes,
@@ -476,17 +485,8 @@ class Solver(Loggable):
                 | set(self.program.global_vars)
                 | self.program.types.internal_types
             )
-            scc_graph = ConstraintGraph(scc_initial_constraints).graph
-
-            # Uncomment this out to dump the constraint graph
-            # name = "_".join([str(s) for s in scc])
-            # dump_labeled_graph(scc_graph, name, f"/tmp/scc_{name}")
-
-            # make a copy; some of this analysis mutates the graph
-            Solver._recall_forget_split(scc_graph)
-
             generated_constraints = self._generate_constraints(
-                scc_graph, all_endpoints
+                scc_initial_constraints, all_endpoints
             )
             scc_sketches.add_constraints(generated_constraints)
             # Copy globals from our callees, if we are analyzing globals precisely.
