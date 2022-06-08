@@ -148,25 +148,6 @@ class Sketches(Loggable):
         self.sketches.add_node(result)
         return result
 
-    def add_variable(self, variable: DerivedTypeVariable) -> SketchNode:
-        """Add a variable and its prefixes to the set of sketches. Each node's atomic type is either
-        TOP or BOTTOM, depending on the variance of the variable's access path. If the variable
-        already exists, skip it.
-        """
-        if variable in self._lookup:
-            return self._lookup[variable]
-        node = self.make_node(variable)
-        created = node
-        self.sketches.add_node(node)
-        prefix = variable.largest_prefix
-        while prefix:
-            prefix_node = self.make_node(prefix)
-            self.sketches.add_edge(prefix_node, node, label=variable.tail)
-            variable = prefix
-            node = prefix_node
-            prefix = variable.largest_prefix
-        return created
-
     def add_edge(self, head: SketchNode, tail: SkNode, label: str) -> None:
         # don't emit duplicate edges
         if (head, tail) not in self.sketches.edges:
