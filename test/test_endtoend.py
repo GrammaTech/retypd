@@ -2,7 +2,7 @@
 """
 
 import unittest
-from typing import Dict, List, Iterable, Set
+from typing import Dict, List
 
 from retypd import (
     ConstraintSet,
@@ -26,38 +26,8 @@ from retypd.c_types import (
     CharType,
     ArrayType,
     FunctionType,
-    CType,
-    CompoundType,
 )
 from retypd.solver import SolverConfig
-
-
-def is_non_primitive(ctype: CType) -> bool:
-    return isinstance(ctype, (FunctionType, CompoundType, PointerType))
-
-
-def collect_all_non_primitive_types(
-    function_types: Iterable[CType],
-) -> Set[CType]:
-    def get_subtypes(ctype: CType) -> List[CType]:
-        if isinstance(ctype, FunctionType):
-            return [ctype.return_type] + list(ctype.params)
-        elif isinstance(ctype, PointerType):
-            return [ctype.target_type]
-        elif isinstance(ctype, CompoundType):
-            return [field.ctype for field in ctype.fields]
-        else:
-            raise Exception(f"Cannot get subtypes of {type(ctype)}")
-
-    worklist = list(function_types)
-    collected_types = set()
-    while len(worklist) > 0:
-        ctype = worklist.pop()
-        if ctype not in collected_types and is_non_primitive(ctype):
-            if not isinstance(ctype, PointerType):
-                collected_types.add(ctype)
-            worklist.extend(get_subtypes(ctype))
-    return collected_types
 
 
 VERBOSE_TESTS = False
