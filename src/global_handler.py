@@ -67,11 +67,11 @@ class PreciseGlobalHandler(GlobalHandler):
         """
         Delete all the global nodes from a particular sketch graph.
         """
-        for dtv, node in list(sketches.lookup.items()):
+        for dtv, node in list(sketches._lookup.items()):
             if dtv.base_var in self.global_vars:
                 if node in sketches.sketches.nodes:
                     sketches.sketches.remove_node(node)
-                del sketches.lookup[dtv]
+                del sketches._lookup[dtv]
 
     def pre_scc(self, scc_node: Any) -> None:
         """

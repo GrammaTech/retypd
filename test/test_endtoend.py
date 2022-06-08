@@ -2,7 +2,7 @@
 """
 
 import unittest
-from typing import Dict, List
+from typing import Dict, List, Iterable, Set
 
 from retypd import (
     ConstraintSet,
@@ -26,7 +26,38 @@ from retypd.c_types import (
     CharType,
     ArrayType,
     FunctionType,
+    CType,
+    CompoundType,
 )
+from retypd.solver import SolverConfig
+
+
+def is_non_primitive(ctype: CType) -> bool:
+    return isinstance(ctype, (FunctionType, CompoundType, PointerType))
+
+
+def collect_all_non_primitive_types(
+    function_types: Iterable[CType],
+) -> Set[CType]:
+    def get_subtypes(ctype: CType) -> List[CType]:
+        if isinstance(ctype, FunctionType):
+            return [ctype.return_type] + list(ctype.params)
+        elif isinstance(ctype, PointerType):
+            return [ctype.target_type]
+        elif isinstance(ctype, CompoundType):
+            return [field.ctype for field in ctype.fields]
+        else:
+            raise Exception(f"Cannot get subtypes of {type(ctype)}")
+
+    worklist = list(function_types)
+    collected_types = set()
+    while len(worklist) > 0:
+        ctype = worklist.pop()
+        if ctype not in collected_types and is_non_primitive(ctype):
+            if not isinstance(ctype, PointerType):
+                collected_types.add(ctype)
+            worklist.extend(get_subtypes(ctype))
+    return collected_types
 
 
 VERBOSE_TESTS = False
@@ -36,6 +67,7 @@ def compute_sketches(
     cs: Dict[str, List[str]],
     callgraph: Dict[str, List[str]],
     lattice: Lattice = DummyLattice(),
+    config: SolverConfig = SolverConfig(),
 ):
     """
     Auxiliary function that parses constraints, callgraph
@@ -56,7 +88,7 @@ def compute_sketches(
         for proc, callees in callgraph.items()
     }
     program = Program(lattice, {}, parsed_cs, parsed_callgraph)
-    solver = Solver(program, verbose=VERBOSE_TESTS)
+    solver = Solver(program, verbose=VERBOSE_TESTS, config=config)
     return solver()
 
 
@@ -92,15 +124,15 @@ class RecursiveSchemaTest(unittest.TestCase):
         F_sketches = sketches[F]
         # Equivalent to "#SuccessZ ⊑ F.out"
         self.assertEqual(
-            F_sketches.lookup[
+            F_sketches.lookup(
                 SchemaParser.parse_variable("F.out")
-            ].lower_bound,
+            ).lower_bound,
             SchemaParser.parse_variable("#SuccessZ"),
         )
         self.assertEqual(
-            F_sketches.lookup[
+            F_sketches.lookup(
                 SchemaParser.parse_variable("F.in_0.load.σ4@4")
-            ].upper_bound,
+            ).upper_bound,
             SchemaParser.parse_variable("#FileDescriptor"),
         )
 
@@ -132,14 +164,14 @@ class RecursiveSchemaTest(unittest.TestCase):
         )
 
         g_sketch = sketches[DerivedTypeVariable("g")]
-        assert (
-            SchemaParser.parse_variable("g.in_0.load.σ4@4") in g_sketch.lookup
+        self.assertIsNotNone(
+            g_sketch.lookup(SchemaParser.parse_variable("g.in_0.load.σ4@4"))
         )
-        assert (
-            g_sketch.lookup[
+        self.assertEqual(
+            g_sketch.lookup(
                 SchemaParser.parse_variable("g.in_0.load.σ4@4")
-            ].upper_bound
-            == DummyLattice._int
+            ).upper_bound,
+            DummyLattice._int,
         )
         gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
         dtv2type = gen()
@@ -151,6 +183,89 @@ class RecursiveSchemaTest(unittest.TestCase):
             rec_struct.fields[0].ctype.target_type.name, rec_struct.name
         )
         self.assertIsInstance(rec_struct.fields[1].ctype, IntType)
+
+    def test_multiple_lable_nodes(self):
+        """The type of f.in_0 is:
+
+        struct list{
+            list* next;
+            list* prev;
+            int elem;
+            ?   elem2;
+        }
+
+        The sketch will have two label nodes for 'next'
+        and 'prev' that point to the same type, so we need
+        the hash and equality for label nodes to take the id
+        into account.
+        """
+        constraints = {
+            "f": [
+                "f.in_0 <= list",
+                "list.load.σ4@0 <= next",
+                "list.load.σ4@4 <= prev",
+                "next <= list",
+                "prev <= list",
+                "list.load.σ4@8 <= elem",
+                "elem <= int",
+                "list.load.σ4@12 <= elem2",
+            ],
+            "g": ["g.in_0 <= C", "C <= f.in_0"],
+        }
+        callgraph = {"g": ["f"]}
+        lattice = CLattice()
+        (gen_cs, sketches) = compute_sketches(
+            constraints, callgraph, lattice=lattice
+        )
+
+        f_sketch = sketches[DerivedTypeVariable("f")]
+        self.assertIsNotNone(
+            f_sketch.lookup(SchemaParser.parse_variable("f.in_0.load.σ4@0"))
+        )
+        # we should have this capability even if we don't know the type
+        # of the field
+        self.assertIsNotNone(
+            f_sketch.lookup(SchemaParser.parse_variable("f.in_0.load.σ4@12"))
+        )
+        self.assertEqual(
+            f_sketch.lookup(SchemaParser.parse_variable("f.in_0.load.σ4@0")),
+            f_sketch.lookup(SchemaParser.parse_variable("f.in_0")),
+        )
+        self.assertEqual(
+            f_sketch.lookup(SchemaParser.parse_variable("f.in_0.load.σ4@4")),
+            f_sketch.lookup(SchemaParser.parse_variable("f.in_0")),
+        )
+
+        # check that information is transferred correctly to "g"
+        g_sketch = sketches[DerivedTypeVariable("g")]
+        self.assertIsNotNone(
+            g_sketch.lookup(SchemaParser.parse_variable("g.in_0.load.σ4@0"))
+        )
+        self.assertIsNotNone(
+            g_sketch.lookup(SchemaParser.parse_variable("g.in_0.load.σ4@12"))
+        )
+        self.assertEqual(
+            g_sketch.lookup(SchemaParser.parse_variable("g.in_0.load.σ4@0")),
+            g_sketch.lookup(SchemaParser.parse_variable("g.in_0")),
+        )
+        self.assertEqual(
+            g_sketch.lookup(SchemaParser.parse_variable("g.in_0.load.σ4@4")),
+            g_sketch.lookup(SchemaParser.parse_variable("g.in_0")),
+        )
+        # check C types
+        gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+        dtv2type = gen()
+        rec_struct_ptr = dtv2type[DerivedTypeVariable("f")].params[0]
+        rec_struct = rec_struct_ptr.target_type
+        self.assertEqual(len(rec_struct.fields), 4)
+        # the field 0 and 1 are pointers to the same struct
+        self.assertEqual(
+            rec_struct.fields[0].ctype.target_type.name, rec_struct.name
+        )
+        self.assertEqual(
+            rec_struct.fields[1].ctype.target_type.name, rec_struct.name
+        )
+        self.assertIsInstance(rec_struct.fields[2].ctype, IntType)
 
     def test_interleaving_elements(self):
         """
@@ -248,17 +363,105 @@ class RecursiveSchemaTest(unittest.TestCase):
 
         nf_sketches = sketches[nf_apply]
         self.assertEqual(
-            nf_sketches.lookup[
+            nf_sketches.lookup(
                 SchemaParser.parse_variable("nf.in_0.load.σ4@4")
-            ].upper_bound,
+            ).upper_bound,
             SchemaParser.parse_variable("int"),
         )
         self.assertEqual(
-            nf_sketches.lookup[
+            nf_sketches.lookup(
                 SchemaParser.parse_variable("nf.in_0.load.σ4@0")
-            ].upper_bound,
+            ).upper_bound,
             SchemaParser.parse_variable("int"),
         )
+
+    def test_vListInsert_issue9(self):
+        """
+        This is a method from crazyflie
+        vlistInsert(List_t * const pxList, ListItem_t * const pxNewListItem)
+
+        typedef struct xLIST
+        {
+            volatile UBaseType_t uxNumberOfItems;
+            ListItem_t *  pxIndex;
+            MiniListItem_t xListEnd;
+        } List_t;
+
+        struct xLIST_ITEM
+        {
+
+            TickType_t xItemValue;
+            struct xLIST_ITEM *  pxNext;
+            struct xLIST_ITEM *  pxPrevious;
+            void * pvOwner;
+            struct xLIST *  pxContainer;
+        };
+        typedef struct xLIST_ITEM ListItem_t;
+
+        The constraints are incomplete
+        - Only the first element of List_t is accessed
+        - for ListItem_t, we access xItemValue, pxNext, pxPrevious
+          and pxContainer
+        """
+        constraints = {
+            "vListInsert": [
+                "v_334 ⊑ int32",
+                "int32 ⊑ v_110",
+                "v_3 ⊑ int32",
+                "v_177 ⊑ v_387",
+                "v_3 ⊑ uint32",
+                "v_59 ⊑ v_258",
+                "v_233 ⊑ v_258.store.σ4@4",
+                "v_386 ⊑ v_255",
+                "vListInsert.in_1 ⊑ v_233",
+                "bool ⊑ v_198",
+                "v_110 ⊑ v_232.store.σ4@0",
+                "v_384 ⊑ v_386",
+                "v_358.load.σ4@8 ⊑ v_59",
+                "v_65 ⊑ v_233.store.σ4@4",
+                "v_255.load.σ4@4 ⊑ v_189",
+                "v_258.load.σ4@4 ⊑ v_65",
+                "v_233.load.σ4@0 ⊑ v_3",
+                "v_255 ⊑ v_258",
+                "v_258 ⊑ v_233.store.σ4@8",
+                "v_385 ⊑ v_386",
+                "v_112 ⊑ int32",
+                "vListInsert.in_0 ⊑ v_232",
+                "v_101 ⊑ int32",
+                "bool ⊑ v_18",
+                "v_195 ⊑ uint32",
+                "v_387 ⊑ v_384",
+                "v_189 ⊑ v_385",
+                "v_232.load.σ4@0 ⊑ v_101",
+                "v_232 ⊑ v_233.store.σ4@16",
+                "v_189.load.σ4@0 ⊑ v_195",
+                "v_233 ⊑ v_65.store.σ4@8",
+            ]
+        }
+        callgraph = {"vListInsert": []}
+        lattice = CLattice()
+        (gen_cs, sketches) = compute_sketches(
+            constraints,
+            callgraph,
+            lattice=lattice,
+            config=SolverConfig(max_paths_per_root=1000),
+        )
+
+        gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+        dtv2type = gen()
+
+        ListItem_t_ptr = dtv2type[DerivedTypeVariable("vListInsert")].params[1]
+        ListItem_t = ListItem_t_ptr.target_type
+        self.assertGreaterEqual(len(ListItem_t.fields), 4)
+        # second and third are pointers to next and previous
+        self.assertEqual(
+            ListItem_t.fields[1].ctype.target_type.name, ListItem_t.name
+        )
+        self.assertEqual(
+            ListItem_t.fields[2].ctype.target_type.name, ListItem_t.name
+        )
+        # last field is a pointer too
+        self.assertIsInstance(ListItem_t.fields[3].ctype, PointerType)
 
 
 class InferTypesTest(unittest.TestCase):
@@ -278,20 +481,26 @@ class InferTypesTest(unittest.TestCase):
         (gen_cs, sketches) = compute_sketches(constraints, callgraph)
 
         f_sketch = sketches[DerivedTypeVariable("f")]
-        assert SchemaParser.parse_variable("f.in_0") in f_sketch.lookup
-        assert (
-            SchemaParser.parse_variable("f.in_0.load.σ1@0.load.σ4@4")
-            in f_sketch.lookup
+        self.assertIsNotNone(
+            f_sketch.lookup(SchemaParser.parse_variable("f.in_0"))
+        )
+        self.assertIsNotNone(
+            f_sketch.lookup(
+                SchemaParser.parse_variable("f.in_0.load.σ1@0.load.σ4@4")
+            )
         )
 
-        f_sketch = sketches[DerivedTypeVariable("g")]
-        assert SchemaParser.parse_variable("g.out") in f_sketch.lookup
-        assert (
-            SchemaParser.parse_variable("g.out.load.σ1@0") in f_sketch.lookup
+        g_sketch = sketches[DerivedTypeVariable("g")]
+        self.assertIsNotNone(
+            g_sketch.lookup(SchemaParser.parse_variable("g.out"))
         )
-        assert (
-            SchemaParser.parse_variable("g.out.load.σ1@0.load.σ4@4")
-            in f_sketch.lookup
+        self.assertIsNotNone(
+            g_sketch.lookup(SchemaParser.parse_variable("g.out.load.σ1@0"))
+        )
+        self.assertIsNotNone(
+            g_sketch.lookup(
+                SchemaParser.parse_variable("g.out.load.σ1@0.load.σ4@4")
+            )
         )
 
     def test_input_arg_capability_transitive(self):
@@ -305,15 +514,19 @@ class InferTypesTest(unittest.TestCase):
         callgraph = {"g": ["f"]}
         (gen_cs, sketches) = compute_sketches(constraints, callgraph)
 
-        f_sketch = sketches[DerivedTypeVariable("g")]
-        assert SchemaParser.parse_variable("g.in_0") in f_sketch.lookup
-        assert (
-            SchemaParser.parse_variable("g.in_0.load.σ1@0.load.σ4@4")
-            in f_sketch.lookup
+        g_sketch = sketches[DerivedTypeVariable("g")]
+        self.assertIsNotNone(
+            g_sketch.lookup(SchemaParser.parse_variable("g.in_0"))
         )
-        assert (
-            SchemaParser.parse_variable("g.out.load.σ1@0.load.σ4@4")
-            in f_sketch.lookup
+        self.assertIsNotNone(
+            g_sketch.lookup(
+                SchemaParser.parse_variable("g.in_0.load.σ1@0.load.σ4@4")
+            )
+        )
+        self.assertIsNotNone(
+            g_sketch.lookup(
+                SchemaParser.parse_variable("g.out.load.σ1@0.load.σ4@4")
+            )
         )
 
 
@@ -490,7 +703,7 @@ class CTypeTest(unittest.TestCase):
         solver = Solver(program, verbose=LogLevel.DEBUG)
         (gen_const, sketches) = solver()
         f_in1 = SchemaParser.parse_variable("f.in_0")
-        self.assertEqual(sketches[f].lookup[f_in1].upper_bound, CLattice._int)
+        self.assertEqual(sketches[f].lookup(f_in1).upper_bound, CLattice._int)
         gen = CTypeGenerator(
             sketches,
             CLattice(),
@@ -516,7 +729,7 @@ class CTypeTest(unittest.TestCase):
         print(gen_const[f])
         print(sketches[f])
         f_out = SchemaParser.parse_variable("f.out")
-        self.assertEqual(sketches[f].lookup[f_out].lower_bound, CLattice._int)
+        self.assertEqual(sketches[f].lookup(f_out).lower_bound, CLattice._int)
         gen = CTypeGenerator(
             sketches,
             CLattice(),

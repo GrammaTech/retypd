@@ -140,7 +140,7 @@ class CTypeGenerator(Loggable):
     def resolve_label(self, sketches: Sketches, node: SkNode) -> SketchNode:
         if isinstance(node, LabelNode):
             self.info("Resolved label: %s", node)
-            return sketches.lookup.get(node.target)
+            return sketches.lookup(node.target)
         return node
 
     def _succ_no_loadstore(
@@ -356,7 +356,7 @@ class CTypeGenerator(Loggable):
         """
         dtv_to_type = {}
         for base_dtv, sketches in self.sketch_map.items():
-            node = sketches.lookup.get(base_dtv)
+            node = sketches.lookup(base_dtv)
             if node is None:
                 continue
             if filter_to is not None and base_dtv not in filter_to:

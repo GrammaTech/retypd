@@ -61,13 +61,11 @@ class LabelNode:
 
     def __eq__(self, other) -> bool:
         if isinstance(other, LabelNode):
-            # return self.id == other.id and self.target == other.target
-            return self.target == other.target
+            return self.id == other.id and self.target == other.target
         return False
 
     def __hash__(self) -> int:
-        # return hash(self.target) ^ hash(self.id)
-        return hash(self.target)
+        return hash(self.target) ^ hash(self.id)
 
     def __str__(self) -> str:
         return f"{self.target}.label_{self.id}"
@@ -93,16 +91,43 @@ class Sketches(Loggable):
         # We maintain the invariant that if a node is in `lookup` then it should also be in
         # `sketches` as a node (even if there are no edges)
         self.sketches = networkx.DiGraph()
-        self.lookup: Dict[DerivedTypeVariable, SketchNode] = {}
+        self._lookup: Dict[DerivedTypeVariable, SketchNode] = {}
         self.types = types
+
+    def lookup(self, dtv: DerivedTypeVariable) -> Optional[SketchNode]:
+        """
+        Return the sketch node corresponding to the path
+        represented in the given dtv
+        """
+        if dtv in self._lookup:
+            return self._lookup[dtv]
+        # if it is not in the dictionary we traverse the graph
+        beg = dtv.base_var
+        curr_node = self._lookup.get(beg, None)
+        if curr_node is None:
+            return None
+        for access_path in dtv.path:
+            succs = [
+                dest
+                for (src, dest, label) in self.sketches.out_edges(
+                    curr_node, data="label"
+                )
+                if label == access_path
+            ]
+            if len(succs) != 1:
+                return None
+            curr_node = succs[0]
+            if isinstance(curr_node, LabelNode):
+                curr_node = self._lookup[curr_node.target]
+        return curr_node
 
     def ref_node(self, node: SketchNode) -> SketchNode:
         """Add a reference to the given node (no copy)"""
         if isinstance(node, LabelNode):
             return node
-        if node.dtv in self.lookup:
-            return self.lookup[node.dtv]
-        self.lookup[node.dtv] = node
+        if node.dtv in self._lookup:
+            return self._lookup[node.dtv]
+        self._lookup[node.dtv] = node
         self.sketches.add_node(node)
         return node
 
@@ -119,7 +144,7 @@ class Sketches(Loggable):
         if upper_bound is None:
             upper_bound = self.types.top
         result = SketchNode(variable, lower_bound, upper_bound)
-        self.lookup[variable] = result
+        self._lookup[variable] = result
         self.sketches.add_node(result)
         return result
 
@@ -128,8 +153,8 @@ class Sketches(Loggable):
         TOP or BOTTOM, depending on the variance of the variable's access path. If the variable
         already exists, skip it.
         """
-        if variable in self.lookup:
-            return self.lookup[variable]
+        if variable in self._lookup:
+            return self._lookup[variable]
         node = self.make_node(variable)
         created = node
         self.sketches.add_node(node)
@@ -167,11 +192,11 @@ class Sketches(Loggable):
         self, global_vars: Set[DerivedTypeVariable], sketches: Sketches
     ):
         global_roots = set()
-        for dtv, node in sketches.lookup.items():
+        for dtv, node in sketches._lookup.items():
             if dtv.base_var in global_vars:
                 global_roots.add(dtv.base_var)
         for g in global_roots:
-            node = sketches.lookup.get(g)
+            node = sketches._lookup.get(g)
             if node is None:
                 continue
             self._copy_global_recursive(node, sketches)
@@ -209,8 +234,7 @@ class Sketches(Loggable):
                     and len(list(self.sketches.successors(node))) == 0
                 ):
                     fresh_var = fresh_var_factory.fresh_var()
-                    # FIXME check if this should be the other way around
-                    if node.dtv.path_variance == Variance.COVARIANT:
+                    if node.dtv.path_variance == Variance.CONTRAVARIANT:
                         constraints.append(
                             SubtypeConstraint(node.dtv, fresh_var)
                         )
@@ -218,19 +242,17 @@ class Sketches(Loggable):
                         constraints.append(
                             SubtypeConstraint(fresh_var, node.dtv)
                         )
-                # I am not sure about this, but I think label nodes should
-                # not be completely ignored
                 for succ in self.sketches.successors(node):
                     if isinstance(succ, LabelNode):
                         label = self.sketches[node][succ].get("label")
                         loop_back = node.dtv.add_suffix(label)
-                        if loop_back.path_variance == Variance.COVARIANT:
+                        if loop_back.path_variance == Variance.CONTRAVARIANT:
                             constraints.append(
-                                SubtypeConstraint(succ.target, loop_back)
+                                SubtypeConstraint(loop_back, succ.target)
                             )
                         else:
                             constraints.append(
-                                SubtypeConstraint(loop_back, succ.target)
+                                SubtypeConstraint(succ.target, loop_back)
                             )
 
                 all_constraints |= ConstraintSet(constraints)
@@ -239,8 +261,6 @@ class Sketches(Loggable):
     def add_constraints(self, constraints: ConstraintSet) -> None:
         """Extend the set of sketches with the new set of constraints."""
 
-        # Step 1: Apply constraints that make use of lattice types, so that we have the seeds
-        # for atomic types in our sketch graph
         for constraint in constraints:
             left = constraint.left
             right = constraint.right
@@ -248,7 +268,7 @@ class Sketches(Loggable):
                 left in self.types.internal_types
                 and right not in self.types.internal_types
             ):
-                right_node = self.lookup[right]
+                right_node = self.lookup(right)
                 self.debug("JOIN: %s, %s", right_node, left)
                 right_node.lower_bound = self.types.join(
                     right_node.lower_bound, left
@@ -258,7 +278,7 @@ class Sketches(Loggable):
                 right in self.types.internal_types
                 and left not in self.types.internal_types
             ):
-                left_node = self.lookup[left]
+                left_node = self.lookup(left)
                 self.debug("MEET: %s, %s", left_node, left)
                 left_node.upper_bound = self.types.meet(
                     left_node.upper_bound, right
@@ -268,7 +288,7 @@ class Sketches(Loggable):
     def to_dot(self, dtv: DerivedTypeVariable) -> str:
         nt = f"{os.linesep}\t"
         graph_str = f"digraph {dtv} {{"
-        start = self.lookup[dtv]
+        start = self._lookup[dtv]
         edges_str = ""
         # emit edges and identify nodes
         nodes = {start}
@@ -306,11 +326,11 @@ class Sketches(Loggable):
         return graph_str
 
     def __str__(self) -> str:
-        if self.lookup:
+        if self._lookup:
             nt = f"{os.linesep}\t"
 
             def format(k: DerivedTypeVariable) -> str:
-                return str(self.lookup[k])
+                return str(self._lookup[k])
 
-            return f"nodes:{nt}{nt.join(map(format, self.lookup.keys()))})"
+            return f"nodes:{nt}{nt.join(map(format, self._lookup.keys()))})"
         return "no sketches"
