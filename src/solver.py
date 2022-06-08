@@ -305,6 +305,28 @@ class Solver(Loggable):
             visited_nodes = {quotient_node: proc_or_global_node}
             all_paths(quotient_node, visited_nodes)
 
+    # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
+    @staticmethod
+    def _recall_forget_split(graph: networkx.DiGraph) -> None:
+        """The algorithm, after saturation, only admits paths such that recall edges all precede
+        the first forget edge (if there is such an edge). To enforce this, we modify the graph by
+        splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
+        in the original graph are changed to point to the 'forgotten' duplicate of their original
+        target. As a result, no recall edges are reachable after traversing a single forget edge.
+        """
+        edges = set(graph.edges)
+        for head, tail in edges:
+            label = graph[head][tail].get("label")
+            if label and label.kind == EdgeLabel.Kind.RECALL:
+                continue
+            forget_head = head.split_recall_forget()
+            forget_tail = tail.split_recall_forget()
+            atts = graph[head][tail]
+            if label and label.kind == EdgeLabel.Kind.FORGET:
+                graph.remove_edge(head, tail)
+                graph.add_edge(head, forget_tail, **atts)
+            graph.add_edge(forget_head, forget_tail, **atts)
+
     def _maybe_constraint(
         self, origin: Node, dest: Node, string: List[EdgeLabel]
     ) -> Optional[SubtypeConstraint]:
@@ -336,28 +358,6 @@ class Solver(Loggable):
             if lhs_var != rhs_var:
                 return SubtypeConstraint(lhs_var, rhs_var)
         return None
-
-    # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
-    @staticmethod
-    def _recall_forget_split(graph: networkx.DiGraph) -> None:
-        """The algorithm, after saturation, only admits paths such that recall edges all precede
-        the first forget edge (if there is such an edge). To enforce this, we modify the graph by
-        splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
-        in the original graph are changed to point to the 'forgotten' duplicate of their original
-        target. As a result, no recall edges are reachable after traversing a single forget edge.
-        """
-        edges = set(graph.edges)
-        for head, tail in edges:
-            label = graph[head][tail].get("label")
-            if label and label.kind == EdgeLabel.Kind.RECALL:
-                continue
-            forget_head = head.split_recall_forget()
-            forget_tail = tail.split_recall_forget()
-            atts = graph[head][tail]
-            if label and label.kind == EdgeLabel.Kind.FORGET:
-                graph.remove_edge(head, tail)
-                graph.add_edge(head, forget_tail, **atts)
-            graph.add_edge(forget_head, forget_tail, **atts)
 
     def _generate_constraints(
         self, graph: networkx.DiGraph, endpoints: Set[DerivedTypeVariable]
@@ -463,7 +463,6 @@ class Solver(Loggable):
                 )
                 scc_initial_constraints |= constraints
 
-            # Uncomment this out to dump the constraint graph
             self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
 
             scc_sketches = Sketches(self.program.types, self.verbose)
@@ -472,17 +471,20 @@ class Solver(Loggable):
                 scc_sketches,
                 scc_initial_constraints,
             )
-
-            scc_graph = ConstraintGraph(scc_initial_constraints).graph
-            # dump_labeled_graph(scc_graph, name, f"/tmp/scc_{name}")
-
-            # make a copy; some of this analysis mutates the graph
-            Solver._recall_forget_split(scc_graph)
             all_endpoints = frozenset(
                 set(scc)
                 | set(self.program.global_vars)
                 | self.program.types.internal_types
             )
+            scc_graph = ConstraintGraph(scc_initial_constraints).graph
+
+            # Uncomment this out to dump the constraint graph
+            # name = "_".join([str(s) for s in scc])
+            # dump_labeled_graph(scc_graph, name, f"/tmp/scc_{name}")
+
+            # make a copy; some of this analysis mutates the graph
+            Solver._recall_forget_split(scc_graph)
+
             generated_constraints = self._generate_constraints(
                 scc_graph, all_endpoints
             )
