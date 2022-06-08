@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 from enum import Enum, unique
-from typing import Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 from .schema import (
     AccessPathLabel,
     ConstraintSet,
@@ -75,6 +75,13 @@ class EdgeLabel:
         return self._str
 
 
+@unique
+class LeftRight(Enum):
+    NO = 0
+    LEFT = 1
+    RIGHT = 2
+
+
 class Node:
     """A node in the graph of constraints. Node objects are immutable.
 
@@ -91,27 +98,38 @@ class Node:
         self,
         base: DerivedTypeVariable,
         suffix_variance: Variance,
+        left_right: LeftRight = LeftRight.NO,
         forgotten: Forgotten = Forgotten.PRE_FORGET,
     ) -> None:
         self.base = base
         self.suffix_variance = suffix_variance
+        self.left_right = left_right
+        if left_right == LeftRight.LEFT:
+            left_right_str = "L"
+        elif left_right == LeftRight.RIGHT:
+            left_right_str = "R"
+        else:
+            left_right_str = ""
         if suffix_variance == Variance.COVARIANT:
             variance = ".⊕"
         else:
             variance = ".⊖"
         self._forgotten = forgotten
         if forgotten == Node.Forgotten.POST_FORGET:
-            self._str = "F:" + str(self.base) + variance
+            self._str = "F:" + left_right_str + str(self.base) + variance
         else:
-            self._str = str(self.base) + variance
-        self._hash = hash((self.base, self.suffix_variance, self._forgotten))
+            self._str = left_right_str + str(self.base) + variance
+        self._hash = hash(
+            (self.base, self.suffix_variance, self.left_right, self._forgotten)
+        )
 
-    def __eq__(self, other: Node) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return (
             isinstance(other, Node)
             and self.base == other.base
             and self.suffix_variance == other.suffix_variance
             and self._forgotten == other._forgotten
+            and self.left_right == other.left_right
         )
 
     def __lt__(self, other: Node) -> bool:
@@ -139,6 +157,7 @@ class Node:
                 Node(
                     prefix,
                     Variance.combine(last.variance(), self.suffix_variance),
+                    self.left_right,
                 ),
             )
         return (None, None)
@@ -150,7 +169,11 @@ class Node:
         path = list(self.base.path)
         path.append(label)
         variance = Variance.combine(self.suffix_variance, label.variance())
-        return Node(DerivedTypeVariable(self.base.base, path), variance)
+        return Node(
+            DerivedTypeVariable(self.base.base, path),
+            variance,
+            self.left_right,
+        )
 
     def __str__(self) -> str:
         return self._str
@@ -161,13 +184,24 @@ class Node:
     def split_recall_forget(self) -> Node:
         """Get a duplicate of self for use in the post-recall subgraph."""
         return Node(
-            self.base, self.suffix_variance, Node.Forgotten.POST_FORGET
+            self.base,
+            self.suffix_variance,
+            self.left_right,
+            Node.Forgotten.POST_FORGET,
         )
 
     def inverse(self) -> Node:
         """Get a Node identical to this one but with inverted variance."""
+        new_left_right = LeftRight.NO
+        if self.left_right == LeftRight.LEFT:
+            new_left_right = LeftRight.RIGHT
+        elif self.left_right == LeftRight.RIGHT:
+            new_left_right = LeftRight.LEFT
         return Node(
-            self.base, Variance.invert(self.suffix_variance), self._forgotten
+            self.base,
+            Variance.invert(self.suffix_variance),
+            new_left_right,
+            self._forgotten,
         )
 
 
@@ -176,10 +210,14 @@ class ConstraintGraph:
     Appendix D. Edge weights use the formulation from the paper.
     """
 
-    def __init__(self, constraints: ConstraintSet) -> None:
+    def __init__(
+        self,
+        constraints: ConstraintSet,
+        interesting_vars: Set[DerivedTypeVariable],
+    ) -> None:
         self.graph = networkx.DiGraph()
         for constraint in constraints.subtype:
-            self.add_edges(constraint.left, constraint.right)
+            self.add_edges(constraint.left, constraint.right, interesting_vars)
         self.saturate()
         self._remove_self_loops()
 
@@ -193,7 +231,11 @@ class ConstraintGraph:
         return False
 
     def add_edges(
-        self, sub: DerivedTypeVariable, sup: DerivedTypeVariable, **atts
+        self,
+        sub: DerivedTypeVariable,
+        sup: DerivedTypeVariable,
+        interesting_vars: Set[DerivedTypeVariable],
+        **atts,
     ) -> bool:
         """Add an edge to the underlying graph. Also add its reverse with reversed variance.
         Each constraint, becomes two pushdown rules in the paper.
@@ -201,8 +243,18 @@ class ConstraintGraph:
         and forget edges to the right-hand side.
         """
         changed = False
-        forward_from = Node(sub, Variance.COVARIANT)
-        forward_to = Node(sup, Variance.COVARIANT)
+        left = (
+            LeftRight.LEFT
+            if sub.base_var in interesting_vars
+            else LeftRight.NO
+        )
+        right = (
+            LeftRight.RIGHT
+            if sup.base_var in interesting_vars
+            else LeftRight.NO
+        )
+        forward_from = Node(sub, Variance.COVARIANT, left)
+        forward_to = Node(sup, Variance.COVARIANT, right)
         changed = self.add_edge(forward_from, forward_to, **atts) or changed
         self.add_recalls(forward_from)
         self.add_forgets(forward_to)
