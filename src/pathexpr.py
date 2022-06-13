@@ -198,14 +198,13 @@ def from_numeral_graph(numeral_graph: networkx.DiGraph, number: int) -> Any:
     return numeral_graph.nodes[number]["original"]
 
 
-def topological_numbering(
-    graph: networkx.DiGraph, data: str
-) -> networkx.DiGraph:
+def topological_numbering(graph: networkx.DiGraph) -> networkx.DiGraph:
     """ Generate a numeral graph from the topological sort of the DAG """
     nodes = list(networkx.topological_sort(graph))
-    numbering = dict(enumerate(nodes))
+    numbering = {node: num for num, node in enumerate(nodes)}
+    rev_numbering = dict(enumerate(nodes))
     numeral_graph = networkx.relabel_nodes(graph, numbering, copy=True)
-    networkx.set_node_attributes(numeral_graph, numbering, name="original")
+    networkx.set_node_attributes(numeral_graph, rev_numbering, name="original")
     return numeral_graph
 
 
@@ -213,8 +212,7 @@ def dag_path_seq(graph: networkx.DiGraph, data: str) -> Tuple[networkx.DiGraph, 
     """Per Theorem 5, Page 14 of the paper, generate path sequences for a 
     directed acyclic graph in a more efficient manner.
     """
-    numeral_graph = topological_numbering(graph, data)
-
+    numeral_graph = topological_numbering(graph)
     # Sort edges by increasing source node
     edges = list(numeral_graph.edges(data=data))
     edges.sort(key=lambda x: x[0])
