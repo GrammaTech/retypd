@@ -226,7 +226,7 @@ class Sketches(Loggable):
             if dtv.base_var in global_vars:
                 global_roots.add(dtv.base_var)
         for g in global_roots:
-            node = sketches._lookup.get(g)
+            node = sketches.lookup(g)
             if node is None:
                 continue
             self._copy_global_recursive(node, sketches)
