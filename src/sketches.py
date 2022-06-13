@@ -304,7 +304,7 @@ class Sketches(Loggable):
                     right_node.lower_bound, left
                 )
                 self.debug("   --> %s", right_node)
-            if (
+            elif (
                 right in self.types.internal_types
                 and left not in self.types.internal_types
             ):
