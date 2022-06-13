@@ -274,9 +274,7 @@ class DerivedTypeVariable:
         raise NotImplementedError("Read-only property")
 
     def format(self, separator: str = ".") -> str:
-        if self._path:
-            return f'{self._base}.{".".join(map(str, self._path))}'
-        return self._base
+        return separator.join([str(self._base)] + list(map(str, self._path)))
 
     def __eq__(self, other: Any) -> bool:
         return (
@@ -364,13 +362,10 @@ class DerivedTypeVariable:
         """If :param:`prefix` is a prefix of :param:`self` with exactly one additional
         :py:class:`AccessPathLabel`, return the additional label. If not, return `None`.
         """
-        if (
-            self._base != prefix.base
-            or len(self.path) != (len(prefix.path) + 1)
-            or self._path[:-1] != prefix.path
-        ):
+        if self.largest_prefix == prefix:
+            return self.tail
+        else:
             return None
-        return self.tail
 
     @property
     def base_var(self) -> DerivedTypeVariable:
