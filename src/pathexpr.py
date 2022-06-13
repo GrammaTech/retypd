@@ -96,9 +96,9 @@ class RExp:
         elif self.label == self.Label.STAR:
             return f'{self.children[0]}*'
         elif self.label == self.Label.EMPTY:
-            return f'Λ'
+            return 'Λ'
         elif self.label == self.Label.NULL:
-            return f'∅'
+            return '∅'
         elif self.label == self.Label.NODE:
             return f'{self.data}'
         else:
