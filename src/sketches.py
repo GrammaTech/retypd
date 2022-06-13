@@ -33,8 +33,6 @@ class SketchNode:
         self._dtv = dtv
         self.lower_bound = lower_bound
         self.upper_bound = upper_bound
-        # Reference to SketchNodes (in other SCCs) that this node came from
-        self.source: Set[SketchNode] = set()
         self._hash = hash(self._dtv)
 
     @property

@@ -177,23 +177,6 @@ class CTypeGenerator(Loggable):
         self.debug("Successors %s --> %s", node, successors)
         return successors
 
-    def examine_sources(
-        self, sources: Set[SketchNode], my_node: SketchNode, my_type: CType
-    ) -> CType:
-        """
-        Callback that is invoked on every C type creation on a SketchNode that was generated from
-        other nodes (e.g., callee information). This gives the client code an opportunity to see
-        where the type came from and do unification if they want.
-
-        :param sources: Set of SketchNodes (from other SCCs in the callgraph or global dependence
-            graph) that contributed to the current CType.
-        :param my_node: The current SketchNode that we are resolving.
-        :param my_type: The current CType for the SketchNode (i.e., the type derived directly from
-            the sketchnode).
-        :returns: The CType to use.
-        """
-        return my_type
-
     def merge_counts(self, count_set: Set[int]) -> int:
         """
         Given a set of element counts from a node, merge them into a single count.
@@ -301,8 +284,6 @@ class CTypeGenerator(Loggable):
                 child_type = self.c_type_from_nodeset(
                     base_dtv, sketches, siblings
                 )
-                if c.source:
-                    child_type = self.examine_sources(c.source, c, child_type)
                 fields.append(Field(child_type, offset=offset))
             s.set_fields(fields=fields)
         return rv
