@@ -564,3 +564,11 @@ class FreshVarFactory:
         )
         self.fresh_var_counter += 1
         return fresh_var
+
+
+class RetypdError(Exception):
+    """
+    A retypd specific exception
+    """
+
+    pass
