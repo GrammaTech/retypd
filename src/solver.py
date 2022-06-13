@@ -182,12 +182,12 @@ class Solver(Loggable):
         """
         # create initial graph
         g = networkx.DiGraph()
-        for dvt in constraints.all_dtvs():
-            g.add_node(dvt)
-            while dvt.largest_prefix:
-                prefix = dvt.largest_prefix
-                g.add_edge(prefix, dvt, label=dvt.tail)
-                dvt = prefix
+        for dtv in constraints.all_dtvs():
+            g.add_node(dtv)
+            while dtv.largest_prefix:
+                prefix = dtv.largest_prefix
+                g.add_edge(prefix, dtv, label=dtv.tail)
+                dtv = prefix
 
         # compute quotient graph
         equiv = EquivRelation(g.nodes)
@@ -287,8 +287,8 @@ class Solver(Loggable):
                 g_quotient.out_edges(curr_quotient_node, data="label")
             ):
                 if dest not in visited_nodes:
-                    dest_dvt = curr_node.dtv.add_suffix(label)
-                    dest_node = sketches.make_node(dest_dvt)
+                    dest_dtv = curr_node.dtv.add_suffix(label)
+                    dest_node = sketches.make_node(dest_dtv)
                     sketches.add_edge(curr_node, dest_node, label)
                     visited_nodes[dest] = dest_node
                     all_paths(dest, visited_nodes)
