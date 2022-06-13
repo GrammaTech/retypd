@@ -75,6 +75,8 @@ class AccessPathLabel(ABC):
     """
 
     def __lt__(self, other: AccessPathLabel) -> bool:
+        if not isinstance(other, AccessPathLabel):
+            raise TypeError(f"Cannot compare {self} and {other}")
         s_type = str(type(self))
         o_type = str(type(other))
         if s_type == o_type:
