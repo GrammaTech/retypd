@@ -1,13 +1,13 @@
 from __future__ import annotations
 from typing import Dict, List, Set, Tuple, Any
 from .schema import DerivedTypeVariable, Lattice
-
+from abc import ABC, abstractmethod
 from .sketches import Sketches
 
 import networkx
 
 
-class GlobalHandler:
+class GlobalHandler(ABC):
     def __init__(
         self,
         global_vars: Set[DerivedTypeVariable],
@@ -20,14 +20,17 @@ class GlobalHandler:
         self.global_vars = global_vars
         self.fake_root = fake_root
 
+    @abstractmethod
     def pre_scc(self, scc_node: Any):
         raise NotImplementedError("Child class must implement")
 
+    @abstractmethod
     def post_scc(
         self, scc_node: Any, sketches_map: Dict[DerivedTypeVariable, Sketches]
     ) -> None:
         raise NotImplementedError("Child class must implement")
 
+    @abstractmethod
     def copy_globals(
         self,
         current_sketch: Sketches,
@@ -36,6 +39,7 @@ class GlobalHandler:
     ) -> None:
         raise NotImplementedError("Child class must implement")
 
+    @abstractmethod
     def finalize(
         self, types: Lattice, sketches_map: Dict[DerivedTypeVariable, Sketches]
     ) -> None:
