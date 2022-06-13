@@ -474,10 +474,8 @@ class Solver(Loggable):
             global_handler.pre_scc(scc_node)
             scc = scc_dag.nodes[scc_node]["members"]
             scc_initial_constraints = ConstraintSet()
-            for proc_or_global in scc:
-                constraints = constraint_map.get(
-                    proc_or_global, ConstraintSet()
-                )
+            for proc in scc:
+                constraints = constraint_map.get(proc, ConstraintSet())
                 constraints |= Solver.instantiate_calls(
                     constraints, sketches_map, self.program.types
                 )
@@ -503,10 +501,10 @@ class Solver(Loggable):
             # Copy globals from our callees, if we are analyzing globals precisely.
             global_handler.copy_globals(scc_sketches, scc, sketches_map)
 
-            for proc_or_global in scc:
-                sketches_map[proc_or_global] = scc_sketches
+            for proc in scc:
+                sketches_map[proc] = scc_sketches
                 if self.config.keep_output_constraints:
-                    derived[proc_or_global] = generated_constraints
+                    derived[proc] = generated_constraints
 
             global_handler.post_scc(scc_node, sketches_map)
 
