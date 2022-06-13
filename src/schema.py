@@ -425,7 +425,7 @@ class ConstraintSet:
             self.subtype = set(subtype)
         else:
             self.subtype = set()
-        self.logger = logging.getLogger(ConstraintSet)
+        self.logger = logging.getLogger("ConstraintSet")
 
     def add_subtype(
         self, left: DerivedTypeVariable, right: DerivedTypeVariable
