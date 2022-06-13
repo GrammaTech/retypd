@@ -181,6 +181,10 @@ class Sketches(Loggable):
         return result
 
     def add_edge(self, head: SketchNode, tail: SkNode, label: str) -> None:
+        """
+        Add edge labeled with `label` in the sketch graph between `head`
+        and `tail`.
+        """
         # don't emit duplicate edges
         if (head, tail) not in self.sketches.edges:
             self.sketches.add_edge(head, tail, label=label)
@@ -194,6 +198,10 @@ class Sketches(Loggable):
     def _copy_global_recursive(
         self, node: SketchNode, sketches: Sketches
     ) -> SketchNode:
+        """
+        Auxiliary method to recusively copy a sketch tree
+        rooted in `node` from `sketches` to `self`.
+        """
         # TODO: this probably needs to handle atoms properly, using the Lattice. Needs
         # some thought.
         our_node = self.ref_node(node)
@@ -210,6 +218,9 @@ class Sketches(Loggable):
     def copy_globals_from_sketch(
         self, global_vars: Set[DerivedTypeVariable], sketches: Sketches
     ):
+        """
+        Copy the sketch trees of global variables from `sketches` to `self`.
+        """
         global_roots = set()
         for dtv, node in sketches._lookup.items():
             if dtv.base_var in global_vars:
