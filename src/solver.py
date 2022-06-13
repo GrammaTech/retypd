@@ -165,10 +165,9 @@ class Solver(Loggable):
         """
         fresh_var_factory = FreshVarFactory()
         callees = set()
-        for constraint in cs:
-            for side in [constraint.left, constraint.right]:
-                if side.base_var in sketch_map:
-                    callees.add(side.base_var)
+        for dtv in cs.all_dtvs():
+            if dtv.base_var in sketch_map:
+                callees.add(dtv.base_var)
 
         new_constraints = ConstraintSet()
         for callee in callees:
