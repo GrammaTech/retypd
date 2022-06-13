@@ -9,7 +9,7 @@ class RExp:
     class Label(enum.Enum):
         NULL = "null"
         EMPTY = "empty"
-        AND = "and"
+        DOT = "dot"
         OR = "or"
         STAR = "star"
         NODE = "node"
@@ -20,7 +20,7 @@ class RExp:
         self.children: List[RExp] = children
     
     def __and__(self, rhs: RExp) -> RExp:
-        return RExp(self.Label.AND, children=[self, rhs])
+        return RExp(self.Label.DOT, children=[self, rhs])
     
     def __or__(self, rhs: RExp) -> RExp:
         return RExp(self.Label.OR, children=[self, rhs])
@@ -34,7 +34,7 @@ class RExp:
 
         if self.label in (self.Label.NULL, self.Label.EMPTY):
             return True
-        elif self.label in (self.Label.AND, self.Label.OR, self.Label.STAR):
+        elif self.label in (self.Label.DOT, self.Label.OR, self.Label.STAR):
             return all(a == b for a, b in zip(self.children, other.children))
         elif self.label == self.Label.NODE:
             return self.data == other.data
@@ -64,7 +64,7 @@ class RExp:
                 return children[0]
             else:
                 return children[0] | children[1]
-        elif self.label == self.Label.AND:
+        elif self.label == self.Label.DOT:
             if children[0].is_null or children[1].is_null:
                 return RExp.null()
             elif children[0].is_empty:
@@ -91,7 +91,7 @@ class RExp:
     def __repr__(self) -> str:
         if self.label == self.Label.OR:
             return f'({self.children[0]} U {self.children[1]})'
-        elif self.label == self.Label.AND:
+        elif self.label == self.Label.DOT:
             return f'({self.children[0]} . {self.children[1]})'
         elif self.label == self.Label.STAR:
             return f'{self.children[0]}*'
