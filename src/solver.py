@@ -295,7 +295,7 @@ class Solver(Loggable):
             and their correspondence to sketch nodes.
             """
             curr_node = visited_nodes[curr_quotient_node]
-            for src, dest, label in set(
+            for _, dest, label in set(
                 g_quotient.out_edges(curr_quotient_node, data="label")
             ):
                 if dest not in visited_nodes:
@@ -326,14 +326,13 @@ class Solver(Loggable):
         in the original graph are changed to point to the 'forgotten' duplicate of their original
         target. As a result, no recall edges are reachable after traversing a single forget edge.
         """
-        edges = set(graph.edges)
-        for head, tail in edges:
-            label = graph[head][tail].get("label")
+        for head, tail in list(graph.edges):
+            atts = graph[head][tail]
+            label = atts.get("label")
             if label and label.kind == EdgeLabel.Kind.RECALL:
                 continue
             forget_head = head.split_recall_forget()
             forget_tail = tail.split_recall_forget()
-            atts = graph[head][tail]
             if label and label.kind == EdgeLabel.Kind.FORGET:
                 graph.remove_edge(head, tail)
                 graph.add_edge(head, forget_tail, **atts)
@@ -488,12 +487,12 @@ class Solver(Loggable):
 
             scc_sketches = Sketches(self.program.types, self.verbose)
             Solver.infer_shapes(
-                scc | set(self.program.global_vars),
+                scc | self.program.global_vars,
                 scc_sketches,
                 scc_initial_constraints,
             )
             all_endpoints = frozenset(
-                set(scc)
+                scc
                 | set(self.program.global_vars)
                 | self.program.types.internal_types
             )
