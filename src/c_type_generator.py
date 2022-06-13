@@ -150,6 +150,14 @@ class CTypeGenerator(Loggable):
         node: SketchNode,
         seen: Set[SketchNode],
     ) -> List[Tuple[List[AccessPathLabel], SketchNode]]:
+        """
+        Collect a list of SketchNode successors of `node`
+        in the sketch graph `sketches` by traversing load and store
+        labels. Each `SketchNode` successor is accompanied
+        by the access path that leads to it.
+        The access path will coincide with the node's DTV unless
+        LabelNodes have been traversed.
+        """
         successors = []
         if node not in seen:
             seen.add(node)
