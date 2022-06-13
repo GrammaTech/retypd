@@ -292,9 +292,8 @@ class CTypeGenerator(Loggable):
             for access_path, c in children:
                 tail = access_path[-1]
                 if not isinstance(tail, DerefLabel):
-                    print(f"WARNING: {c.dtv} does not end in DerefLabel")
+                    self.info(f"WARNING: {c.dtv} does not end in DerefLabel")
                     continue
-                # assert isinstance(tail, DerefLabel)
                 children_by_offset[tail.offset].add(c)
 
             fields = []
