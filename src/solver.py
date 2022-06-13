@@ -101,6 +101,9 @@ class EquivRelation:
         x: FrozenSet[DerivedTypeVariable],
         y: FrozenSet[DerivedTypeVariable],
     ) -> None:
+        """
+        Merge the equivalence classes of x and y.
+        """
         new_set = x | y
         for elem in new_set:
             self._equiv_repr[elem] = new_set
@@ -108,9 +111,16 @@ class EquivRelation:
     def find_equiv_rep(
         self, x: DerivedTypeVariable
     ) -> Optional[Set[DerivedTypeVariable]]:
+        """
+        Return the equivalence class of x.
+        """
         return self._equiv_repr.get(x)
 
     def get_equivalence_classes(self) -> Set[FrozenSet[DerivedTypeVariable]]:
+        """
+        Return a set with all the equivalence classes
+        (represented as frozen set) in the equivalence relation.
+        """
         return set(self._equiv_repr.values())
 
 
