@@ -126,25 +126,29 @@ class Sketches(Loggable):
             return self._lookup[dtv]
         # if it is not in the dictionary we traverse the graph
         beg = dtv.base_var
-        curr_node = self._lookup.get(beg, None)
+        curr_node = self._lookup.get(beg)
         if curr_node is None:
             return None
         for access_path in dtv.path:
             succs = [
                 dest
-                for (src, dest, label) in self.sketches.out_edges(
+                for (_, dest, label) in self.sketches.out_edges(
                     curr_node, data="label"
                 )
                 if label == access_path
             ]
-            if len(succs) != 1:
+            if len(succs) == 0:
                 return None
+            elif len(succs) > 1:
+                raise ValueError(
+                    f"{curr_node} has multiple successors in sketches"
+                )
             curr_node = succs[0]
             if isinstance(curr_node, LabelNode):
                 curr_node = self._lookup[curr_node.target]
         return curr_node
 
-    def ref_node(self, node: SketchNode) -> SketchNode:
+    def ref_node(self, node: SkNode) -> SkNode:
         """Add a reference to the given node (no copy)"""
         if isinstance(node, LabelNode):
             return node
