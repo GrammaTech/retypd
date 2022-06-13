@@ -184,7 +184,7 @@ class Solver(Loggable):
         Compute the quotient graph corresponding to a set of
         constraints.
         This graph allows us to infer the capabilities of all
-        the DVTs that appear in the constraints.
+        the DTVs that appear in the constraints.
 
         This corresponds to the first half of Algorithm E.1 InferShapes
         in the original Retypd paper.
@@ -193,7 +193,7 @@ class Solver(Loggable):
         g = networkx.DiGraph()
         for dtv in constraints.all_dtvs():
             g.add_node(dtv)
-            while dtv.largest_prefix:
+            while len(dtv.path) > 0:
                 prefix = dtv.largest_prefix
                 g.add_edge(prefix, dtv, label=dtv.tail)
                 dtv = prefix
@@ -202,9 +202,9 @@ class Solver(Loggable):
         equiv = EquivRelation(g.nodes)
 
         def unify(
-            x_class: FrozenSet(DerivedTypeVariable),
-            y_class: FrozenSet(DerivedTypeVariable),
-        ):
+            x_class: FrozenSet[DerivedTypeVariable],
+            y_class: FrozenSet[DerivedTypeVariable],
+        ) -> None:
             """
             Unify two equivalent classes and all the successors
             that can be reached:
@@ -214,11 +214,14 @@ class Solver(Loggable):
             """
             if x_class != y_class:
                 equiv.make_equiv(x_class, y_class)
-                for (src, dest, label) in g.out_edges(x_class, data="label"):
+                for (_, dest, label) in g.out_edges(x_class, data="label"):
                     if label is not None:
-                        for (src2, dest2, label2) in g.out_edges(
+                        for (_, dest2, label2) in g.out_edges(
                             y_class, data="label"
                         ):
+                            # The second condition does not appear in the
+                            # Algorithm E.1 in the paper but it does appear
+                            # in the proof of Theorem E.1.
                             if label2 == label or (
                                 label == LoadLabel.instance()
                                 and label2 == StoreLabel.instance()
@@ -245,7 +248,7 @@ class Solver(Loggable):
         scc_and_globals: Set[DerivedTypeVariable],
         sketches: Sketches,
         constraints: ConstraintSet,
-    ) -> Sketches:
+    ) -> None:
         """
         Infer shapes takes a set of constraints and populates shapes of the sketches
         for all DVS in scc.
@@ -271,9 +274,9 @@ class Solver(Loggable):
         # However, if we do this, we will have to split some of these nodes in
         # the future once they start having more detailed type information.
         # also this idea does not mesh up well with the current implementation of
-        # sketches in which each node has 1 DVT associated. Technically
-        # a SketchNode could have a set of DVTs associated (all the paths reaching a node,
-        # one DVT per isomorphic subtree).
+        # sketches in which each node has 1 DTV associated. Technically
+        # a SketchNode could have a set of DTVs associated (all the paths reaching a node,
+        # one DTV per isomorphic subtree).
 
         # For now, create sketches that are trees pending a revision
         # of the implementation of sketches.
