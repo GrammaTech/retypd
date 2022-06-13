@@ -41,12 +41,8 @@ from typing import (
     TypeVar,
     Union,
 )
-import logging
 import os
 import networkx
-
-
-logging.basicConfig()
 
 
 @unique
@@ -425,7 +421,6 @@ class ConstraintSet:
             self.subtype = set(subtype)
         else:
             self.subtype = set()
-        self.logger = logging.getLogger("ConstraintSet")
 
     def add_subtype(
         self, left: DerivedTypeVariable, right: DerivedTypeVariable
