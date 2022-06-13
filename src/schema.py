@@ -435,7 +435,7 @@ class ConstraintSet:
         self.subtype.add(constraint)
         return True
 
-    def all_dvts(self) -> Set[DerivedTypeVariable]:
+    def all_dtvs(self) -> Set[DerivedTypeVariable]:
         dtvs = set()
         for c in self:
             dtvs.add(c.left)

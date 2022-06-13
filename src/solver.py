@@ -182,7 +182,7 @@ class Solver(Loggable):
         """
         # create initial graph
         g = networkx.DiGraph()
-        for dvt in constraints.all_dvts():
+        for dvt in constraints.all_dtvs():
             g.add_node(dvt)
             while dvt.largest_prefix:
                 prefix = dvt.largest_prefix
