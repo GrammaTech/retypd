@@ -22,7 +22,7 @@
 
 """Data types for an implementation of retypd analysis.
 """
-
+from __future__ import annotations
 from abc import ABC
 from enum import Enum, unique
 from functools import reduce
@@ -57,13 +57,13 @@ class Variance(Enum):
     COVARIANT = 1
 
     @staticmethod
-    def invert(variance: "Variance") -> "Variance":
+    def invert(variance: Variance) -> Variance:
         if variance == Variance.CONTRAVARIANT:
             return Variance.COVARIANT
         return Variance.CONTRAVARIANT
 
     @staticmethod
-    def combine(lhs: "Variance", rhs: "Variance") -> "Variance":
+    def combine(lhs: Variance, rhs: Variance) -> Variance:
         if lhs == rhs:
             return Variance.COVARIANT
         return Variance.CONTRAVARIANT
@@ -78,7 +78,7 @@ class AccessPathLabel(ABC):
     and objects of class A are ordered with respect to each other by :py:method:`_less_than`.
     """
 
-    def __lt__(self, other: "AccessPathLabel") -> bool:
+    def __lt__(self, other: AccessPathLabel) -> bool:
         s_type = str(type(self))
         o_type = str(type(other))
         if s_type == o_type:
@@ -160,7 +160,7 @@ class InLabel(AccessPathLabel):
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, InLabel) and self.index == other.index
 
-    def _less_than(self, other: "InLabel") -> bool:
+    def _less_than(self, other: InLabel) -> bool:
         return self.index < other.index
 
     def __hash__(self) -> int:
@@ -221,7 +221,7 @@ class DerefLabel(AccessPathLabel):
             and self.count == other.count
         )
 
-    def _less_than(self, other: "DerefLabel") -> bool:
+    def _less_than(self, other: DerefLabel) -> bool:
         return (self.offset, self.size, self.count) < (
             other.offset,
             other.size,
@@ -285,7 +285,7 @@ class DerivedTypeVariable:
             and self._path == other.path
         )
 
-    def __lt__(self, other: "DerivedTypeVariable") -> bool:
+    def __lt__(self, other: DerivedTypeVariable) -> bool:
         if self._base == other.base:
             return list(self._path) < list(other.path)
         return self._base < other.base
@@ -294,7 +294,7 @@ class DerivedTypeVariable:
         return self._hash
 
     @property
-    def largest_prefix(self) -> Optional["DerivedTypeVariable"]:
+    def largest_prefix(self) -> Optional[DerivedTypeVariable]:
         """Return the prefix obtained by removing the last item from the type variable's path. If
         there is no path, return None.
         """
@@ -302,17 +302,17 @@ class DerivedTypeVariable:
             return DerivedTypeVariable(self._base, self._path[:-1])
         return None
 
-    def all_prefixes(self) -> Set["DerivedTypeVariable"]:
+    def all_prefixes(self) -> Set[DerivedTypeVariable]:
         """Return all prefixes of self, including self."""
         var = self
-        result: Set["DerivedTypeVariable"] = set()
+        result: Set[DerivedTypeVariable] = set()
         while var:
             result.add(var)
             var = var.largest_prefix
         return result
 
     def get_suffix(
-        self, other: "DerivedTypeVariable"
+        self, other: DerivedTypeVariable
     ) -> Optional[Sequence[AccessPathLabel]]:
         """If self is a prefix of other, return the suffix of other's path that is not part of self.
         Otherwise, return None.
@@ -328,7 +328,7 @@ class DerivedTypeVariable:
 
     def remove_suffix(
         self, suffix: Sequence[AccessPathLabel]
-    ) -> Optional["DerivedTypeVariable"]:
+    ) -> Optional[DerivedTypeVariable]:
         result = DerivedTypeVariable(self._base, self._path)
         for label in reversed(suffix):
             if not result.path or result.path[-1] != label:
@@ -345,7 +345,7 @@ class DerivedTypeVariable:
             return self._path[-1]
         return None
 
-    def add_suffix(self, suffix: AccessPathLabel) -> "DerivedTypeVariable":
+    def add_suffix(self, suffix: AccessPathLabel) -> DerivedTypeVariable:
         """Create a new :py:class:`DerivedTypeVariable` identical to :param:`self` (which is
         unchanged) but with suffix appended to its path.
         """
@@ -353,15 +353,13 @@ class DerivedTypeVariable:
         path.append(suffix)
         return DerivedTypeVariable(self._base, path)
 
-    def extend(
-        self, suffix: Iterable[AccessPathLabel]
-    ) -> "DerivedTypeVariable":
+    def extend(self, suffix: Iterable[AccessPathLabel]) -> DerivedTypeVariable:
         path: List[AccessPathLabel] = list(self._path)
         path.extend(suffix)
         return DerivedTypeVariable(self._base, path)
 
     def get_single_suffix(
-        self, prefix: "DerivedTypeVariable"
+        self, prefix: DerivedTypeVariable
     ) -> Optional[AccessPathLabel]:
         """If :param:`prefix` is a prefix of :param:`self` with exactly one additional
         :py:class:`AccessPathLabel`, return the additional label. If not, return `None`.
@@ -375,7 +373,7 @@ class DerivedTypeVariable:
         return self.tail
 
     @property
-    def base_var(self) -> "DerivedTypeVariable":
+    def base_var(self) -> DerivedTypeVariable:
         return DerivedTypeVariable(self._base)
 
     @property
@@ -407,7 +405,7 @@ class SubtypeConstraint:
             and self.right == other.right
         )
 
-    def __lt__(self, other: "SubtypeConstraint") -> bool:
+    def __lt__(self, other: SubtypeConstraint) -> bool:
         if self.left == other.left:
             return self.right < other.right
         return self.left < other.left
@@ -432,7 +430,7 @@ class ConstraintSet:
             self.subtype = set(subtype)
         else:
             self.subtype = set()
-        self.logger = logging.getLogger("ConstraintSet")
+        self.logger = logging.getLogger(ConstraintSet)
 
     def add_subtype(
         self, left: DerivedTypeVariable, right: DerivedTypeVariable
@@ -454,7 +452,7 @@ class ConstraintSet:
             dtvs.add(c.right)
         return dtvs
 
-    def __or__(self, other: "ConstraintSet") -> "ConstraintSet":
+    def __or__(self, other: ConstraintSet) -> ConstraintSet:
         return ConstraintSet(self.subtype | other.subtype)
 
     def __str__(self) -> str:
