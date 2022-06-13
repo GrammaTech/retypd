@@ -14,6 +14,15 @@ from typing import Set, Union, Optional, Tuple, Dict
 
 
 class SketchNode:
+    """
+    A node in a sketch graph. The node is associated with a DTV and it
+    captures its upper and lower bound in the type lattice.
+    A sketch node might be referenced by `LabelNode` in recursive types.
+    If that is the case, the sketch node can represent the primitive
+    type infinite DTVs, e.g.:
+    f.in_0, f.in_0.load.σ4@0, f.in_0.load.σ4@0.load.σ4@0, ...
+    """
+
     def __init__(
         self,
         dtv: DerivedTypeVariable,
@@ -29,6 +38,9 @@ class SketchNode:
 
     @property
     def dtv(self):
+        """
+        The main DTV represented by the sketch node.
+        """
         return self._dtv
 
     @dtv.setter
@@ -52,6 +64,17 @@ class SketchNode:
 
 
 class LabelNode:
+    """
+    LableNodes are used to capture cycles in sketches
+    (recursive types). A LabelNode has a target that
+    is a DTV, which uniquely identifies the SketchNode
+    that it points to.
+    There can be multiple LabelNodes pointing to the
+    same sketch node, since a type can have multiple
+    recursive references.E.g. a doubly linked list
+    will have two recursive types 'prev' and 'next'.
+    """
+
     counter = 0
 
     def __init__(self, target: DerivedTypeVariable) -> None:
