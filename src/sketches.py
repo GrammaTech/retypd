@@ -148,14 +148,20 @@ class Sketches(Loggable):
                 curr_node = self._lookup[curr_node.target]
         return curr_node
 
+    def _add_node(self, node: SketchNode) -> None:
+        """
+        Add node to the sketch graph
+        """
+        self._lookup[node.dtv] = node
+        self.sketches.add_node(node)
+
     def ref_node(self, node: SkNode) -> SkNode:
         """Add a reference to the given node (no copy)"""
         if isinstance(node, LabelNode):
             return node
         if node.dtv in self._lookup:
             return self._lookup[node.dtv]
-        self._lookup[node.dtv] = node
-        self.sketches.add_node(node)
+        self._add_node(node)
         return node
 
     def make_node(
@@ -166,13 +172,11 @@ class Sketches(Loggable):
         upper_bound: Optional[DerivedTypeVariable] = None,
     ) -> SketchNode:
         """Make a node from a DTV. Compute its atom from its access path."""
-        if lower_bound is None:
-            lower_bound = self.types.bottom
-        if upper_bound is None:
-            upper_bound = self.types.top
+
+        lower_bound = lower_bound or self.types.bottom
+        upper_bound = upper_bound or self.types.top
         result = SketchNode(variable, lower_bound, upper_bound)
-        self._lookup[variable] = result
-        self.sketches.add_node(result)
+        self._add_node(result)
         return result
 
     def add_edge(self, head: SketchNode, tail: SkNode, label: str) -> None:
