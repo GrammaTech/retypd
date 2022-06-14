@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 import enum
 import networkx
@@ -106,89 +107,91 @@ class RExp:
 
 
 def eliminate(
-    graph: networkx.DiGraph, data: str, first_number = 0
-) -> Tuple[networkx.DiGraph, Dict[Tuple[int, int], RExp]]:
+    graph: networkx.DiGraph, data: str, min_num: int, max_num: int
+) -> Dict[Tuple[int, int], RExp]:
     """ELIMINATE procedure of Tarjan's path expression algorithm, page 13"""
-    numeral_graph = networkx.convert_node_labels_to_integers(
-        graph, label_attribute="original", first_label=first_number
-    )
-
     # Initialize
-    N = len(numeral_graph)
-    P = {}
+    P = defaultdict(lambda: RExp.null())
 
-    for v in range(N):
-        for w in range(N):
-            P[v, w] = RExp.null()
-
-    for (h, t, data) in numeral_graph.edges(data=data):
+    for (h, t, data) in graph.edges(data=data):
         P[h, t] = (P[h, t] | RExp.node(data)).simplify()
 
     # Loop
-    for v in range(N):
+    for v in range(min_num, max_num):
         P[v, v] = P[v, v].star().simplify()
 
-        for u in range(v + 1, N):
+        for u in range(v + 1, max_num):
             if P[u, v].is_null:
                 continue
         
             P[u, v] = (P[u, v] & P[v, v]).simplify()
 
-            for w in range(v + 1, N):
+            for w in range(v + 1, max_num):
                 if P[v, w].is_null:
                     continue
 
-                P[u, w] = P[u, w] | (P[u, v] & P[v, w])
-                P[u, w].simplify()
+                P[u, w] = (P[u, w] | (P[u, v] & P[v, w]).simplify()).simplify()
 
-    return numeral_graph, P
+    return P
+
+
+PathSeq = List[Tuple[Tuple[int, int], RExp]]
+
 
 def compute_path_sequence(
-    numbered_graph: networkx.DiGraph, P: Dict[Tuple[int, int], RExp]
-) -> List[Tuple[RExp, int, int]]:
+    P: Dict[Tuple[int, int], RExp],
+    min_num: int,
+    max_num: int,
+) -> PathSeq:
     """Compute path sequence from the ELIMINATE procedure, per Theorem 4 on 
     page 14
     """
-    N = len(numbered_graph)
-    output = []
 
-    for u in range(N):
-        for v in range(u, N):
-            expr = P[u, v]
-            if not expr.is_empty and not expr.is_null:
-                output.append((expr, u, v))
-    
-    for u in range(N - 1, -1, -1):
-        for w in range(0, u):
-            expr = P[u, w]
-            if not expr.is_empty and not expr.is_null:
-                output.append((expr, u, w))
+    # Compute ascending and descending path sequences that are in the queried
+    # range for this path sequence
+    valid_range = range(min_num, max_num)
+    ascending = []
+    descending = []
+
+    for indices, expr in P.items():
+        start, end = indices
+
+        if start not in valid_range or end not in valid_range:
+            continue
+
+        if expr.is_empty or expr.is_null:
+            continue
+        
+        if start <= end:
+            ascending.append((indices, expr))
+        else:
+            descending.append((indices, expr))
+
+    # Sort by the starting node 
+    output = (
+        sorted(ascending, key=lambda pair: pair[0][0])
+        + sorted(descending, key=lambda pair: pair[0][0], reverse=True)
+    )
 
     return output
 
 
 def solve_paths_from(
-    numeral_graph: networkx.DiGraph,
-    path_seq: List[Tuple[RExp, int, int]],
-    source: int
+    path_seq: PathSeq, source: int
 ) -> Dict[Tuple[int, int], RExp]:
     """Solve path expressions from a source given a path sequence for a 
     numbered graph, per procedure SOLVE on page 9 of Tarjan
     """
-    P = {}
-
+    P = defaultdict(lambda: RExp.null())
     P[source, source] = RExp.empty()
 
-    for v in numeral_graph.nodes - {source}:
-        P[source, v] = RExp.null()
-
-    for i in range(len(path_seq)):
-        P_i, v_i, w_i = path_seq[i]
-
+    for (v_i, w_i), P_i in path_seq:
         if v_i == w_i:
             P[source, v_i] = (P[source, v_i] & P_i).simplify()
         else:
-            P[source, w_i] = (P[source, w_i] | (P[source, v_i] & P_i)).simplify()
+            P[source, w_i] = (
+                P[source, w_i] | (P[source, v_i] & P_i).simplify()
+            ).simplify()
 
     return P
 
@@ -198,117 +201,142 @@ def from_numeral_graph(numeral_graph: networkx.DiGraph, number: int) -> Any:
     return numeral_graph.nodes[number]["original"]
 
 
-def topological_numbering(graph: networkx.DiGraph) -> networkx.DiGraph:
+GraphNumbering = Dict[Any, int]
+
+
+def topological_numbering(
+    graph: networkx.DiGraph
+) -> Tuple[GraphNumbering, networkx.DiGraph]:
     """ Generate a numeral graph from the topological sort of the DAG """
     nodes = list(networkx.topological_sort(graph))
     numbering = {node: num for num, node in enumerate(nodes)}
     rev_numbering = dict(enumerate(nodes))
-    numeral_graph = networkx.relabel_nodes(graph, numbering, copy=True)
+    numeral_graph = networkx.relabel_nodes(graph, numbering)
     networkx.set_node_attributes(numeral_graph, rev_numbering, name="original")
-    return numeral_graph
+    return numbering, numeral_graph
 
 
-def dag_path_seq(graph: networkx.DiGraph, data: str) -> Tuple[networkx.DiGraph, List[Tuple[RExp, int, int]]]:
+def dag_path_seq(graph: networkx.DiGraph, data: str) -> PathSeq:
     """Per Theorem 5, Page 14 of the paper, generate path sequences for a 
     directed acyclic graph in a more efficient manner.
     """
-    numeral_graph = topological_numbering(graph)
     # Sort edges by increasing source node
-    edges = list(numeral_graph.edges(data=data))
+    edges = list(graph.edges(data=data))
     edges.sort(key=lambda x: x[0])
-    return numeral_graph, [(RExp.node(e), h, t) for h, t, e in edges]
+    return [((h, t), RExp.node(e)) for h, t, e in edges]
 
 
 def scc_decompose_path_seq(
     graph: networkx.DiGraph, data: str
-) -> Tuple[networkx.DiGraph, List[Tuple[RExp, int, int]]]:
+) -> Tuple[GraphNumbering, PathSeq]:
     """ Per Theorem 6, Page 14 of the paper, generate path sequences for a graph
     that has been decomposed into strongly connected components.
     """
     # Generate the graph of SCCs
     component_graph = networkx.condensation(graph)
 
-    component_graph_nodes = networkx.topological_sort(component_graph)
-    component_numbering = []
+    scc_numberings = {}
+    graph_numbering = {}
+    curr_number = 0
 
-    # The goal here it to assign a number to each node in the components graph
-    # such that for any edge G_i -> G_j, i < j. Typically this is just a 
-    # topological sort, however, when we construct the final path sequence we
-    # also want to be able to insert our intra-SCC nodes into the path sequence
-    # and hold the property that any node in G_i has a number less than G_j if
-    # there exists an edge from G_i -> G_j. To do so we go through the nodes of
-    # the condensation of the graph and assign numbers to the nodes that 
-    # represent the SCCs that increase by the size of the SCC (plus one for the
-    # SCC node itself). 
-    for node in component_graph_nodes:
-        num_members = len(component_graph.nodes[node]["members"])
-        preceding = (
-            component_numbering[-1]
-            if len(component_numbering) > 0 else 0
-        ) + 1
-        component_numbering.append(num_members + preceding)
+    # Generate a numbering for each SCC in increasing topological order to 
+    # maintain that any edge G_i -> G_j whare are in SCCs S_i and S_j 
+    # respectively, if theres an edge in the condensation from S_i -> S_j then 
+    # G_i < G_j
+    for component in networkx.topological_sort(component_graph):
+        # Generate numbering for this SCC, we do so in a sorted order as 
+        # NetworkX returns a set whose non-deterministic ordering can return
+        # inconsistent results
+        scc = component_graph.nodes[component]["members"]
+        start_number = curr_number
 
-    component_numbering = dict(zip(component_graph_nodes, component_numbering))
-    networkx.relabel_nodes(component_graph, component_numbering)
+        for elem in sorted(scc):
+            graph_numbering[elem] = curr_number
+            curr_number += 1
 
-    output = []
-    merged_graph = networkx.DiGraph()
-    scc_seqs = []
+        # Update whole-graph numbering, and keep note of SCC ranges
+        scc_numberings[component] = (start_number, curr_number)
+
+    # Do the actual relabeling of the graph to the numeral graph
+    number_graph = networkx.relabel_nodes(graph, graph_numbering)
+    rev_numbering = {v: k for k, v in graph_numbering.items()}
+    networkx.set_node_attributes(number_graph, rev_numbering, name="original")
+
+    scc_seqs: List[Tuple[int, PathSeq]] = []
 
     # Do ELIMINATE for every SCC, and make a merged graph with all the 
     # numberings available.
-    for scc, members in component_graph.nodes(data="members"):
-        scc_graph = graph.subgraph(members)
-        scc_number_graph, P = eliminate(scc_graph, data, first_number=scc)
-        seqs = compute_path_sequence(scc_number_graph, P)
-        scc_seqs.append((scc, seqs))
+    for component in networkx.topological_sort(component_graph):
+        min_num, max_num = scc_numberings[component]
+        P = eliminate(number_graph, data, min_num, max_num)
+        seqs = compute_path_sequence(P, min_num, max_num)
+        scc_seqs.append((component, seqs))
 
-        merged_graph = networkx.compose(merged_graph, scc_number_graph)
+    output: PathSeq = []
 
-    global_numbering = {
-        original: number
-        for number, original in merged_graph.nodes(data="original")
-    }
-
-    output = []
-
-    for scc, seqs in scc_seqs:
+    for component, seqs in scc_seqs:
         # Add the intra-SCC path sequence nodes
         output += seqs
 
         # Add inter-SCC path sequence nodes
-        members = component_graph.nodes[scc]["members"]
-        for in_edge, out_edge, data in graph.out_edges(members, data=data):
-            if out_edge not in members:
-                in_num = global_numbering[in_edge]
-                out_num = global_numbering[out_edge]
-                output.append((RExp.node(data), in_num, out_num))
+        scc = component_graph.nodes[component]["members"]
 
-    return merged_graph, output
+        for in_edge, out_edge, label in graph.out_edges(scc, data=data):
+            if out_edge not in scc:
+                in_num = graph_numbering[in_edge]
+                out_num = graph_numbering[out_edge]
+                output.append(((in_num, out_num), RExp.node(label)))
+
+    return graph_numbering, output
+
 
 def path_expression_between(
     graph: networkx.DiGraph,
     data: str,
     source: Any,
     sink: Any,
-    no_decompose=True,
+    decompose=True,
 ):
     """Per Lemma 1 on page 9, handle output of SOLVE procedure"""
     # First, compute path sequences of the graph
-    if no_decompose:
-        number_graph, P = eliminate(graph, data)
-        seqs = compute_path_sequence(number_graph, P)
+    if not decompose:
+        # Generate numberings for the nodes
+        number_graph = networkx.convert_node_labels_to_integers(
+            graph, label_attribute="original"
+        )
+
+        numbering = {
+            original: number
+            for number, original in number_graph.nodes(data="original")
+        }
+
+        N = len(number_graph.nodes)
+        P = eliminate(number_graph, data, 0, N)
+        seqs = compute_path_sequence(P, 0, N)
     elif networkx.is_directed_acyclic_graph(graph):
-        number_graph, seqs = dag_path_seq(graph, data)
+        # Fast path for DAGs
+        numbering, number_graph = topological_numbering(graph)
+        seqs = dag_path_seq(number_graph, data)
     else:
-        number_graph, seqs = scc_decompose_path_seq(graph, data)
-
-    # Compute map of number to original node for back-translation
-    numbering = {
-        original: number
-        for number, original in number_graph.nodes(data="original")
-    }
-
+        numbering, seqs = scc_decompose_path_seq(graph, data)
+    
     # Solve all paths for source, and output the one for (source, sink)
-    paths = solve_paths_from(number_graph, seqs, numbering[source])
+    paths = solve_paths_from(seqs, numbering[source])
     return paths[(numbering[source], numbering[sink])]
+
+
+if __name__ == "__main__":
+    test = networkx.DiGraph()
+
+    test.add_edge('a', 'b', data='A')
+    test.add_edge('b', 'c', data='B')
+    test.add_edge('b', 'b', data='C')
+    test.add_edge('c', 'd', data='D')
+    test.add_edge('d', 'd', data='E')
+
+    test.add_edge('a', 'e', data='F')
+    test.add_edge('e', 'f', data='G')
+    test.add_edge('f', 'e', data='H')
+    test.add_edge('e', 'd', data='I')
+
+    print(path_expression_between(test, 'data', 'a', 'd', True))
