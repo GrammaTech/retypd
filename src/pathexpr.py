@@ -159,11 +159,12 @@ def compute_path_sequence(
         if start not in valid_range or end not in valid_range:
             continue
 
-        if expr.is_empty or expr.is_null:
+        if expr.is_null:
             continue
         
         if start <= end:
-            ascending.append((indices, expr))
+            if not expr.is_empty:
+                ascending.append((indices, expr))
         else:
             descending.append((indices, expr))
 
