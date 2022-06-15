@@ -10,7 +10,10 @@ def generate_test(edges, path_exprs):
     graph = networkx.DiGraph()
 
     for (src, dest, label) in edges:
-        graph.add_edge(src, dest, label=label)
+        if label is not None:
+            graph.add_edge(src, dest, label=label)
+        else:
+            graph.add_edge(src, dest)
 
     def generated(self):
         for (source, dest, expr) in path_exprs:
@@ -100,5 +103,40 @@ class PathExprTest(unittest.TestCase):
             ('a', 'b', '(A U (((A . B) . ((C . A) . B)*) . (C . A)))'),
             ('b', 'c', '(B . ((C . A) . B)*)'),
             ('a', 'c', '((A . B) . ((C . A) . B)*)'),
+        ]
+    )
+
+    test_empty_label = generate_test(
+        [
+            ('a', 'b', 'A'),
+            ('b', 'c', None)
+        ],
+        [
+            ('a', 'b', 'A'),
+            ('a', 'c', 'A')
+        ]
+    )
+
+    test_empty_loop = generate_test(
+        [
+            ('a', 'b', 'A'),
+            ('b', 'c', 'B'),
+            ('c', 'a', None),
+        ],
+        [
+            ('a', 'b', '(A U (((A . B) . (A . B)*) . A))'),
+            ('a', 'c', '((A . B) . (A . B)*)')
+        ]
+    )
+
+    test_empty_self_loop = generate_test(
+        [
+            ('a', 'b', 'A'),
+            ('b', 'b', None),
+            ('b', 'c', 'B'),
+        ],
+        [
+            ('a', 'b', 'A'),
+            ('a', 'c', '(A . B)')
         ]
     )

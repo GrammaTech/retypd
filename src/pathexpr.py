@@ -54,6 +54,20 @@ class RExp:
     def node(cls, data) -> RExp:
         return RExp(cls.Label.NODE, data=data)
 
+    @classmethod
+    def from_graph_edge(
+        cls, graph: networkx.DiGraph, src: Any, dest: Any, data: str
+    ) -> RExp:
+        """Generate a regular expression from a graph node. For no label on 
+        data we assume an empty string, otherwise a node labeled by that label
+        """
+        attrs = graph.edges[src, dest]
+
+        if data not in attrs:
+            return cls.empty()
+        else:
+            return cls.node(attrs[data])
+
     def simplify(self) -> RExp:
         """Regular expression simplification procedure, page 9"""
         children = [child.simplify() for child in self.children]
@@ -113,8 +127,9 @@ def eliminate(
     # Initialize
     P = defaultdict(lambda: RExp.null())
 
-    for (h, t, data) in graph.edges(data=data):
-        P[h, t] = (P[h, t] | RExp.node(data)).simplify()
+    for h, t in graph.edges:
+        edge = RExp.from_graph_edge(graph, h, t, data)
+        P[h, t] = (P[h, t] | edge).simplify()
 
     # Loop
     for v in range(min_num, max_num):
@@ -163,8 +178,7 @@ def compute_path_sequence(
             continue
         
         if start <= end:
-            if not expr.is_empty:
-                ascending.append((indices, expr))
+            ascending.append((indices, expr))
         else:
             descending.append((indices, expr))
 
@@ -222,9 +236,10 @@ def dag_path_seq(graph: networkx.DiGraph, data: str) -> PathSeq:
     directed acyclic graph in a more efficient manner.
     """
     # Sort edges by increasing source node
-    edges = list(graph.edges(data=data))
-    edges.sort(key=lambda x: x[0])
-    return [((h, t), RExp.node(e)) for h, t, e in edges]
+    edges = sorted(graph.edges(), key=lambda x: x[0])
+    return [
+        ((h, t), RExp.from_graph_edge(graph, h, t, data)) for h, t in edges
+    ]
 
 
 def scc_decompose_path_seq(
@@ -265,8 +280,8 @@ def scc_decompose_path_seq(
 
     scc_seqs: List[Tuple[int, PathSeq]] = []
 
-    # Do ELIMINATE for every SCC, and make a merged graph with all the 
-    # numberings available.
+    # Do ELIMINATE for every SCC, by using a slice of the graph from the
+    # min/max of the given SCC's numbering
     for component in networkx.topological_sort(component_graph):
         min_num, max_num = scc_numberings[component]
         P = eliminate(number_graph, data, min_num, max_num)
@@ -282,11 +297,16 @@ def scc_decompose_path_seq(
         # Add inter-SCC path sequence nodes
         scc = component_graph.nodes[component]["members"]
 
-        for in_edge, out_edge, label in graph.out_edges(scc, data=data):
+        for in_edge, out_edge in graph.out_edges(scc):
             if out_edge not in scc:
                 in_num = graph_numbering[in_edge]
                 out_num = graph_numbering[out_edge]
-                output.append(((in_num, out_num), RExp.node(label)))
+                output.append(
+                    (
+                        (in_num, out_num),
+                        RExp.from_graph_edge(graph, in_edge, out_edge, data),
+                    )
+                )
 
     return graph_numbering, output
 
@@ -324,20 +344,3 @@ def path_expression_between(
     # Solve all paths for source, and output the one for (source, sink)
     paths = solve_paths_from(seqs, numbering[source])
     return paths[(numbering[source], numbering[sink])]
-
-
-if __name__ == "__main__":
-    test = networkx.DiGraph()
-
-    test.add_edge('a', 'b', data='A')
-    test.add_edge('b', 'c', data='B')
-    test.add_edge('b', 'b', data='C')
-    test.add_edge('c', 'd', data='D')
-    test.add_edge('d', 'd', data='E')
-
-    test.add_edge('a', 'e', data='F')
-    test.add_edge('e', 'f', data='G')
-    test.add_edge('f', 'e', data='H')
-    test.add_edge('e', 'd', data='I')
-
-    print(path_expression_between(test, 'data', 'a', 'd', True))
