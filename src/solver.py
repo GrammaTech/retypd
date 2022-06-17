@@ -91,6 +91,9 @@ class EquivRelation:
     """
     This class represents an equivalence relation
     that can be computed incrementally
+
+    TODO: Consider reimplementing using disjoint-set data structure
+    for better performance.
     """
 
     def __init__(self, elems: Set[DerivedTypeVariable]) -> None:
