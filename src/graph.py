@@ -263,9 +263,8 @@ class ConstraintGraph:
                     for (label, origin_z) in reaching_R.get(head_x, set()):
                         if label == capability_l:
                             add_edge(origin_z, tail_y)
-            contravariant_vars = list(
-                filter(is_contravariant, self.graph.nodes)
-            )
+
+            contravariant_vars = filter(is_contravariant, self.graph.nodes)
             for x in contravariant_vars:
                 for (capability_l, origin_z) in reaching_R.get(x, set()):
                     label = None
