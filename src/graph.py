@@ -294,31 +294,6 @@ class ConstraintGraph:
             return edge_str
 
     @staticmethod
-    def graph_to_dot(name: str, graph: networkx.DiGraph) -> str:
-        nt = os.linesep + "\t"
-
-        def edge_to_str(edge: Tuple[Node, Node]) -> str:
-            (sub, sup) = edge
-            label = graph[sub][sup].get("label")
-            label_str = ""
-            if label:
-                label_str = f' [label="{label}"]'
-            return f'"{sub}" -> "{sup}"{label_str};'
-
-        def node_to_str(node: Node) -> str:
-            return f'"{node}";'
-
-        return (
-            f"digraph {name} {{{nt}{nt.join(map(node_to_str, graph.nodes))}{nt}"
-            f"{nt.join(map(edge_to_str, graph.edges))}{os.linesep}}}"
-        )
-
-    @staticmethod
-    def write_to_dot(name: str, graph: networkx.DiGraph) -> None:
-        with open(f"{name}.dot", "w") as dotfile:
-            print(ConstraintGraph.graph_to_dot(name, graph), file=dotfile)
-
-    @staticmethod
     def graph_to_str(graph: networkx.DiGraph) -> str:
         nt = os.linesep + "\t"
         edge_to_str = lambda edge: ConstraintGraph.edge_to_str(graph, edge)
