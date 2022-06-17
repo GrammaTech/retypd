@@ -53,7 +53,7 @@ class EdgeLabel:
         self._str = f"{type_str} {self.capability}"
         self._hash = hash(self.capability) ^ hash(self.kind)
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: EdgeLabel) -> bool:
         return (
             isinstance(other, EdgeLabel)
             and self.capability == other.capability
@@ -101,7 +101,7 @@ class Node:
             self._str = str(self.base) + variance
         self._hash = hash((self.base, self.suffix_variance, self._forgotten))
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: Node) -> bool:
         return (
             isinstance(other, Node)
             and self.base == other.base
