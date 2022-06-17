@@ -70,8 +70,8 @@ class LabelNode:
     that it points to.
     There can be multiple LabelNodes pointing to the
     same sketch node, since a type can have multiple
-    recursive references.E.g. a doubly linked list
-    will have two recursive types 'prev' and 'next'.
+    recursive references (e.g., 'previous' and
+    'next' references in a doubly linked list).
     """
 
     counter = 0
