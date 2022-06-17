@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 from enum import Enum, unique
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple
 from .schema import (
     AccessPathLabel,
     ConstraintSet,
