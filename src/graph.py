@@ -20,6 +20,7 @@
 # reflect the position or policy of the Government and no official
 # endorsement should be inferred.
 
+from __future__ import annotations
 from enum import Enum, unique
 from typing import Any, Dict, Optional, Set, Tuple
 from .schema import (
@@ -113,7 +114,7 @@ class Node:
 
     def forget_once(
         self,
-    ) -> Tuple[Optional[AccessPathLabel], Optional["Node"]]:
+    ) -> Tuple[Optional[AccessPathLabel], Optional[Node]]:
         """ "Forget" the last element in the access path, creating a new Node. The new Node has
         variance that reflects this change.
         """
@@ -130,7 +131,7 @@ class Node:
             )
         return (None, None)
 
-    def recall(self, label: AccessPathLabel) -> "Node":
+    def recall(self, label: AccessPathLabel) -> Node:
         """ "Recall" label, creating a new Node. The new Node has variance that reflects this
         change.
         """
@@ -142,13 +143,13 @@ class Node:
     def __str__(self) -> str:
         return self._str
 
-    def split_recall_forget(self) -> "Node":
+    def split_recall_forget(self) -> Node:
         """Get a duplicate of self for use in the post-recall subgraph."""
         return Node(
             self.base, self.suffix_variance, Node.Forgotten.POST_FORGET
         )
 
-    def inverse(self) -> "Node":
+    def inverse(self) -> Node:
         """Get a Node identical to this one but with inverted variance."""
         return Node(
             self.base, Variance.invert(self.suffix_variance), self._forgotten
