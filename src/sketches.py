@@ -259,7 +259,7 @@ class Sketches(Loggable):
                 # addition to subtype constraints
                 if (
                     len(constraints) == 0
-                    and len(list(self.sketches.successors(node))) == 0
+                    and next(self.sketches.successors(node), None) is None
                 ):
                     fresh_var = fresh_var_factory.fresh_var()
                     if node.dtv.path_variance == Variance.CONTRAVARIANT:
