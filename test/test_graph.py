@@ -8,8 +8,8 @@ from retypd import (
     SchemaParser,
 )
 
-from retypd.schema import Variance
-from retypd.graph import ConstraintGraph, Node
+from retypd.schema import DerefLabel, InLabel, LoadLabel, OutLabel, Variance
+from retypd.graph import ConstraintGraph, EdgeLabel, Node
 
 VERBOSE_TESTS = False
 
@@ -66,19 +66,21 @@ class ConstraintGraphTest(unittest.TestCase):
             set(graph.nodes),
         )
 
+        forget = EdgeLabel.Kind.FORGET
+        recall = EdgeLabel.Kind.RECALL
         edges = {
             # one path from "f" to "A"
-            (f_cn, fin0_co),
-            (fin0_co, a_load_0_co),
-            (a_load_0_co, a_load_co),
-            (a_load_co, a_co),
+            (f_cn, fin0_co, EdgeLabel(InLabel(0), recall)),
+            (fin0_co, a_load_0_co, None),
+            (a_load_0_co, a_load_co, EdgeLabel(DerefLabel(4, 0), forget)),
+            (a_load_co, a_co, EdgeLabel(LoadLabel.instance(), forget)),
             # the second path from "A" to "f"
-            (a_cn, a_load_cn),
-            (a_load_cn, a_load_0_cn),
-            (a_load_0_cn, fin0_cn),
-            (fin0_cn, f_co),
+            (a_cn, a_load_cn, EdgeLabel(LoadLabel.instance(), recall)),
+            (a_load_cn, a_load_0_cn, EdgeLabel(DerefLabel(4, 0), recall)),
+            (a_load_0_cn, fin0_cn, None),
+            (fin0_cn, f_co, EdgeLabel(InLabel(0), forget)),
         }
-        self.assertEqual(edges, set(graph.edges()))
+        self.assertEqual(edges, set(graph.edges(data="label")))
 
     def test_two_constraints(self):
         """
@@ -103,14 +105,16 @@ class ConstraintGraphTest(unittest.TestCase):
         a_cn = Node(SchemaParser.parse_variable("A"), Variance.CONTRAVARIANT)
         c_cn = Node(SchemaParser.parse_variable("C"), Variance.CONTRAVARIANT)
 
+        forget = EdgeLabel.Kind.FORGET
+        recall = EdgeLabel.Kind.RECALL
         edges = {
             # path from A to C
-            (a_co, b_co),
-            (b_co, b_out_co),
-            (b_out_co, c_co),
+            (a_co, b_co, None),
+            (b_co, b_out_co, EdgeLabel(OutLabel.instance(), recall)),
+            (b_out_co, c_co, None),
             # path from C to A
-            (c_cn, b_out_cn),
-            (b_out_cn, b_cn),
-            (b_cn, a_cn),
+            (c_cn, b_out_cn, None),
+            (b_out_cn, b_cn, EdgeLabel(OutLabel.instance(), forget)),
+            (b_cn, a_cn, None),
         }
-        self.assertEqual(edges, set(graph.edges()))
+        self.assertEqual(edges, set(graph.edges(data="label")))
