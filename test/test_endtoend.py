@@ -439,7 +439,6 @@ class RecursiveSchemaTest(unittest.TestCase):
             constraints,
             callgraph,
             lattice=lattice,
-            config=SolverConfig(max_paths_per_root=1000),
         )
 
         gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
