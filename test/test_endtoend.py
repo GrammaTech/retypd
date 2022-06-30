@@ -88,6 +88,9 @@ def test_recursive():
     # Inter-procedural results (sketches)
     F_sketches = sketches[F]
     # Equivalent to "#SuccessZ ⊑ F.out"
+    assert parse_cs("#SuccessZ ⊑ F.out") in gen_const[F]
+    assert parse_cs("F.in_0.load.σ4@4 ⊑ #FileDescriptor") in gen_const[F]
+    # Equivalent check in sketches
     assert F_sketches.lookup(parse_var("F.out")).lower_bound == parse_var(
         "#SuccessZ"
     )
@@ -654,3 +657,68 @@ def test_tight_bounds_out():
     f_ft = output[f]
     assert isinstance(f_ft, FunctionType)
     assert isinstance(f_ft.return_type, IntType)
+
+
+def test_regression2():
+        constraints = {
+            "test_ll": [
+                "RBP_1998 ⊑ RBP_2001",
+                "RDX_2034 ⊑ RDX_2042",
+                "RAX_2005 ⊑ RAX_2009",
+                "RAX_2062 ⊑ RAX_2066",
+                "RBP_1998 ⊑ RBP_2048",
+                "RAX_2038 ⊑ RAX_2042",
+                "RSP_2083 ⊑ RSP_2084",
+                "RSP_1997 ⊑ RSP_2083",
+                "RAX_2062.load.σ8@8 ⊑ RAX_2062",
+                "stack_2001 ⊑ RAX_2005",
+                "RBP_1998 ⊑ RBP_2058",
+                "RDX_2042 ⊑ RAX_2042.store.σ8@8",
+                "stack_2001 ⊑ RAX_2058",
+                "test_ll.in_0 ⊑ RDI_2001",
+                "stack_2001 ⊑ RAX_2038",
+                "RAX_2070.load.σ8@8 ⊑ RDX_2070",
+                "RAX_2074 ⊑ test_ll.out",
+                "RAX_2066 ⊑ RAX_2070",
+                "stack_2001 ⊑ RAX_2016",
+                "RAX_2030.load.σ8@8 ⊑ RAX_2030",
+                "RAX_2074 ⊑ RAX_2078",
+                "RBP_1998 ⊑ RBP_2005",
+                "RBP_1998 ⊑ RBP_2074",
+                "RAX_2034.load.σ8@8 ⊑ RDX_2034",
+                "RAX_2066.load.σ8@8 ⊑ RAX_2066",
+                "RAX_2038 ⊑ test_ll.out",
+                "RAX_2026 ⊑ RAX_2030",
+                "RSP_1997 ⊑ RSP_1998",
+                "RAX_2016 ⊑ RAX_2020",
+                "RAX_2058 ⊑ RAX_2062",
+                "int ⊑ RAX_2052.store.σ4@0",
+                "RBP_1998 ⊑ RBP_2038",
+                "RDX_2070 ⊑ RDX_2078",
+                "RAX_2009 ⊑ RAX_2011",
+                "RDX_2078 ⊑ RAX_2078.store.σ8@8",
+                "RBP_1998 ⊑ RBP_2016",
+                "RAX_2048 ⊑ RAX_2052",
+                "RDI_2001 ⊑ stack_2001",
+                "RAX_2011 ⊑ int",
+                "int ⊑ RAX_2020.store.σ4@0",
+                "RAX_2009.load.σ4@0 ⊑ RAX_2009",
+                "RBP_1998 ⊑ RBP_2026",
+                "stack_2001 ⊑ RAX_2048",
+                "RFLAGS_2011 ⊑ RFLAGS_2014",
+                "stack_2001 ⊑ RAX_2074",
+                "RAX_2030 ⊑ RAX_2034",
+                "stack_2001 ⊑ RAX_2026",
+                "RSP_1998 ⊑ RBP_1998",
+            ]
+        }
+
+        callgraph = {"test_ll": []}
+        lattice = CLattice()
+        (gen_cs, sketches) = compute_sketches(
+            constraints,
+            callgraph,
+            lattice=lattice,
+            config=SolverConfig(),
+        )
+        # TODO add some checks
