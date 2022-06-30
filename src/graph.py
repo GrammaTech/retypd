@@ -304,3 +304,21 @@ class ConstraintGraph:
         return (
             f"ConstraintGraph:{nt}{ConstraintGraph.graph_to_str(self.graph)}"
         )
+
+
+def remove_unreachable_states(
+    graph: networkx.DiGraph, start_nodes: Set[Node], end_nodes: Set[Node]
+) -> networkx.DiGraph:
+    """
+    Remove states that not reachable from start_nodes or do not reach end_nodes.
+    """
+    reachable_nodes = set(
+        networkx.multi_source_dijkstra_path_length(graph, start_nodes).keys()
+    )
+    rev_reachable_nodes = set(
+        networkx.multi_source_dijkstra_path_length(
+            graph.reverse(), end_nodes
+        ).keys()
+    )
+    keep = reachable_nodes & rev_reachable_nodes
+    return graph.subgraph(keep)
