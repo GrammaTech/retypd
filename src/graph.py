@@ -60,6 +60,11 @@ class EdgeLabel:
             and self.kind == other.kind
         )
 
+    def __lt__(self, other: EdgeLabel) -> bool:
+        if not isinstance(other, EdgeLabel):
+            raise ValueError(f"Cannot compare EdgeLabel to {type(other)}")
+        return self._str < other._str
+
     def __hash__(self) -> int:
         return self._hash
 
@@ -141,6 +146,9 @@ class Node:
         return Node(DerivedTypeVariable(self.base.base, path), variance)
 
     def __str__(self) -> str:
+        return self._str
+
+    def __repr__(self) -> str:
         return self._str
 
     def split_recall_forget(self) -> Node:
@@ -308,10 +316,13 @@ class ConstraintGraph:
 
 def remove_unreachable_states(
     graph: networkx.DiGraph, start_nodes: Set[Node], end_nodes: Set[Node]
-) -> networkx.DiGraph:
+) -> Tuple[networkx.DiGraph, Set[Node], Set[Node]]:
     """
     Remove states that not reachable from start_nodes or do not reach end_nodes.
     """
+    if len(graph) == 0 or len(start_nodes) == 0 or len(end_nodes) == 0:
+        return graph, set(), set()
+
     reachable_nodes = set(
         networkx.multi_source_dijkstra_path_length(graph, start_nodes).keys()
     )
@@ -321,4 +332,6 @@ def remove_unreachable_states(
         ).keys()
     )
     keep = reachable_nodes & rev_reachable_nodes
-    return graph.subgraph(keep)
+    keep_start = start_nodes & keep
+    keep_end = end_nodes & keep
+    return graph.subgraph(keep), keep_start, keep_end
