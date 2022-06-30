@@ -25,7 +25,9 @@
 
 from __future__ import annotations
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Any
-from .graph import EdgeLabel, Node, ConstraintGraph
+
+from .pathexpr import RExp, scc_decompose_path_seq, solve_paths_from
+from .graph import EdgeLabel, Node, ConstraintGraph, remove_unreachable_states
 from .schema import (
     ConstraintSet,
     DerivedTypeVariable,
@@ -58,9 +60,20 @@ def dump_labeled_graph(graph, label, filename):
     for i, n in enumerate(graph.nodes):
         nodes[n] = i
         G.node(f"n{i}", label=str(n))
-    for head, tail in graph.edges:
-        label = str(graph.get_edge_data(head, tail).get("label", "<NO LABEL>"))
-        G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
+    if isinstance(graph, networkx.MultiDiGraph):
+        for head, tail, edge_id in graph.edges:
+            label = str(
+                graph.get_edge_data(head, tail, edge_id).get(
+                    "label", "<NO LABEL>"
+                )
+            )
+            G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
+    else:
+        for head, tail in graph.edges:
+            label = str(
+                graph.get_edge_data(head, tail).get("label", "<NO LABEL>")
+            )
+            G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
     G.render(filename, format="svg", view=False)
 
 
@@ -76,6 +89,13 @@ class SolverConfig:
     max_paths_per_root: int = 2**64
     # Maximum paths total to explore per SCC
     max_total_paths: int = 2**64
+    # Use path expressions or naive exploration of the graph.
+    use_path_expressions: bool = True
+    # Restrict graph to reachable nodes from and to endpoints
+    # before doing the path exploration.
+    restrict_graph_to_reachable: bool = True
+    # Compute constraints between interesting non-primitive types
+    compute_type_schema: bool = True
     # Keep output constraints after use; set to False to save memory
     keep_output_constraints: bool = True
     # More precise global handling
@@ -125,6 +145,45 @@ class EquivRelation:
         (represented as frozen set) in the equivalence relation.
         """
         return set(self._equiv_repr.values())
+
+
+def cross_concatenation(
+    prefix_list: List[List[Any]], postfix_list: List[List[Any]]
+):
+    combined = []
+    for prefix in prefix_list:
+        for postfix in postfix_list:
+            combined.append(prefix + postfix)
+    return combined
+
+
+def enumerate_non_looping_paths(path_expr: RExp) -> List[List[EdgeLabel]]:
+    """
+    Given a path expression, return a list of all the paths
+    that do not involve loops.
+    """
+    if path_expr.label == RExp.Label.NULL:
+        return []
+    elif path_expr.label == RExp.Label.EMPTY:
+        return [[]]
+    elif path_expr.label == RExp.Label.NODE:
+        return [[path_expr.data]]
+    # ignore looping paths
+    elif path_expr.label == RExp.Label.STAR:
+        return [[]]
+    elif path_expr.label == RExp.Label.DOT:
+        paths = [[]]
+        for child in path_expr.children:
+            paths = cross_concatenation(
+                paths, enumerate_non_looping_paths(child)
+            )
+        return paths
+    # path_expr.label == RExp.Label.OR
+    else:
+        paths = []
+        for child in path_expr.children:
+            paths.extend(enumerate_non_looping_paths(child))
+        return paths
 
 
 # There are two main aspects created by the solver: output constraints and sketches. The output
@@ -341,8 +400,9 @@ class Solver(Loggable):
                 graph.add_edge(head, forget_tail, **atts)
             graph.add_edge(forget_head, forget_tail, **atts)
 
+    @staticmethod
     def _maybe_constraint(
-        self, origin: Node, dest: Node, string: List[EdgeLabel]
+        origin: Node, dest: Node, string: List[EdgeLabel]
     ) -> Optional[SubtypeConstraint]:
         """Generate constraints by adding the forgets in string to origin and the recalls in string
         to dest. If both of the generated vertices are covariant (the empty string's variance is
@@ -373,24 +433,41 @@ class Solver(Loggable):
                 return SubtypeConstraint(lhs_var, rhs_var)
         return None
 
-    def _generate_constraints(
+    def _pathexpr_generate_constraints_from_to(
         self,
-        initial_constraints: ConstraintSet,
-        endpoints: Set[DerivedTypeVariable],
+        graph: networkx.DiGraph,
+        start_nodes: Set[Node],
+        end_nodes: Set[Node],
     ) -> ConstraintSet:
-        """Generate final constraints from a set of initial constrains
-        by generating a graph and exploring all its paths.
-
-        The algorithm avoids cycles by keeping track of the visited nodes so far.
         """
-        graph = ConstraintGraph(initial_constraints).graph
-        # Uncomment this out to dump the constraint graph
-        # name ="graph"
-        # dump_labeled_graph(graph, name, f"/tmp/scc_{name}")
-        Solver._recall_forget_split(graph)
-
-        npaths = 0
+        Generate constraints based on the computation of path expressions.
+        """
+        numbering, path_seq = scc_decompose_path_seq(graph, "label")
         constraints = ConstraintSet()
+        for start_node in start_nodes:
+            path_exprs = solve_paths_from(path_seq, numbering[start_node])
+            for end_node in end_nodes:
+                indices = (numbering[start_node], numbering[end_node])
+                path_expr = path_exprs[indices]
+                for path in enumerate_non_looping_paths(path_expr):
+                    constraint = Solver._maybe_constraint(
+                        start_node, end_node, path
+                    )
+                    if constraint:
+                        constraints.add(constraint)
+        return constraints
+
+    def _naive_generate_constraints_from_to(
+        self,
+        graph: networkx.DiGraph,
+        start_nodes: Set[Node],
+        end_nodes: Set[Node],
+    ) -> ConstraintSet:
+        """
+        Generate constraints based on the naive exploration of the graph.
+        """
+        constraints = ConstraintSet()
+        npaths = 0
         # On large procedures, the graph this is exploring can be quite large (hundreds of nodes,
         # thousands of edges). This can result in an insane number of paths - most of which do not
         # result in a constraint, and most of the ones that do result in constraints are redundant.
@@ -399,7 +476,7 @@ class Solver(Loggable):
             path: List[Node] = [],
             string: List[EdgeLabel] = [],
         ) -> None:
-            """Find all non-empty paths that begin and end on members of all_endpoints. Return
+            """Find all non-empty paths that begin at start_nodes and end at end_nodes. Return
             the list of labels encountered along the way as well as the current_node and destination.
             """
             nonlocal max_paths_per_root
@@ -411,7 +488,7 @@ class Solver(Loggable):
             if current_node in path:
                 npaths += 1
                 return
-            if path and current_node.base in endpoints:
+            if path and current_node in end_nodes:
                 constraint = self._maybe_constraint(
                     path[0], current_node, string
                 )
@@ -429,12 +506,6 @@ class Solver(Loggable):
                         new_string.append(label)
                     explore(succ, path, new_string)
 
-        start_nodes = {
-            node
-            for node in graph.nodes
-            if node.base in endpoints
-            and node._forgotten == Node.Forgotten.PRE_FORGET
-        }
         # We evenly distribute the maximum number of paths that we are willing to explore
         # across all origin nodes here.
         max_paths_per_root = int(
@@ -446,6 +517,98 @@ class Solver(Loggable):
         for origin in start_nodes:
             npaths = 0
             explore(origin)
+        return constraints
+
+    def _generate_constraints_from_to(
+        self,
+        graph: networkx.DiGraph,
+        start_nodes: Set[Node],
+        end_nodes: Set[Node],
+    ) -> ConstraintSet:
+        """
+        Generate a set of final constraints from a set of start_nodes to a set of
+        end_nodes based on the given graph.
+        """
+        if self.config.restrict_graph_to_reachable:
+            graph, start_nodes, end_nodes = remove_unreachable_states(
+                graph, start_nodes, end_nodes
+            )
+
+        if len(graph) == 0:
+            return ConstraintSet()
+        if self.config.use_path_expressions:
+            return self._pathexpr_generate_constraints_from_to(
+                graph, start_nodes, end_nodes
+            )
+        else:
+            return self._naive_generate_constraints_from_to(
+                graph, start_nodes, end_nodes
+            )
+
+    def _generate_constraints(
+        self,
+        initial_constraints: ConstraintSet,
+        non_primitive_end_points: Set[DerivedTypeVariable],
+        internal_types: Set[DerivedTypeVariable],
+    ) -> ConstraintSet:
+        """Generate final constraints from a set of initial constrains
+        by generating a graph and exploring all its paths.
+
+        The algorithm avoids cycles by keeping track of the visited nodes so far.
+        """
+        graph = ConstraintGraph(initial_constraints).graph
+
+        # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
+        Solver._recall_forget_split(graph)
+        constraints = ConstraintSet()
+        # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph_split")
+
+        # from proc and global vars to primitive types
+        start_nodes = {
+            node
+            for node in graph.nodes
+            if node.base in non_primitive_end_points
+            and node._forgotten == Node.Forgotten.PRE_FORGET
+        }
+        end_nodes = {
+            node for node in graph.nodes if node.base in internal_types
+        }
+        constraints |= self._generate_constraints_from_to(
+            graph, start_nodes, end_nodes
+        )
+
+        # from primitive types to proc and global vars
+        start_nodes = {
+            node
+            for node in graph.nodes
+            if node.base in internal_types
+            and node._forgotten == Node.Forgotten.PRE_FORGET
+        }
+        end_nodes = {
+            node
+            for node in graph.nodes
+            if node.base in non_primitive_end_points
+        }
+        constraints |= self._generate_constraints_from_to(
+            graph, start_nodes, end_nodes
+        )
+        # TODO: I am not sure if these are needed if we are transfering information
+        # through sketches. Is that completely equivalent?
+        if self.config.compute_type_schema:
+            start_nodes = {
+                node
+                for node in graph.nodes
+                if node.base in non_primitive_end_points
+                and node._forgotten == Node.Forgotten.PRE_FORGET
+            }
+            end_nodes = {
+                node
+                for node in graph.nodes
+                if node.base in non_primitive_end_points
+            }
+            constraints |= self._generate_constraints_from_to(
+                graph, start_nodes, end_nodes
+            )
         return constraints
 
     def _solve_topo_graph(
@@ -492,13 +655,13 @@ class Solver(Loggable):
                 scc_sketches,
                 scc_initial_constraints,
             )
-            all_endpoints = frozenset(
-                scc
-                | set(self.program.global_vars)
-                | self.program.types.internal_types
+            non_primitive_endpoints = frozenset(
+                scc | set(self.program.global_vars)
             )
             generated_constraints = self._generate_constraints(
-                scc_initial_constraints, all_endpoints
+                scc_initial_constraints,
+                non_primitive_endpoints,
+                self.program.types.internal_types,
             )
             scc_sketches.add_constraints(generated_constraints)
             # Copy globals from our callees, if we are analyzing globals precisely.
