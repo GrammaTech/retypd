@@ -138,7 +138,10 @@ class EquivRelation:
 
 def cross_concatenation(
     prefix_list: List[List[Any]], postfix_list: List[List[Any]]
-):
+) -> List[List[Any]]:
+    """
+    Compute the cross product concatenation of two lists of lists.
+    """
     combined = []
     for prefix in prefix_list:
         for postfix in postfix_list:
@@ -430,6 +433,8 @@ class Solver(Loggable):
     ) -> ConstraintSet:
         """
         Generate constraints based on the computation of path expressions.
+        Compute path expressions for each pair of start and end nodes.
+        For each path expression, enumerate non-looping paths.
         """
         numbering, path_seq = scc_decompose_path_seq(graph, "label")
         constraints = ConstraintSet()
@@ -517,6 +522,8 @@ class Solver(Loggable):
         """
         Generate a set of final constraints from a set of start_nodes to a set of
         end_nodes based on the given graph.
+        Use path expressions or naive exploration depending on the
+        Solver's configuration.
         """
         if self.config.restrict_graph_to_reachable:
             graph, start_nodes, end_nodes = remove_unreachable_states(
@@ -540,61 +547,57 @@ class Solver(Loggable):
         non_primitive_end_points: Set[DerivedTypeVariable],
         internal_types: Set[DerivedTypeVariable],
     ) -> ConstraintSet:
-        """Generate final constraints from a set of initial constrains
+        """Generate final constraints from a set of initial constraints
         by generating a graph and exploring all its paths.
 
-        The algorithm avoids cycles by keeping track of the visited nodes so far.
+        We explore paths:
+         - From internal_types to non_primitive_end_points.
+         - From non_primitive_end_points to internal_types.
+         - [Optionally] from non_primitive_end_points to non_primitive_end_points.
         """
-        graph = ConstraintGraph(initial_constraints).graph
 
+        def get_start_nodes(
+            graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
+        ) -> Set[Node]:
+            return {
+                node
+                for node in graph.nodes
+                if node.base in dtvs
+                and node._forgotten == Node.Forgotten.PRE_FORGET
+            }
+
+        # We allow end_nodes to be both PRE_FORGET and POST_FORGET
+        # because we could have paths of the form RECALL* (without any forgets).
+        def get_end_nodes(
+            graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
+        ) -> Set[Node]:
+            return {node for node in graph.nodes if node.base in dtvs}
+
+        graph = ConstraintGraph(initial_constraints).graph
+        # Uncomment to output graph for debugging
         # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
         Solver._recall_forget_split(graph)
         constraints = ConstraintSet()
-        # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph_split")
 
         # from proc and global vars to primitive types
-        start_nodes = {
-            node
-            for node in graph.nodes
-            if node.base in non_primitive_end_points
-            and node._forgotten == Node.Forgotten.PRE_FORGET
-        }
-        end_nodes = {
-            node for node in graph.nodes if node.base in internal_types
-        }
+        start_nodes = get_start_nodes(graph, non_primitive_end_points)
+        end_nodes = get_end_nodes(graph, internal_types)
         constraints |= self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
         )
 
         # from primitive types to proc and global vars
-        start_nodes = {
-            node
-            for node in graph.nodes
-            if node.base in internal_types
-            and node._forgotten == Node.Forgotten.PRE_FORGET
-        }
-        end_nodes = {
-            node
-            for node in graph.nodes
-            if node.base in non_primitive_end_points
-        }
+        start_nodes = get_start_nodes(graph, internal_types)
+        end_nodes = get_end_nodes(graph, non_primitive_end_points)
         constraints |= self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
         )
-        # TODO: I am not sure if these are needed if we are transfering information
+        # TODO: These are currently not used.
+        # I am not sure if these are needed if we are transfering information
         # through sketches. Is that completely equivalent?
         if self.config.compute_type_schema:
-            start_nodes = {
-                node
-                for node in graph.nodes
-                if node.base in non_primitive_end_points
-                and node._forgotten == Node.Forgotten.PRE_FORGET
-            }
-            end_nodes = {
-                node
-                for node in graph.nodes
-                if node.base in non_primitive_end_points
-            }
+            start_nodes = get_start_nodes(graph, non_primitive_end_points)
+            end_nodes = get_end_nodes(graph, non_primitive_end_points)
             constraints |= self._generate_constraints_from_to(
                 graph, start_nodes, end_nodes
             )
