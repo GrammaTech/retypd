@@ -90,49 +90,49 @@ def test_forgets():
     assert constraint in gen_const[F]
 
 
-def assertJoin(lhs: str, rhs: str, equals: str):
-    """Validate that when two DTVs are joined, they equal a known value"""
+@pytest.mark.parametrize(
+    ("lhs", "rhs", "expected"),
+    [
+        ("float", "uint", "┬"),
+        ("uint", "int", "uint"),
+        ("char", "int", "uint"),
+        ("int64", "int", "int"),
+        ("uint32", "uint64", "uint"),
+    ],
+)
+def test_join(lhs: str, rhs: str, expected: str):
+    """Test C-lattice join operations against known values"""
     lhs_dtv = DerivedTypeVariable(lhs)
     rhs_dtv = DerivedTypeVariable(rhs)
-    equal_dtv = DerivedTypeVariable(equals)
+    equal_dtv = DerivedTypeVariable(expected)
     assert CLattice().join(lhs_dtv, rhs_dtv) == equal_dtv
 
 
-def test_join():
-    """Test C-lattice join operations against known values"""
-    assertJoin("float", "uint", "┬")
-    assertJoin("uint", "int", "uint")
-    assertJoin("char", "int", "uint")
-    assertJoin("int64", "int", "int")
-    assertJoin("uint32", "uint64", "uint")
-
-
-def assertCType(name: str, ctype: CType, size: int = None):
-    """Validate that an atomic DTV is translated to a known high-level
-    CType
-    """
+@pytest.mark.parametrize(
+    ("name", "ctype", "size"),
+    [
+        ("int", IntType(4, True), 4),
+        ("int8", IntType(1, True), None),
+        ("int16", IntType(2, True), None),
+        ("int32", IntType(4, True), None),
+        ("int64", IntType(8, True), None),
+        ("uint", IntType(4, False), 4),
+        ("uint8", IntType(1, False), None),
+        ("uint16", IntType(2, False), None),
+        ("uint32", IntType(4, False), None),
+        ("uint64", IntType(8, False), None),
+        ("void", VoidType(), None),
+        ("char", CharType(1), 1),
+        ("bool", BoolType(1), 1),
+        ("float", FloatType(4), None),
+        ("double", FloatType(8), None),
+    ],
+)
+def test_atom_to_ctype(name: str, ctype: CType, size: int):
+    """Test C-lattice are converted to C-types correctly"""
     atom = DerivedTypeVariable(name)
     lattice = CLatticeCTypes()
     ctype_lhs = lattice.atom_to_ctype(atom, CLattice._top, size)
     ctype_rhs = lattice.atom_to_ctype(CLattice._bottom, atom, size)
     assert str(ctype) == str(ctype_lhs)
     assert str(ctype) == str(ctype_rhs)
-
-
-def test_atom_to_ctype():
-    """Test C-lattice are converted to C-types correctly"""
-    assertCType("int", IntType(4, True), 4)
-    assertCType("int8", IntType(1, True))
-    assertCType("int16", IntType(2, True))
-    assertCType("int32", IntType(4, True))
-    assertCType("int64", IntType(8, True))
-    assertCType("uint", IntType(4, False), 4)
-    assertCType("uint8", IntType(1, False))
-    assertCType("uint16", IntType(2, False))
-    assertCType("uint32", IntType(4, False))
-    assertCType("uint64", IntType(8, False))
-    assertCType("void", VoidType())
-    assertCType("char", CharType(1), 1)
-    assertCType("bool", BoolType(1), 1)
-    assertCType("float", FloatType(4))
-    assertCType("double", FloatType(8))
