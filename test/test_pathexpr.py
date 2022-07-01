@@ -106,6 +106,7 @@ import networkx
     ],
 )
 @pytest.mark.parametrize("decompose", [True, False])
+@pytest.mark.commit
 def test_path_expr(edges, path_exprs, decompose):
     """Generate a unit test for a given set of edges and expected path
     expressions

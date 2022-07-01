@@ -1,7 +1,7 @@
 """Simple unit tests from the paper and slides that only look at the final result (sketches)
 """
 
-
+import pytest
 from retypd import (
     ConstraintSet,
     SchemaParser,
@@ -13,6 +13,7 @@ from retypd.graph import ConstraintGraph, EdgeLabel, Node
 VERBOSE_TESTS = False
 
 
+@pytest.mark.commit
 def test_simple():
     """
     Check that the constraint graph from one constraint has the expected elements.
@@ -70,6 +71,7 @@ def test_simple():
     assert edges == set(graph.edges(data="label"))
 
 
+@pytest.mark.commit
 def test_two_constraints():
     """
     A constraint graph from two related constraints has two paths

@@ -1,6 +1,7 @@
 """Simple unit tests from the paper and slides that only look at the final result (sketches)
 """
 
+import pytest
 from typing import Dict, List
 
 from retypd import (
@@ -34,6 +35,7 @@ parse_var = SchemaParser.parse_variable
 parse_cs = SchemaParser.parse_constraint
 
 
+@pytest.mark.commit
 def compute_sketches(
     cs: Dict[str, List[str]],
     callgraph: Dict[str, List[str]],
@@ -63,6 +65,7 @@ def compute_sketches(
     return solver()
 
 
+@pytest.mark.commit
 def test_recursive():
     """A test based on the running example from the paper (Figure 2 on p. 3) and the slides
     (slides 67-83, labeled as slides 13-15).
@@ -93,6 +96,7 @@ def test_recursive():
     ).upper_bound == parse_var("#FileDescriptor")
 
 
+@pytest.mark.commit
 def test_recursive_through_procedures():
     """The type of f.in_0 is recursive.
     struct list{
@@ -134,6 +138,7 @@ def test_recursive_through_procedures():
     assert isinstance(rec_struct.fields[1].ctype, IntType)
 
 
+@pytest.mark.commit
 def test_multiple_label_nodes():
     """The type of f.in_0 is:
     struct list{
@@ -200,6 +205,7 @@ def test_multiple_label_nodes():
     assert isinstance(rec_struct.fields[2].ctype, IntType)
 
 
+@pytest.mark.commit
 def test_multiple_label_nodes_store():
     """The type of f.out and g.out is
     as subtype of:
@@ -243,6 +249,7 @@ def test_multiple_label_nodes_store():
     )
 
 
+@pytest.mark.commit
 def test_interleaving_elements():
     """
     There are two mutually recursive types
@@ -300,6 +307,7 @@ def test_interleaving_elements():
     assert isinstance(A_struct.fields[1].ctype, IntType)
 
 
+@pytest.mark.commit
 def test_regression1():
     """
     When more than one typevar gets instantiated in a chain of constraints,
@@ -338,6 +346,7 @@ def test_regression1():
     ).upper_bound == parse_var("int")
 
 
+@pytest.mark.commit
 def test_vListInsert_issue9():
     """
     This is a method from crazyflie
@@ -416,6 +425,7 @@ def test_vListInsert_issue9():
     assert isinstance(ListItem_t.fields[3].ctype, PointerType)
 
 
+@pytest.mark.commit
 def test_input_arg_capability():
     """
     f.in_0 should get the load.σ1@0 capability even if
@@ -440,6 +450,7 @@ def test_input_arg_capability():
     assert g_sketch.lookup(parse_var("g.out.load.σ1@0.load.σ4@4")) is not None
 
 
+@pytest.mark.commit
 def test_input_arg_capability_transitive():
     """
     g.in_0 should get the load.σ1@0 capability from f.
@@ -456,6 +467,7 @@ def test_input_arg_capability_transitive():
     assert g_sketch.lookup(parse_var("g.out.load.σ1@0.load.σ4@4")) is not None
 
 
+@pytest.mark.commit
 def test_simple_struct():
     """
     Verify that we will combine fields inferred from different callees.
@@ -502,6 +514,7 @@ def test_simple_struct():
     # print(list(map(lambda x: type(x.ctype), struct.fields)))
 
 
+@pytest.mark.commit
 def test_string_in_struct():
     """
     Model that strcpy() is called with a field from a struct as the destination, which
@@ -531,6 +544,7 @@ def test_string_in_struct():
         assert f.offset == 8
 
 
+@pytest.mark.commit
 def test_global_array():
     """
     Illustration of how a model of memcpy might work.
@@ -556,6 +570,7 @@ def test_global_array():
     assert t.target_type.member_type.size == 4
 
 
+@pytest.mark.commit
 def test_load_v_store():
     """
     Half of struct fields are only loaded and half are only stored, should still result
@@ -587,6 +602,7 @@ def test_load_v_store():
     assert min([f.offset for f in t.target_type.fields]) == 0
 
 
+@pytest.mark.commit
 def test_tight_bounds_in():
     constraints = ConstraintSet()
     constraints.add(parse_cs("f.in_0 ⊑ A"))
@@ -612,6 +628,7 @@ def test_tight_bounds_in():
     assert isinstance(f_ft.params[0], IntType)
 
 
+@pytest.mark.commit
 def test_tight_bounds_out():
     constraints = ConstraintSet()
     constraints.add(parse_cs("A ⊑ f.out"))

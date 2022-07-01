@@ -23,6 +23,7 @@ from retypd import (
 )
 
 
+@pytest.mark.commit
 def test_parse_label():
     l = SchemaParser.parse_label("σ8@0")
     assert (l.size, l.offset, l.count) == (8, 0, 1)
@@ -41,6 +42,7 @@ def test_parse_label():
         l = SchemaParser.parse_label("σ-9@100")
 
 
+@pytest.mark.commit
 def test_simple_constraints():
     """A simple test from the paper (the right side of Figure 4 on p. 6). This one has no
     recursive data structures; as such, the fixed point would suffice. However, we compute type
@@ -59,6 +61,7 @@ def test_simple_constraints():
     assert SchemaParser.parse_constraint("x ⊑ y") in gen_const[f]
 
 
+@pytest.mark.commit
 def test_other_simple_constraints():
     """Another simple test from the paper (the program modeled in Figure 14 on p. 26)."""
     constraints = ConstraintSet()
@@ -75,6 +78,7 @@ def test_other_simple_constraints():
     assert SchemaParser.parse_constraint("A ⊑ B") in gen_const[f]
 
 
+@pytest.mark.commit
 def test_forgets():
     """A simple test to check that paths that include "forgotten" labels reconstruct access
     paths in the correct order.
@@ -100,6 +104,7 @@ def test_forgets():
         ("uint32", "uint64", "uint"),
     ],
 )
+@pytest.mark.commit
 def test_join(lhs: str, rhs: str, expected: str):
     """Test C-lattice join operations against known values"""
     lhs_dtv = DerivedTypeVariable(lhs)
@@ -128,6 +133,7 @@ def test_join(lhs: str, rhs: str, expected: str):
         ("double", FloatType(8), None),
     ],
 )
+@pytest.mark.commit
 def test_atom_to_ctype(name: str, ctype: CType, size: int):
     """Test C-lattice are converted to C-types correctly"""
     atom = DerivedTypeVariable(name)
