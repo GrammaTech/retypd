@@ -28,6 +28,7 @@ class LogLevel(int, Enum):
     INFO = 1
     DEBUG = 2
 
+
 # Unfortunable, the python logging class is a bit flawed and overly complex for what we need
 # When you use info/debug you can use %s/%d/etc formatting ala logging to lazy evaluate
 class Loggable:

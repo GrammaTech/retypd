@@ -7,6 +7,7 @@ import networkx
 
 class RExp:
     """Regular expression class with some helper methods and simplification"""
+
     class Label(enum.Enum):
         NULL = "null"
         EMPTY = "empty"
@@ -19,10 +20,10 @@ class RExp:
         self.label = label
         self.data: Any = data
         self.children: List[RExp] = children
-    
+
     def __and__(self, rhs: RExp) -> RExp:
         return RExp(self.Label.DOT, children=[self, rhs])
-    
+
     def __or__(self, rhs: RExp) -> RExp:
         return RExp(self.Label.OR, children=[self, rhs])
 
@@ -58,7 +59,7 @@ class RExp:
     def from_graph_edge(
         cls, graph: networkx.DiGraph, src: Any, dest: Any, data: str
     ) -> RExp:
-        """Generate a regular expression from a graph node. For no label on 
+        """Generate a regular expression from a graph node. For no label on
         data we assume an empty string, otherwise a node labeled by that label
         """
         attrs = graph.edges[src, dest]
@@ -105,17 +106,17 @@ class RExp:
 
     def __repr__(self) -> str:
         if self.label == self.Label.OR:
-            return f'({self.children[0]} U {self.children[1]})'
+            return f"({self.children[0]} U {self.children[1]})"
         elif self.label == self.Label.DOT:
-            return f'({self.children[0]} . {self.children[1]})'
+            return f"({self.children[0]} . {self.children[1]})"
         elif self.label == self.Label.STAR:
-            return f'{self.children[0]}*'
+            return f"{self.children[0]}*"
         elif self.label == self.Label.EMPTY:
-            return 'Λ'
+            return "Λ"
         elif self.label == self.Label.NULL:
-            return '∅'
+            return "∅"
         elif self.label == self.Label.NODE:
-            return f'{self.data}'
+            return f"{self.data}"
         else:
             raise NotImplementedError()
 
@@ -138,7 +139,7 @@ def eliminate(
         for u in range(v + 1, max_num):
             if P[u, v].is_null:
                 continue
-        
+
             P[u, v] = (P[u, v] & P[v, v]).simplify()
 
             for w in range(v + 1, max_num):
@@ -158,7 +159,7 @@ def compute_path_sequence(
     min_num: int,
     max_num: int,
 ) -> PathSeq:
-    """Compute path sequence from the ELIMINATE procedure, per Theorem 4 on 
+    """Compute path sequence from the ELIMINATE procedure, per Theorem 4 on
     page 14
     """
 
@@ -176,16 +177,15 @@ def compute_path_sequence(
 
         if expr.is_null:
             continue
-        
+
         if start <= end:
             ascending.append((indices, expr))
         else:
             descending.append((indices, expr))
 
-    # Sort by the starting node 
-    output = (
-        sorted(ascending, key=lambda pair: pair[0][0])
-        + sorted(descending, key=lambda pair: pair[0][0], reverse=True)
+    # Sort by the starting node
+    output = sorted(ascending, key=lambda pair: pair[0][0]) + sorted(
+        descending, key=lambda pair: pair[0][0], reverse=True
     )
 
     return output
@@ -194,7 +194,7 @@ def compute_path_sequence(
 def solve_paths_from(
     path_seq: PathSeq, source: int
 ) -> Dict[Tuple[int, int], RExp]:
-    """Solve path expressions from a source given a path sequence for a 
+    """Solve path expressions from a source given a path sequence for a
     numbered graph, per procedure SOLVE on page 9 of Tarjan
     """
     P = defaultdict(lambda: RExp.null())
@@ -220,9 +220,9 @@ GraphNumbering = Dict[Any, int]
 
 
 def topological_numbering(
-    graph: networkx.DiGraph
+    graph: networkx.DiGraph,
 ) -> Tuple[GraphNumbering, networkx.DiGraph]:
-    """ Generate a numeral graph from the topological sort of the DAG """
+    """Generate a numeral graph from the topological sort of the DAG"""
     nodes = list(networkx.topological_sort(graph))
     numbering = {node: num for num, node in enumerate(nodes)}
     rev_numbering = dict(enumerate(nodes))
@@ -232,7 +232,7 @@ def topological_numbering(
 
 
 def dag_path_seq(graph: networkx.DiGraph, data: str) -> PathSeq:
-    """Per Theorem 5, Page 14 of the paper, generate path sequences for a 
+    """Per Theorem 5, Page 14 of the paper, generate path sequences for a
     directed acyclic graph in a more efficient manner.
     """
     # Sort edges by increasing source node
@@ -245,7 +245,7 @@ def dag_path_seq(graph: networkx.DiGraph, data: str) -> PathSeq:
 def scc_decompose_path_seq(
     graph: networkx.DiGraph, data: str
 ) -> Tuple[GraphNumbering, PathSeq]:
-    """ Per Theorem 6, Page 14 of the paper, generate path sequences for a graph
+    """Per Theorem 6, Page 14 of the paper, generate path sequences for a graph
     that has been decomposed into strongly connected components.
     """
     # Generate the graph of SCCs
@@ -255,12 +255,12 @@ def scc_decompose_path_seq(
     graph_numbering = {}
     curr_number = 0
 
-    # Generate a numbering for each SCC in increasing topological order to 
-    # maintain that any edge G_i -> G_j whare are in SCCs S_i and S_j 
-    # respectively, if theres an edge in the condensation from S_i -> S_j then 
+    # Generate a numbering for each SCC in increasing topological order to
+    # maintain that any edge G_i -> G_j whare are in SCCs S_i and S_j
+    # respectively, if theres an edge in the condensation from S_i -> S_j then
     # G_i < G_j
     for component in networkx.topological_sort(component_graph):
-        # Generate numbering for this SCC, we do so in a sorted order as 
+        # Generate numbering for this SCC, we do so in a sorted order as
         # NetworkX returns a set whose non-deterministic ordering can return
         # inconsistent results
         scc = component_graph.nodes[component]["members"]
@@ -340,7 +340,7 @@ def path_expression_between(
         seqs = dag_path_seq(number_graph, data)
     else:
         numbering, seqs = scc_decompose_path_seq(graph, data)
-    
+
     # Solve all paths for source, and output the one for (source, sink)
     paths = solve_paths_from(seqs, numbering[source])
     return paths[(numbering[source], numbering[sink])]

@@ -23,25 +23,35 @@ for wheel_loc in sys.argv[2:]:
     # Get packages, handling pagination
     responses = []
     response = requests.get(
-        f'https://git.grammatech.com/api/v4/projects/1587/packages?package_name={wheel.name}',
-        headers={'PRIVATE-TOKEN': TOKEN},
+        f"https://git.grammatech.com/api/v4/projects/1587/packages?package_name={wheel.name}",
+        headers={"PRIVATE-TOKEN": TOKEN},
     )
     responses.append(response)
-    while response.links.get('next'):
-        response = requests.get(response.links.get('next')['url'],
-                                headers={'PRIVATE-TOKEN': TOKEN})
+    while response.links.get("next"):
+        response = requests.get(
+            response.links.get("next")["url"], headers={"PRIVATE-TOKEN": TOKEN}
+        )
         if response.status_code != 200:
-            raise Exception(f'{response.status_code} status code while requesting package listings filtered by local name: {wheel.name}')
+            raise Exception(
+                f"{response.status_code} status code while requesting package listings filtered by local name: {wheel.name}"
+            )
         responses.append(response)
 
-    packages = [package for response in responses for package in response.json()]
+    packages = [
+        package for response in responses for package in response.json()
+    ]
     # Delete all matching packages
     for package in packages:
-        if wheel.version == package['version'] and wheel.name == package['name']:
+        if (
+            wheel.version == package["version"]
+            and wheel.name == package["name"]
+        ):
             print(f'Deleting {package["name"]} {package["version"]}.')
             response = requests.delete(
                 f'https://git.grammatech.com/api/v4/projects/1587/packages/{package["id"]}',
-                headers={'PRIVATE-TOKEN': TOKEN},
+                headers={"PRIVATE-TOKEN": TOKEN},
             )
             if response.status_code != 204:
-                raise Exception(f'{response.status_code} status code while deleting this package: {package["name"]} {package["version"]}')
+                raise Exception(
+                    f'{response.status_code} status code while deleting this package: {package["name"]} {package["version"]}'
+                )
