@@ -99,7 +99,7 @@ def test_forgets():
     [
         ("float", "uint", "┬"),
         ("uint", "int", "uint"),
-        ("char", "int", "uint"),
+        ("char", "int", "int"),
         ("int64", "int", "int"),
         ("uint32", "uint64", "uint"),
     ],
