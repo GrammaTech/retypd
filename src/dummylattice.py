@@ -20,9 +20,9 @@
 # reflect the position or policy of the Government and no official
 # endorsement should be inferred.
 
-'''An abstract lattice type for atomic types (e.g., primitives). Also includes a small
+"""An abstract lattice type for atomic types (e.g., primitives). Also includes a small
 implementation for reference.
-'''
+"""
 
 from typing import FrozenSet, Any
 from .schema import DerivedTypeVariable, Lattice, LatticeCTypes
@@ -30,12 +30,12 @@ from .c_types import IntType, PointerType, CharType, ArrayType
 
 
 class DummyLattice(Lattice[DerivedTypeVariable]):
-    _int = DerivedTypeVariable('int')
-    _success = DerivedTypeVariable('#SuccessZ')
-    _fd = DerivedTypeVariable('#FileDescriptor')
-    _str = DerivedTypeVariable('str')
-    _top = DerivedTypeVariable('┬')
-    _bottom = DerivedTypeVariable('┴')
+    _int = DerivedTypeVariable("int")
+    _success = DerivedTypeVariable("#SuccessZ")
+    _fd = DerivedTypeVariable("#FileDescriptor")
+    _str = DerivedTypeVariable("str")
+    _top = DerivedTypeVariable("┬")
+    _bottom = DerivedTypeVariable("┴")
     _internal = frozenset({_int, _fd, _success, _str})
     _endcaps = frozenset({_top, _bottom})
 
@@ -58,7 +58,9 @@ class DummyLattice(Lattice[DerivedTypeVariable]):
     def bottom(self) -> DerivedTypeVariable:
         return DummyLattice._bottom
 
-    def meet(self, t: DerivedTypeVariable, v: DerivedTypeVariable) -> DerivedTypeVariable:
+    def meet(
+        self, t: DerivedTypeVariable, v: DerivedTypeVariable
+    ) -> DerivedTypeVariable:
         if t == v:
             return t
         # idempotence
@@ -81,7 +83,9 @@ class DummyLattice(Lattice[DerivedTypeVariable]):
         # the only remaining case is SUCCESS and FILE_DESCRIPTOR, which are not comparable
         return DummyLattice._bottom
 
-    def join(self, t: DerivedTypeVariable, v: DerivedTypeVariable) -> DerivedTypeVariable:
+    def join(
+        self, t: DerivedTypeVariable, v: DerivedTypeVariable
+    ) -> DerivedTypeVariable:
         if t == v:
             return t
         # idempotence
@@ -101,6 +105,7 @@ class DummyLattice(Lattice[DerivedTypeVariable]):
         # bound is INT.
         return DummyLattice._int
 
+
 class DummyLatticeCTypes(LatticeCTypes):
     def atom_to_ctype(self, atom_lower: Any, atom_upper: Any, byte_size: int):
         best = atom_lower if atom_lower != DummyLattice._bottom else atom_upper
@@ -108,5 +113,5 @@ class DummyLatticeCTypes(LatticeCTypes):
             DummyLattice._int: IntType(byte_size, True),
             DummyLattice._success: IntType(byte_size, True),
             DummyLattice._fd: IntType(byte_size, False),
-            DummyLattice._str: PointerType(CharType(1), byte_size)
+            DummyLattice._str: PointerType(CharType(1), byte_size),
         }.get(best, ArrayType(IntType(1, False), byte_size))

@@ -20,5 +20,5 @@
 # reflect the position or policy of the Government and no official
 # endorsement should be inferred.
 
-__packagename__ = 'retypd'
-__version__ = '0.2'
+__packagename__ = "retypd"
+__version__ = "0.2"
