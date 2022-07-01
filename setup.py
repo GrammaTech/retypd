@@ -43,6 +43,7 @@ setup(
     version=__version__,
     description="An implementation of retypd in Python3",
     author="GrammaTech, Inc.",
+    python_requires=">3.8.0",
     package_dir={__packagename__: "src"},
     packages=[__packagename__],
     install_requires=install_requires,
