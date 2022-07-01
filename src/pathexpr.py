@@ -1,6 +1,5 @@
 from __future__ import annotations
 from collections import defaultdict
-from functools import lru_cache
 from typing import Any, Dict, List, Tuple
 import enum
 import networkx
@@ -158,7 +157,6 @@ class RExp:
     def is_node(self) -> bool:
         return self.label == self.Label.NODE
 
-    @lru_cache
     def __repr__(self) -> str:
         if self.label == self.Label.OR:
             return (
