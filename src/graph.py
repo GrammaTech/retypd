@@ -114,6 +114,13 @@ class Node:
             and self._forgotten == other._forgotten
         )
 
+    def __lt__(self, other: Node) -> bool:
+        if not isinstance(other, Node):
+            raise ValueError(
+                f"Cannot compare objects of type Node and {type(other)} "
+            )
+        return self._str < other._str
+
     def __hash__(self) -> int:
         return self._hash
 
