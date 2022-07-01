@@ -60,20 +60,9 @@ def dump_labeled_graph(graph, label, filename):
     for i, n in enumerate(graph.nodes):
         nodes[n] = i
         G.node(f"n{i}", label=str(n))
-    if isinstance(graph, networkx.MultiDiGraph):
-        for head, tail, edge_id in graph.edges:
-            label = str(
-                graph.get_edge_data(head, tail, edge_id).get(
-                    "label", "<NO LABEL>"
-                )
-            )
-            G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
-    else:
-        for head, tail in graph.edges:
-            label = str(
-                graph.get_edge_data(head, tail).get("label", "<NO LABEL>")
-            )
-            G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
+    for head, tail in graph.edges:
+        label = str(graph.get_edge_data(head, tail).get("label", "<NO LABEL>"))
+        G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
     G.render(filename, format="svg", view=False)
 
 
