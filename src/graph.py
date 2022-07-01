@@ -326,6 +326,8 @@ def remove_unreachable_states(
 ) -> Tuple[networkx.DiGraph, Set[Node], Set[Node]]:
     """
     Remove states that not reachable from start_nodes or do not reach end_nodes.
+    This can speed up path exploration since we do not have to search
+    paths through nodes that do not reach interesting destinations.
     """
     if len(graph) == 0 or len(start_nodes) == 0 or len(end_nodes) == 0:
         return graph, set(), set()
