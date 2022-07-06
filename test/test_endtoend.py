@@ -101,6 +101,7 @@ def test_recursive():
     ).upper_bound == parse_var("#FileDescriptor")
 
 
+@pytest.mark.commit
 def test_recursive_no_primitive():
     """The type of f.in_0 is recursive.
     struct list{
@@ -363,6 +364,7 @@ def test_in_out_constraints_propagation():
     assert isinstance(dtv2type[DerivedTypeVariable("g")].params[0], IntType)
 
 
+@pytest.mark.commit
 def test_argument_constraints_propagation():
     """
     The instantiation of f should allows us to conclude that
@@ -734,6 +736,7 @@ def test_tight_bounds_out():
     assert isinstance(f_ft.return_type, IntType)
 
 
+@pytest.mark.commit
 def test_regression2():
     constraints = {
         "test_ll": [
