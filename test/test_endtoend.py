@@ -89,7 +89,9 @@ def test_recursive():
     F_sketches = sketches[F]
     # Equivalent to "#SuccessZ ⊑ F.out"
     assert parse_cs("#SuccessZ ⊑ F.out") in gen_const[F]
-    assert parse_cs("F.in_0.load.σ4@4 ⊑ #FileDescriptor") in gen_const[F]
+    assert parse_cs("τ$0.load.σ4@4 ⊑ #FileDescriptor") in gen_const[F]
+    assert parse_cs("F.in_0 ⊑ τ$0") in gen_const[F]
+    # assert parse_cs("F.in_0.load.σ4@4 ⊑ #FileDescriptor") in gen_const[F]
     # Equivalent check in sketches
     assert F_sketches.lookup(parse_var("F.out")).lower_bound == parse_var(
         "#SuccessZ"
@@ -97,6 +99,34 @@ def test_recursive():
     assert F_sketches.lookup(
         parse_var("F.in_0.load.σ4@4")
     ).upper_bound == parse_var("#FileDescriptor")
+
+
+def test_recursive_no_primitive():
+    """The type of f.in_0 is recursive.
+    struct list{
+        list* next;
+        int elem;
+    }
+    We don't know anything about elem, so we need to create a type
+    variable for the recursive variable to capture that behavior.
+    """
+    constraints = {
+        "f": [
+            "f.in_0 <= list",
+            "list.load.σ4@0 <= next",
+            "next <= list",
+        ],
+        "g": ["g.in_0 <= f.in_0"],
+    }
+    callgraph = {"g": ["f"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice
+    )
+    g_sketch = sketches[DerivedTypeVariable("g")]
+    assert g_sketch.lookup(parse_var("g.in_0.load.σ4@0")) == g_sketch.lookup(
+        parse_var("g.in_0")
+    )
 
 
 @pytest.mark.commit
@@ -230,7 +260,7 @@ def test_multiple_label_nodes_store():
             "elem <= list.store.σ4@8",
             "int <= elem",
         ],
-        "g": ["C <= g.out", "f.out <= C"],
+        "g": ["g.out <= C ", "C <= f.out"],
     }
     callgraph = {"g": ["f"]}
     lattice = CLattice()
@@ -311,7 +341,7 @@ def test_interleaving_elements():
 
 
 @pytest.mark.commit
-def test_argument_constraints_propagation():
+def test_in_out_constraints_propagation():
     """
     The instantiation of f should allows us to conclude that
     g.in_0 is int32.
@@ -321,6 +351,28 @@ def test_argument_constraints_propagation():
             "f.in_0 <= f.out",
         ],
         "g": ["g.in_0 <= C", "C <= f.in_0", "f.out <= int32"],
+    }
+    callgraph = {"g": ["f"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice
+    )
+    assert parse_cs("g.in_0 <= int32") in gen_cs[parse_var("g")]
+    gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+    dtv2type = gen()
+    assert isinstance(dtv2type[DerivedTypeVariable("g")].params[0], IntType)
+
+
+def test_argument_constraints_propagation():
+    """
+    The instantiation of f should allows us to conclude that
+    g.in_0 is int32.
+    """
+    constraints = {
+        "f": [
+            "f.in_0 <= f.in_1",
+        ],
+        "g": ["g.in_0 <= C", "C <= f.in_0", "f.in_1 <= int32"],
     }
     callgraph = {"g": ["f"]}
     lattice = CLattice()
