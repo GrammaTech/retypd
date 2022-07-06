@@ -76,7 +76,12 @@ class EdgeLabel:
 
 
 @unique
-class LeftRight(Enum):
+class SideMark(Enum):
+    """
+    Marking of interesting graph nodes to avoid non-elementary proofs.
+    See Definition D.2 and Note 1 in section D.1 of the paper.
+    """
+
     NO = 0
     LEFT = 1
     RIGHT = 2
@@ -98,29 +103,29 @@ class Node:
         self,
         base: DerivedTypeVariable,
         suffix_variance: Variance,
-        left_right: LeftRight = LeftRight.NO,
+        side_mark: SideMark = SideMark.NO,
         forgotten: Forgotten = Forgotten.PRE_FORGET,
     ) -> None:
         self.base = base
         self.suffix_variance = suffix_variance
-        self.left_right = left_right
-        if left_right == LeftRight.LEFT:
-            left_right_str = "L"
-        elif left_right == LeftRight.RIGHT:
-            left_right_str = "R"
+        self.side_mark = side_mark
+        if side_mark == SideMark.LEFT:
+            side_mark_str = "L:"
+        elif side_mark == SideMark.RIGHT:
+            side_mark_str = "R:"
         else:
-            left_right_str = ""
+            side_mark_str = ""
         if suffix_variance == Variance.COVARIANT:
             variance = ".⊕"
         else:
             variance = ".⊖"
         self._forgotten = forgotten
         if forgotten == Node.Forgotten.POST_FORGET:
-            self._str = "F:" + left_right_str + str(self.base) + variance
+            self._str = "F:" + side_mark_str + str(self.base) + variance
         else:
-            self._str = left_right_str + str(self.base) + variance
+            self._str = side_mark_str + str(self.base) + variance
         self._hash = hash(
-            (self.base, self.suffix_variance, self.left_right, self._forgotten)
+            (self.base, self.suffix_variance, self.side_mark, self._forgotten)
         )
 
     def __eq__(self, other: Any) -> bool:
@@ -129,7 +134,7 @@ class Node:
             and self.base == other.base
             and self.suffix_variance == other.suffix_variance
             and self._forgotten == other._forgotten
-            and self.left_right == other.left_right
+            and self.side_mark == other.side_mark
         )
 
     def __lt__(self, other: Node) -> bool:
@@ -157,7 +162,7 @@ class Node:
                 Node(
                     prefix,
                     Variance.combine(last.variance(), self.suffix_variance),
-                    self.left_right,
+                    self.side_mark,
                 ),
             )
         return (None, None)
@@ -172,7 +177,7 @@ class Node:
         return Node(
             DerivedTypeVariable(self.base.base, path),
             variance,
-            self.left_right,
+            self.side_mark,
         )
 
     def __str__(self) -> str:
@@ -186,21 +191,21 @@ class Node:
         return Node(
             self.base,
             self.suffix_variance,
-            self.left_right,
+            self.side_mark,
             Node.Forgotten.POST_FORGET,
         )
 
     def inverse(self) -> Node:
-        """Get a Node identical to this one but with inverted variance."""
-        new_left_right = LeftRight.NO
-        if self.left_right == LeftRight.LEFT:
-            new_left_right = LeftRight.RIGHT
-        elif self.left_right == LeftRight.RIGHT:
-            new_left_right = LeftRight.LEFT
+        """Get a Node identical to this one but with inverted variance and mark."""
+        new_side_mark = SideMark.NO
+        if self.side_mark == SideMark.LEFT:
+            new_side_mark = SideMark.RIGHT
+        elif self.side_mark == SideMark.RIGHT:
+            new_side_mark = SideMark.LEFT
         return Node(
             self.base,
             Variance.invert(self.suffix_variance),
-            new_left_right,
+            new_side_mark,
             self._forgotten,
         )
 
@@ -244,14 +249,10 @@ class ConstraintGraph:
         """
         changed = False
         left = (
-            LeftRight.LEFT
-            if sub.base_var in interesting_vars
-            else LeftRight.NO
+            SideMark.LEFT if sub.base_var in interesting_vars else SideMark.NO
         )
         right = (
-            LeftRight.RIGHT
-            if sup.base_var in interesting_vars
-            else LeftRight.NO
+            SideMark.RIGHT if sup.base_var in interesting_vars else SideMark.NO
         )
         forward_from = Node(sub, Variance.COVARIANT, left)
         forward_to = Node(sup, Variance.COVARIANT, right)

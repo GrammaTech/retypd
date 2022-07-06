@@ -29,7 +29,7 @@ from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Any
 from .pathexpr import RExp, scc_decompose_path_seq, solve_paths_from
 from .graph import (
     EdgeLabel,
-    LeftRight,
+    SideMark,
     Node,
     ConstraintGraph,
     remove_unreachable_states,
@@ -551,12 +551,26 @@ class Solver(Loggable):
     def _generate_type_vars(
         graph: networkx.DiGraph, interesting_nodes: Set[Node]
     ) -> Set[DerivedTypeVariable]:
-        """Identify at least one node in each nontrivial SCC and generate a type variable for it.
-        This ensures that we capture recursive types even if they are not part
-        of a path between interesting variables.
+        """
+        Select a set of DTVs that should become type variables to break
+        any cycles in the graph with non-empty paths.
+        This allows us to capture all the recursive type information.
+
+        The set of type variables is not guaranteed to be minimal since computing
+        that "Minimum feedback vertex set" is NP-complete.
+        The approach taken here is greedy, we increasingly add type vars
+        which breaks SCCs into smaller SCCs until all SCCs are broken.
+        The selection of the next type var is heuristic but guarantees
+        that at each step we break at least one non-empty cycle.
         """
 
-        def collect_recursive_sccs(graph: networkx.DiGraph):
+        def collect_recursive_sccs(
+            graph: networkx.DiGraph,
+        ) -> List[networkx.DiGraph]:
+            """
+            Given a graph, collect the set of recursive SCCs
+            of size greater than 1.
+            """
             condensation = networkx.condensation(graph)
             recursive_sccs: List[networkx.DiGraph] = []
             # collect recursive SCCs
@@ -567,27 +581,29 @@ class Solver(Loggable):
                 recursive_sccs.append(graph.subgraph(scc_nodes).copy())
             return recursive_sccs
 
-        graph = graph.copy()
         # we are only interested in cycles remaining without crossing interesting variables.
+        graph = graph.copy()
         graph.remove_nodes_from(interesting_nodes)
         recursive_sccs = collect_recursive_sccs(graph)
         # greedily break SCCs
         type_vars = set()
         while len(recursive_sccs) > 0:
             recursive_scc_graph = recursive_sccs.pop()
+            # collect at least one node involved in each non-empty path
             candidates = set()
             for (src, dest, label) in recursive_scc_graph.edges(data="label"):
                 if label is not None:
+                    # choose the one with shorter prefix
                     if label.kind == EdgeLabel.Kind.FORGET:
                         candidates.add(dest)
                     else:
                         candidates.add(src)
             # ignore SCCs without labeled paths
             # e.g. A <= B, B <= C
-            # we don't want type vars for those
+            # we do not need type vars for those
             if len(candidates) == 0:
                 continue
-            # prefer DTVs with shortest paths
+            # prefer DTVs with shortest capabilities
             best_candidate = min(candidates, key=lambda x: x.base)
             type_vars.add(best_candidate.base)
             recursive_scc_graph.remove_node(best_candidate)
@@ -602,13 +618,16 @@ class Solver(Loggable):
         graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
     ) -> Set[Node]:
         """
+        Obtain the starting graph nodes corresponding to the given
+        set of DTVs.
+
         We allow start  nodes to be both PRE_FORGET and POST_FORGET
         because we could have paths of the form FORGET* (without any recalls).
         """
         return {
             node
             for node in graph.nodes
-            if node.base in dtvs and node.left_right == LeftRight.LEFT
+            if node.base in dtvs and node.side_mark == SideMark.LEFT
         }
 
     @staticmethod
@@ -616,25 +635,34 @@ class Solver(Loggable):
         graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
     ) -> Set[Node]:
         """
+        Obtain the end graph nodes corresponding to the given
+        set of DTVs.
+
         We allow end_nodes to be both PRE_FORGET and POST_FORGET
         because we could have paths of the form RECALL* (without any forgets).
         """
         return {
             node
             for node in graph.nodes
-            if node.base in dtvs and node.left_right == LeftRight.RIGHT
+            if node.base in dtvs and node.side_mark == SideMark.RIGHT
         }
 
     @staticmethod
     def substitute_type_vars(
         constraints: ConstraintSet, type_vars: Set[DerivedTypeVariable]
     ) -> ConstraintSet:
+        """
+        Substitute the type variables in `type_vars` in the constraint
+        set `constraints`.
+        """
         modified_cs = ConstraintSet()
         type_var_map = {}
+        # assign names to type vars
         for i, type_var in enumerate(type_vars):
             type_var_map[type_var] = DerivedTypeVariable(f"τ${i}")
         left_suffix = None
         right_suffix = None
+        # substitute type vars in constraints
         for cs in constraints:
             for type_var in type_vars:
                 left_suffix = type_var.get_suffix(cs.left)
@@ -666,17 +694,24 @@ class Solver(Loggable):
         non_primitive_end_points: Set[DerivedTypeVariable],
         internal_types: Set[DerivedTypeVariable],
     ) -> ConstraintSet:
-        """Generate reduced set of constraints
+        """Generate a reduced set of constraints
         that constitute a type scheme.
+
+        These are constraints that relate:
+            - The procedure and procedure arguments
+            - Primitive types
+            - Type variables capturing recursive types
         """
         interesting_dtvs = non_primitive_end_points | internal_types
         all_interesting_nodes = {
             node for node in graph.nodes if node.base in interesting_dtvs
         }
-        type_vars = self._generate_type_vars(graph, all_interesting_nodes)
+        type_vars = Solver._generate_type_vars(graph, all_interesting_nodes)
         interesting_dtvs |= type_vars
 
         if len(type_vars) > 0:
+            # If we have type vars, we recompute the graph
+            # considering type vars as interesting
             graph = ConstraintGraph(
                 initial_constraints, interesting_dtvs
             ).graph
@@ -735,8 +770,10 @@ class Solver(Loggable):
         - Add constraints representing all the information of the callees (instantiate_calls)
         - Using those constraints, we `infer_shapes`, which populates sketches with all the capabilities
           that they have but no primitive types.
-        - Build the constraint graph and use it to infer final constraints
-        - Add the information of the final constraints to the pre-populated sketches.
+        - Build the constraint graph and use it to:
+           - Compute type schemes (to be used by later instantiate_calls)
+           - Compute constraints to populate primitive type information in sketches.
+        - Add primitive type information to the pre-populated sketches.
         """
 
         def show_progress(iterable):
