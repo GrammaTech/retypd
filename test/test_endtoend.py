@@ -35,7 +35,6 @@ parse_var = SchemaParser.parse_variable
 parse_cs = SchemaParser.parse_constraint
 
 
-@pytest.mark.commit
 def compute_sketches(
     cs: Dict[str, List[str]],
     callgraph: Dict[str, List[str]],
@@ -65,8 +64,26 @@ def compute_sketches(
     return solver()
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
 @pytest.mark.commit
-def test_recursive():
+def test_recursive(config):
     """A test based on the running example from the paper (Figure 2 on p. 3) and the slides
     (slides 67-83, labeled as slides 13-15).
     """
@@ -83,7 +100,7 @@ def test_recursive():
     constraints[close].add(parse_cs("close.in_0 ⊑ #FileDescriptor"))
     constraints[close].add(parse_cs("#SuccessZ ⊑ close.out"))
     program = Program(DummyLattice(), {}, constraints, {F: [close]})
-    solver = Solver(program, verbose=VERBOSE_TESTS)
+    solver = Solver(program, config=config, verbose=VERBOSE_TESTS)
     (gen_const, sketches) = solver()
     # Inter-procedural results (sketches)
     F_sketches = sketches[F]
@@ -101,8 +118,26 @@ def test_recursive():
     ).upper_bound == parse_var("#FileDescriptor")
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
 @pytest.mark.commit
-def test_recursive_no_primitive():
+def test_recursive_no_primitive(config):
     """The type of f.in_0 is recursive.
     struct list{
         list* next;
@@ -122,7 +157,7 @@ def test_recursive_no_primitive():
     callgraph = {"g": ["f"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
-        constraints, callgraph, lattice=lattice
+        constraints, callgraph, lattice=lattice, config=config
     )
     g_sketch = sketches[DerivedTypeVariable("g")]
     assert g_sketch.lookup(parse_var("g.in_0.load.σ4@0")) == g_sketch.lookup(
@@ -172,8 +207,26 @@ def test_recursive_through_procedures():
     assert isinstance(rec_struct.fields[1].ctype, IntType)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
 @pytest.mark.commit
-def test_multiple_label_nodes():
+def test_multiple_label_nodes(config):
     """The type of f.in_0 is:
     struct list{
         list* next;
@@ -202,7 +255,7 @@ def test_multiple_label_nodes():
     callgraph = {"g": ["f"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
-        constraints, callgraph, lattice=lattice
+        constraints, callgraph, lattice=lattice, config=config
     )
     f_sketch = sketches[DerivedTypeVariable("f")]
     assert f_sketch.lookup(parse_var("f.in_0.load.σ4@0")) is not None
@@ -239,8 +292,26 @@ def test_multiple_label_nodes():
     assert isinstance(rec_struct.fields[2].ctype, IntType)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
 @pytest.mark.commit
-def test_multiple_label_nodes_store():
+def test_multiple_label_nodes_store(config):
     """The type of f.out and g.out is
     as subtype of:
     struct list{
@@ -266,7 +337,7 @@ def test_multiple_label_nodes_store():
     callgraph = {"g": ["f"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
-        constraints, callgraph, lattice=lattice
+        constraints, callgraph, lattice=lattice, config=config
     )
     # check that information is transferred correctly to "g"
     g_sketch = sketches[DerivedTypeVariable("g")]
@@ -283,8 +354,26 @@ def test_multiple_label_nodes_store():
     )
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
 @pytest.mark.commit
-def test_interleaving_elements():
+def test_interleaving_elements(config):
     """
     There are two mutually recursive types
     struct A{
@@ -316,7 +405,7 @@ def test_interleaving_elements():
     callgraph = {"g": ["f"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
-        constraints, callgraph, lattice=lattice
+        constraints, callgraph, lattice=lattice, config=config
     )
     gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
     dtv2type = gen()
@@ -341,8 +430,26 @@ def test_interleaving_elements():
     assert isinstance(A_struct.fields[1].ctype, IntType)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
 @pytest.mark.commit
-def test_in_out_constraints_propagation():
+def test_in_out_constraints_propagation(config):
     """
     The instantiation of f should allows us to conclude that
     g.in_0 is int32.
@@ -356,7 +463,7 @@ def test_in_out_constraints_propagation():
     callgraph = {"g": ["f"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
-        constraints, callgraph, lattice=lattice
+        constraints, callgraph, lattice=lattice, config=config
     )
     assert parse_cs("g.in_0 <= int32") in gen_cs[parse_var("g")]
     gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
@@ -387,8 +494,26 @@ def test_argument_constraints_propagation():
     assert isinstance(dtv2type[DerivedTypeVariable("g")].params[0], IntType)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
 @pytest.mark.commit
-def test_regression1():
+def test_regression1(config):
     """
     When more than one typevar gets instantiated in a chain of constraints,
     we weren't following the entire chain (transitively) to get the atomic
@@ -415,7 +540,7 @@ def test_regression1():
         if line.strip():
             constraints[nf_apply].add(parse_cs(line))
     program = Program(DummyLattice(), {}, constraints, {nf_apply: []})
-    solver = Solver(program, verbose=True)
+    solver = Solver(program, config=config, verbose=True)
     (gen_const, sketches) = solver()
     nf_sketches = sketches[nf_apply]
     assert nf_sketches.lookup(
@@ -426,8 +551,26 @@ def test_regression1():
     ).upper_bound == parse_var("int")
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
 @pytest.mark.commit
-def test_vListInsert_issue9():
+def test_vListInsert_issue9(config):
     """
     This is a method from crazyflie
     vlistInsert(List_t * const pxList, ListItem_t * const pxNewListItem)
@@ -492,6 +635,7 @@ def test_vListInsert_issue9():
         constraints,
         callgraph,
         lattice=lattice,
+        config=config,
     )
     gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
     dtv2type = gen()
