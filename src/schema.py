@@ -439,6 +439,11 @@ class ConstraintSet:
         self.subtype.add(constraint)
         return True
 
+    def __eq__(self, other: Any) -> bool:
+        return (
+            isinstance(other, ConstraintSet) and self.subtype == other.subtype
+        )
+
     def all_dtvs(self) -> Set[DerivedTypeVariable]:
         dtvs = set()
         for c in self:
