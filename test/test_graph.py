@@ -8,7 +8,7 @@ from retypd import (
 )
 
 from retypd.schema import DerefLabel, InLabel, LoadLabel, OutLabel, Variance
-from retypd.graph import ConstraintGraph, EdgeLabel, Node
+from retypd.graph import ConstraintGraph, EdgeLabel, LeftRight, Node
 
 VERBOSE_TESTS = False
 
@@ -23,17 +23,30 @@ def test_simple():
     cs = ConstraintSet(
         [SchemaParser.parse_constraint("f.in_0 <= A.load.σ4@0")]
     )
-    graph = ConstraintGraph(cs).graph
-    f_co = Node(SchemaParser.parse_variable("f"), Variance.COVARIANT)
-    fin0_co = Node(SchemaParser.parse_variable("f.in_0"), Variance.COVARIANT)
+    graph = ConstraintGraph(cs, {SchemaParser.parse_variable("f")}).graph
+    f_co = Node(
+        SchemaParser.parse_variable("f"), Variance.COVARIANT, LeftRight.RIGHT
+    )
+    fin0_co = Node(
+        SchemaParser.parse_variable("f.in_0"),
+        Variance.COVARIANT,
+        LeftRight.LEFT,
+    )
     a_load_0_co = Node(
         SchemaParser.parse_variable("A.load.σ4@0"), Variance.COVARIANT
     )
     a_load_co = Node(SchemaParser.parse_variable("A.load"), Variance.COVARIANT)
     a_co = Node(SchemaParser.parse_variable("A"), Variance.COVARIANT)
-    f_cn = Node(SchemaParser.parse_variable("f"), Variance.CONTRAVARIANT)
+
+    f_cn = Node(
+        SchemaParser.parse_variable("f"),
+        Variance.CONTRAVARIANT,
+        LeftRight.LEFT,
+    )
     fin0_cn = Node(
-        SchemaParser.parse_variable("f.in_0"), Variance.CONTRAVARIANT
+        SchemaParser.parse_variable("f.in_0"),
+        Variance.CONTRAVARIANT,
+        LeftRight.RIGHT,
     )
     a_load_0_cn = Node(
         SchemaParser.parse_variable("A.load.σ4@0"), Variance.CONTRAVARIANT
@@ -80,17 +93,32 @@ def test_two_constraints():
     """
     constraints = ["A <= B", "B.out <= C"]
     cs = ConstraintSet(map(SchemaParser.parse_constraint, constraints))
-    graph = ConstraintGraph(cs).graph
+    graph = ConstraintGraph(
+        cs,
+        {SchemaParser.parse_variable("A"), SchemaParser.parse_variable("C")},
+    ).graph
     b_co = Node(SchemaParser.parse_variable("B"), Variance.COVARIANT)
     b_out_co = Node(SchemaParser.parse_variable("B.out"), Variance.COVARIANT)
-    a_co = Node(SchemaParser.parse_variable("A"), Variance.COVARIANT)
-    c_co = Node(SchemaParser.parse_variable("C"), Variance.COVARIANT)
+    a_co = Node(
+        SchemaParser.parse_variable("A"), Variance.COVARIANT, LeftRight.LEFT
+    )
+    c_co = Node(
+        SchemaParser.parse_variable("C"), Variance.COVARIANT, LeftRight.RIGHT
+    )
     b_cn = Node(SchemaParser.parse_variable("B"), Variance.CONTRAVARIANT)
     b_out_cn = Node(
         SchemaParser.parse_variable("B.out"), Variance.CONTRAVARIANT
     )
-    a_cn = Node(SchemaParser.parse_variable("A"), Variance.CONTRAVARIANT)
-    c_cn = Node(SchemaParser.parse_variable("C"), Variance.CONTRAVARIANT)
+    a_cn = Node(
+        SchemaParser.parse_variable("A"),
+        Variance.CONTRAVARIANT,
+        LeftRight.RIGHT,
+    )
+    c_cn = Node(
+        SchemaParser.parse_variable("C"),
+        Variance.CONTRAVARIANT,
+        LeftRight.LEFT,
+    )
     forget = EdgeLabel.Kind.FORGET
     recall = EdgeLabel.Kind.RECALL
     edges = {
