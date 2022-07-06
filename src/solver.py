@@ -27,7 +27,13 @@ from __future__ import annotations
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Any
 
 from .pathexpr import RExp, scc_decompose_path_seq, solve_paths_from
-from .graph import EdgeLabel, Node, ConstraintGraph, remove_unreachable_states
+from .graph import (
+    EdgeLabel,
+    LeftRight,
+    Node,
+    ConstraintGraph,
+    remove_unreachable_states,
+)
 from .schema import (
     ConstraintSet,
     DerivedTypeVariable,
@@ -599,7 +605,11 @@ class Solver(Loggable):
         We allow start  nodes to be both PRE_FORGET and POST_FORGET
         because we could have paths of the form FORGET* (without any recalls).
         """
-        return {node for node in graph.nodes if node.base in dtvs}
+        return {
+            node
+            for node in graph.nodes
+            if node.base in dtvs and node.left_right == LeftRight.LEFT
+        }
 
     @staticmethod
     def get_end_nodes(
@@ -609,7 +619,11 @@ class Solver(Loggable):
         We allow end_nodes to be both PRE_FORGET and POST_FORGET
         because we could have paths of the form RECALL* (without any forgets).
         """
-        return {node for node in graph.nodes if node.base in dtvs}
+        return {
+            node
+            for node in graph.nodes
+            if node.base in dtvs and node.left_right == LeftRight.RIGHT
+        }
 
     @staticmethod
     def substitute_type_vars(
@@ -647,6 +661,7 @@ class Solver(Loggable):
 
     def _generate_type_scheme(
         self,
+        initial_constraints: ConstraintSet,
         graph: networkx.DiGraph,
         non_primitive_end_points: Set[DerivedTypeVariable],
         internal_types: Set[DerivedTypeVariable],
@@ -660,6 +675,15 @@ class Solver(Loggable):
         }
         type_vars = self._generate_type_vars(graph, all_interesting_nodes)
         interesting_dtvs |= type_vars
+
+        if len(type_vars) > 0:
+            graph = ConstraintGraph(
+                initial_constraints, interesting_dtvs
+            ).graph
+            # Uncomment to output graph for debugging
+            # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
+            Solver._recall_forget_split(graph)
+
         start_nodes = Solver.get_start_nodes(graph, interesting_dtvs)
         end_nodes = Solver.get_end_nodes(graph, interesting_dtvs)
         constraints = self._generate_constraints_from_to(
@@ -745,12 +769,16 @@ class Solver(Loggable):
                 scc | set(self.program.global_vars)
             )
 
-            graph = ConstraintGraph(scc_initial_constraints).graph
+            graph = ConstraintGraph(
+                scc_initial_constraints,
+                non_primitive_endpoints | self.program.types.internal_types,
+            ).graph
             # Uncomment to output graph for debugging
             # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
             Solver._recall_forget_split(graph)
 
             type_scheme = self._generate_type_scheme(
+                scc_initial_constraints,
                 graph,
                 non_primitive_endpoints,
                 self.program.types.internal_types,
