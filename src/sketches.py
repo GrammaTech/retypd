@@ -229,38 +229,24 @@ class Sketches(Loggable):
                 continue
             self._copy_global_recursive(node, sketches)
 
-    def instantiate_sketch(
+    def instantiate_sketch_capabilities(
         self,
         proc: DerivedTypeVariable,
         types: Lattice[DerivedTypeVariable],
         fresh_var_factory: FreshVarFactory,
     ) -> ConstraintSet:
         """
-        Encode all the information present in the sketch into constraints.
-        - For each node that is not top or botton, generate a constraint with its type
-        - Generate dummy constraints to encode the capabilities of the sketch
-        - Generate constraints to encode the cycles (recursive types) in the sketch.
+        Encode all the capability information present in the sketch
+        using fake variables.
         """
         all_constraints = ConstraintSet()
         for node in self.sketches.nodes:
             if isinstance(node, SketchNode) and node.dtv.base_var == proc:
                 constraints = []
-                # if the node has some type, capture that in a constraint
-                if node.lower_bound != types.bottom:
-                    constraints.append(
-                        SubtypeConstraint(node.lower_bound, node.dtv)
-                    )
-                if node.upper_bound != types.top:
-                    constraints.append(
-                        SubtypeConstraint(node.dtv, node.upper_bound)
-                    )
                 # if the node is a leaf, capture the capability using fake variables
                 # this could be avoided if we support capability constraints  (Var x.l) in
                 # addition to subtype constraints
-                if (
-                    len(constraints) == 0
-                    and next(self.sketches.successors(node), None) is None
-                ):
+                if next(self.sketches.successors(node), None) is None:
                     fresh_var = fresh_var_factory.fresh_var()
                     if node.dtv.path_variance == Variance.CONTRAVARIANT:
                         constraints.append(
@@ -270,19 +256,6 @@ class Sketches(Loggable):
                         constraints.append(
                             SubtypeConstraint(fresh_var, node.dtv)
                         )
-                for succ in self.sketches.successors(node):
-                    if isinstance(succ, LabelNode):
-                        label = self.sketches[node][succ].get("label")
-                        loop_back = node.dtv.add_suffix(label)
-                        if loop_back.path_variance == Variance.CONTRAVARIANT:
-                            constraints.append(
-                                SubtypeConstraint(loop_back, succ.target)
-                            )
-                        else:
-                            constraints.append(
-                                SubtypeConstraint(succ.target, loop_back)
-                            )
-
                 all_constraints |= ConstraintSet(constraints)
         return all_constraints
 
