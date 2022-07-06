@@ -79,14 +79,10 @@ class SolverConfig:
     # Maximum paths total to explore per SCC
     max_total_paths: int = 2**64
     # Use path expressions or naive exploration of the graph.
-    use_path_expressions: bool = True
+    use_path_expressions: bool = False
     # Restrict graph to reachable nodes from and to endpoints
     # before doing the path exploration.
     restrict_graph_to_reachable: bool = True
-    # Compute constraints between interesting non-primitive types
-    compute_type_schema: bool = True
-    # Keep output constraints after use; set to False to save memory
-    keep_output_constraints: bool = True
     # More precise global handling
     # By default, we propagate globals up the callgraph, inlining them into the sketches as we
     # go, and the global sketches in the final (synthetic) root of the callgraph are the results
@@ -211,11 +207,13 @@ class Solver(Loggable):
     def instantiate_calls(
         cs: ConstraintSet,
         sketch_map: Dict[DerivedTypeVariable, Sketches],
+        type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
         types: Lattice[DerivedTypeVariable],
     ) -> ConstraintSet:
         """
-        For every constraint involving a procedure that appears in the sketch map
-        Generate constraints that summarize the contents of the sketch.
+        For every constraint involving a procedure that has already been
+        analyzed, generate constraints based on the type scheme and
+        capability constraints based on the sketch.
         """
         fresh_var_factory = FreshVarFactory()
         callees = set()
@@ -225,9 +223,10 @@ class Solver(Loggable):
 
         new_constraints = ConstraintSet()
         for callee in callees:
-            new_constraints |= sketch_map[callee].instantiate_sketch(
-                callee, types, fresh_var_factory
-            )
+            new_constraints |= sketch_map[
+                callee
+            ].instantiate_sketch_capabilities(callee, types, fresh_var_factory)
+            new_constraints |= type_schemes[callee]
         return new_constraints
 
     @staticmethod
@@ -398,7 +397,7 @@ class Solver(Loggable):
     ) -> Optional[SubtypeConstraint]:
         """Generate constraints by adding the forgets in string to origin and the recalls in string
         to dest. If both of the generated vertices are covariant (the empty string's variance is
-        covariant, so only covariant vertices can represent a derived type variable without an
+        covariant, so only covariant vertices can represent a type_scheme type variable without an
         elided portion of its path) and if the two variables are not equal, emit a constraint.
         """
         lhs = origin
@@ -479,9 +478,6 @@ class Solver(Loggable):
                 return
             if npaths > max_paths_per_root:
                 return
-            if current_node in path:
-                npaths += 1
-                return
             if path and current_node in end_nodes:
                 constraint = self._maybe_constraint(
                     path[0], current_node, string
@@ -490,6 +486,10 @@ class Solver(Loggable):
                     constraints.add(constraint)
                 npaths += 1
                 return
+            if current_node in path:
+                npaths += 1
+                return
+
             path = list(path)
             path.append(current_node)
             if current_node in graph:
@@ -541,66 +541,160 @@ class Solver(Loggable):
                 graph, start_nodes, end_nodes
             )
 
-    def _generate_constraints(
+    @staticmethod
+    def _generate_type_vars(
+        graph: networkx.DiGraph, interesting_nodes: Set[Node]
+    ) -> Set[DerivedTypeVariable]:
+        """Identify at least one node in each nontrivial SCC and generate a type variable for it.
+        This ensures that we capture recursive types even if they are not part
+        of a path between interesting variables.
+        """
+
+        def collect_recursive_sccs(graph: networkx.DiGraph):
+            condensation = networkx.condensation(graph)
+            recursive_sccs: List[networkx.DiGraph] = []
+            # collect recursive SCCs
+            for scc_node in condensation.nodes:
+                scc_nodes = condensation.nodes[scc_node]["members"]
+                if len(scc_nodes) == 1:
+                    continue
+                recursive_sccs.append(graph.subgraph(scc_nodes).copy())
+            return recursive_sccs
+
+        graph = graph.copy()
+        # we are only interested in cycles remaining without crossing interesting variables.
+        graph.remove_nodes_from(interesting_nodes)
+        recursive_sccs = collect_recursive_sccs(graph)
+        # greedily break SCCs
+        type_vars = set()
+        while len(recursive_sccs) > 0:
+            recursive_scc_graph = recursive_sccs.pop()
+            candidates = set()
+            for (src, dest, label) in recursive_scc_graph.edges(data="label"):
+                if label is not None:
+                    if label.kind == EdgeLabel.Kind.FORGET:
+                        candidates.add(dest)
+                    else:
+                        candidates.add(src)
+            # ignore SCCs without labeled paths
+            # e.g. A <= B, B <= C
+            # we don't want type vars for those
+            if len(candidates) == 0:
+                continue
+            # prefer DTVs with shortest paths
+            best_candidate = min(candidates, key=lambda x: x.base)
+            type_vars.add(best_candidate.base)
+            recursive_scc_graph.remove_node(best_candidate)
+            recursive_sccs = (
+                collect_recursive_sccs(recursive_scc_graph) + recursive_sccs
+            )
+
+        return type_vars
+
+    @staticmethod
+    def get_start_nodes(
+        graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
+    ) -> Set[Node]:
+        """
+        We allow start  nodes to be both PRE_FORGET and POST_FORGET
+        because we could have paths of the form FORGET* (without any recalls).
+        """
+        return {node for node in graph.nodes if node.base in dtvs}
+
+    @staticmethod
+    def get_end_nodes(
+        graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
+    ) -> Set[Node]:
+        """
+        We allow end_nodes to be both PRE_FORGET and POST_FORGET
+        because we could have paths of the form RECALL* (without any forgets).
+        """
+        return {node for node in graph.nodes if node.base in dtvs}
+
+    @staticmethod
+    def substitute_type_vars(
+        constraints: ConstraintSet, type_vars: Set[DerivedTypeVariable]
+    ) -> ConstraintSet:
+        modified_cs = ConstraintSet()
+        type_var_map = {}
+        for i, type_var in enumerate(type_vars):
+            type_var_map[type_var] = DerivedTypeVariable(f"τ${i}")
+        left_suffix = None
+        right_suffix = None
+        for cs in constraints:
+            for type_var in type_vars:
+                left_suffix = type_var.get_suffix(cs.left)
+                if left_suffix is not None:
+                    left_base = type_var_map[type_var]
+                    break
+            for type_var in type_vars:
+                right_suffix = type_var.get_suffix(cs.right)
+                if right_suffix is not None:
+                    right_base = type_var_map[type_var]
+                    break
+            new_left = (
+                left_base.extend(left_suffix)
+                if left_suffix is not None
+                else cs.left
+            )
+            new_right = (
+                right_base.extend(right_suffix)
+                if right_suffix is not None
+                else cs.right
+            )
+            modified_cs.add(SubtypeConstraint(new_left, new_right))
+        return modified_cs
+
+    def _generate_type_scheme(
         self,
-        initial_constraints: ConstraintSet,
+        graph: networkx.DiGraph,
         non_primitive_end_points: Set[DerivedTypeVariable],
         internal_types: Set[DerivedTypeVariable],
     ) -> ConstraintSet:
-        """Generate final constraints from a set of initial constraints
-        by generating a graph and exploring all its paths.
+        """Generate reduced set of constraints
+        that constitute a type scheme.
+        """
+        interesting_dtvs = non_primitive_end_points | internal_types
+        all_interesting_nodes = {
+            node for node in graph.nodes if node.base in interesting_dtvs
+        }
+        type_vars = self._generate_type_vars(graph, all_interesting_nodes)
+        interesting_dtvs |= type_vars
+        start_nodes = Solver.get_start_nodes(graph, interesting_dtvs)
+        end_nodes = Solver.get_end_nodes(graph, interesting_dtvs)
+        constraints = self._generate_constraints_from_to(
+            graph, start_nodes, end_nodes
+        )
+        return Solver.substitute_type_vars(constraints, type_vars)
+
+    def _generate_primitive_constraints(
+        self,
+        graph: networkx.DiGraph,
+        non_primitive_end_points: Set[DerivedTypeVariable],
+        internal_types: Set[DerivedTypeVariable],
+    ) -> ConstraintSet:
+        """Generate constraints to populate
+        the sketch nodes with primitive types
 
         We explore paths:
          - From internal_types to non_primitive_end_points.
          - From non_primitive_end_points to internal_types.
-         - [Optionally] from non_primitive_end_points to non_primitive_end_points.
         """
-
-        def get_start_nodes(
-            graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
-        ) -> Set[Node]:
-            return {
-                node
-                for node in graph.nodes
-                if node.base in dtvs
-                and node._forgotten == Node.Forgotten.PRE_FORGET
-            }
-
-        # We allow end_nodes to be both PRE_FORGET and POST_FORGET
-        # because we could have paths of the form RECALL* (without any forgets).
-        def get_end_nodes(
-            graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
-        ) -> Set[Node]:
-            return {node for node in graph.nodes if node.base in dtvs}
-
-        graph = ConstraintGraph(initial_constraints).graph
-        # Uncomment to output graph for debugging
-        # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
-        Solver._recall_forget_split(graph)
         constraints = ConstraintSet()
 
         # from proc and global vars to primitive types
-        start_nodes = get_start_nodes(graph, non_primitive_end_points)
-        end_nodes = get_end_nodes(graph, internal_types)
+        start_nodes = Solver.get_start_nodes(graph, non_primitive_end_points)
+        end_nodes = Solver.get_end_nodes(graph, internal_types)
         constraints |= self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
         )
 
         # from primitive types to proc and global vars
-        start_nodes = get_start_nodes(graph, internal_types)
-        end_nodes = get_end_nodes(graph, non_primitive_end_points)
+        start_nodes = Solver.get_start_nodes(graph, internal_types)
+        end_nodes = Solver.get_end_nodes(graph, non_primitive_end_points)
         constraints |= self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
         )
-        # TODO: These are currently not used.
-        # I am not sure if these are needed if we are transfering information
-        # through sketches. Is that completely equivalent?
-        if self.config.compute_type_schema:
-            start_nodes = get_start_nodes(graph, non_primitive_end_points)
-            end_nodes = get_end_nodes(graph, non_primitive_end_points)
-            constraints |= self._generate_constraints_from_to(
-                graph, start_nodes, end_nodes
-            )
         return constraints
 
     def _solve_topo_graph(
@@ -609,7 +703,7 @@ class Solver(Loggable):
         scc_dag: networkx.DiGraph,
         constraint_map: Dict[Any, ConstraintSet],
         sketches_map: Dict[DerivedTypeVariable, Sketches],
-        derived: Dict[DerivedTypeVariable, ConstraintSet],
+        type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
     ):
         """
         For each SCC we:
@@ -635,7 +729,7 @@ class Solver(Loggable):
             for proc in scc:
                 constraints = constraint_map.get(proc, ConstraintSet())
                 constraints |= Solver.instantiate_calls(
-                    constraints, sketches_map, self.program.types
+                    constraints, sketches_map, type_schemes, self.program.types
                 )
                 scc_initial_constraints |= constraints
 
@@ -650,19 +744,30 @@ class Solver(Loggable):
             non_primitive_endpoints = frozenset(
                 scc | set(self.program.global_vars)
             )
-            generated_constraints = self._generate_constraints(
-                scc_initial_constraints,
+
+            graph = ConstraintGraph(scc_initial_constraints).graph
+            # Uncomment to output graph for debugging
+            # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
+            Solver._recall_forget_split(graph)
+
+            type_scheme = self._generate_type_scheme(
+                graph,
                 non_primitive_endpoints,
                 self.program.types.internal_types,
             )
-            scc_sketches.add_constraints(generated_constraints)
+            primitive_constraints = self._generate_primitive_constraints(
+                graph,
+                non_primitive_endpoints,
+                self.program.types.internal_types,
+            )
+            scc_sketches.add_constraints(primitive_constraints)
+
             # Copy globals from our callees, if we are analyzing globals precisely.
             global_handler.copy_globals(scc_sketches, scc, sketches_map)
 
             for proc in scc:
                 sketches_map[proc] = scc_sketches
-                if self.config.keep_output_constraints:
-                    derived[proc] = generated_constraints
+                type_schemes[proc] = type_scheme
 
             global_handler.post_scc(scc_node, sketches_map)
 
@@ -674,7 +779,7 @@ class Solver(Loggable):
     ]:
         """Perform the retypd calculation."""
 
-        derived: Dict[DerivedTypeVariable, ConstraintSet] = {}
+        type_schemes: Dict[DerivedTypeVariable, ConstraintSet] = {}
         sketches_map: Dict[DerivedTypeVariable, Sketches] = {}
 
         def find_roots(digraph: networkx.DiGraph):
@@ -712,7 +817,7 @@ class Solver(Loggable):
             scc_dag,
             self.program.proc_constraints,
             sketches_map,
-            derived,
+            type_schemes,
         )
         global_handler.finalize(self, sketches_map)
 
@@ -720,12 +825,11 @@ class Solver(Loggable):
         # in it. It would be nice to separate them out, but not a priority right now (clients
         # can do it easily).
         for g in self.program.global_vars:
-            if self.config.keep_output_constraints:
-                derived[g] = derived[fake_root]
+            type_schemes[g] = type_schemes[fake_root]
             sketches_map[g] = sketches_map[fake_root]
-        if self.config.keep_output_constraints and fake_root in derived:
-            del derived[fake_root]
+        if fake_root in type_schemes:
+            del type_schemes[fake_root]
         if fake_root in sketches_map:
             del sketches_map[fake_root]
 
-        return (derived, sketches_map)
+        return (type_schemes, sketches_map)
