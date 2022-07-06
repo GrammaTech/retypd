@@ -35,6 +35,16 @@ parse_var = SchemaParser.parse_variable
 parse_cs = SchemaParser.parse_constraint
 
 
+def parse_cs_set(constraints: List[str]) -> ConstraintSet:
+    """
+    Auxiliary function to parse a set of constraints
+    """
+    cs = ConstraintSet()
+    for c in constraints:
+        cs.add(parse_cs(c))
+    return cs
+
+
 def compute_sketches(
     cs: Dict[str, List[str]],
     callgraph: Dict[str, List[str]],
@@ -47,11 +57,7 @@ def compute_sketches(
     """
     parsed_cs = {}
     for proc, proc_cs in cs.items():
-
-        proc_parsed_cs = ConstraintSet()
-        for c in proc_cs:
-            proc_parsed_cs.add(parse_cs(c))
-        parsed_cs[DerivedTypeVariable(proc)] = proc_parsed_cs
+        parsed_cs[DerivedTypeVariable(proc)] = parse_cs_set(proc_cs)
 
     parsed_callgraph = {
         DerivedTypeVariable(proc): [
@@ -88,28 +94,33 @@ def test_recursive(config):
     (slides 67-83, labeled as slides 13-15).
     """
     F = parse_var("F")
-    close = parse_var("close")
-    constraints = {F: ConstraintSet(), close: ConstraintSet()}
-    constraints[F].add(parse_cs("F.in_0 ⊑ δ"))
-    constraints[F].add(parse_cs("α ⊑ φ"))
-    constraints[F].add(parse_cs("δ ⊑ φ"))
-    constraints[F].add(parse_cs("φ.load.σ4@0 ⊑ α"))
-    constraints[F].add(parse_cs("φ.load.σ4@4 ⊑ α'"))
-    constraints[F].add(parse_cs("α' ⊑ close.in_0"))
-    constraints[F].add(parse_cs("close.out ⊑ F.out"))
-    constraints[close].add(parse_cs("close.in_0 ⊑ #FileDescriptor"))
-    constraints[close].add(parse_cs("#SuccessZ ⊑ close.out"))
-    program = Program(DummyLattice(), {}, constraints, {F: [close]})
-    solver = Solver(program, config=config, verbose=VERBOSE_TESTS)
-    (gen_const, sketches) = solver()
-    # Inter-procedural results (sketches)
+    constraints = {
+        "F": [
+            "F.in_0 ⊑ δ",
+            "α ⊑ φ",
+            "δ ⊑ φ",
+            "φ.load.σ4@0 ⊑ α",
+            "φ.load.σ4@4 ⊑ α'",
+            "α' ⊑ close.in_0",
+            "close.out ⊑ F.out",
+        ],
+        "close": ["close.in_0 ⊑ #FileDescriptor", "#SuccessZ ⊑ close.out"],
+    }
+    callgraph = {"F": ["close"]}
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=DummyLattice(), config=config
+    )
+    # Check constraints
+    assert gen_cs[F] == parse_cs_set(
+        [
+            "F.in_0 ⊑ τ$0",
+            "τ$0.load.σ4@0 ⊑ τ$0",
+            "τ$0.load.σ4@4 ⊑ #FileDescriptor",
+            "#SuccessZ ⊑ F.out",
+        ]
+    )
+    # Check sketches
     F_sketches = sketches[F]
-    # Equivalent to "#SuccessZ ⊑ F.out"
-    assert parse_cs("#SuccessZ ⊑ F.out") in gen_const[F]
-    assert parse_cs("τ$0.load.σ4@4 ⊑ #FileDescriptor") in gen_const[F]
-    assert parse_cs("F.in_0 ⊑ τ$0") in gen_const[F]
-    # assert parse_cs("F.in_0.load.σ4@4 ⊑ #FileDescriptor") in gen_const[F]
-    # Equivalent check in sketches
     assert F_sketches.lookup(parse_var("F.out")).lower_bound == parse_var(
         "#SuccessZ"
     )
@@ -159,6 +170,14 @@ def test_recursive_no_primitive(config):
     (gen_cs, sketches) = compute_sketches(
         constraints, callgraph, lattice=lattice, config=config
     )
+
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        ["f.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0"]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        ["g.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0"]
+    )
+
     g_sketch = sketches[DerivedTypeVariable("g")]
     assert g_sketch.lookup(parse_var("g.in_0.load.σ4@0")) == g_sketch.lookup(
         parse_var("g.in_0")
@@ -190,6 +209,13 @@ def test_recursive_through_procedures():
     (gen_cs, sketches) = compute_sketches(
         constraints, callgraph, lattice=lattice
     )
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        ["f.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0", "τ$0.load.σ4@4 ⊑ int"]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        ["g.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0", "τ$0.load.σ4@4 ⊑ int"]
+    )
+
     g_sketch = sketches[DerivedTypeVariable("g")]
     assert g_sketch.lookup(parse_var("g.in_0.load.σ4@4")) is not None
     assert (
@@ -256,6 +282,22 @@ def test_multiple_label_nodes(config):
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
         constraints, callgraph, lattice=lattice, config=config
+    )
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        [
+            "f.in_0 <= τ$0",
+            "τ$0.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@4 <= τ$0",
+            "τ$0.load.σ4@8 <= int",
+        ]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        [
+            "g.in_0 <= τ$0",
+            "τ$0.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@4 <= τ$0",
+            "τ$0.load.σ4@8 <= int",
+        ]
     )
     f_sketch = sketches[DerivedTypeVariable("f")]
     assert f_sketch.lookup(parse_var("f.in_0.load.σ4@0")) is not None
@@ -406,6 +448,26 @@ def test_interleaving_elements(config):
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
         constraints, callgraph, lattice=lattice, config=config
+    )
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        [
+            "f.in_0 <= τ$0",
+            "f.in_1.load.σ4@4 <= float",
+            "f.in_1.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@4 <= int",
+            "τ$0.load.σ4@0.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@0.load.σ4@4 <= float",
+        ]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        [
+            "g.in_0 <= τ$0",
+            "g.in_1.load.σ4@4 <= float",
+            "g.in_1.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@4 <= int",
+            "τ$0.load.σ4@0.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@0.load.σ4@4 <= float",
+        ]
     )
     gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
     dtv2type = gen()
@@ -642,6 +704,8 @@ def test_vListInsert_issue9(config):
     ListItem_t_ptr = dtv2type[DerivedTypeVariable("vListInsert")].params[1]
     ListItem_t = ListItem_t_ptr.target_type
     assert len(ListItem_t.fields) >= 4
+    # field 0 is an integer
+    assert isinstance(ListItem_t.fields[0].ctype, IntType)
     # second and third are pointers to next and previous
     assert ListItem_t.fields[1].ctype.target_type.name == ListItem_t.name
     assert ListItem_t.fields[2].ctype.target_type.name == ListItem_t.name
