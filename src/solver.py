@@ -224,9 +224,10 @@ class Solver(Loggable):
             for dtv in type_scheme.all_dtvs()
             if fresh_var_factory.is_anonymous_variable(dtv)
         }
+        # sort to avoid non-determinism
         instantiation_map = {
             original: fresh_var_factory.fresh_var()
-            for original in anonymous_vars
+            for original in sorted(anonymous_vars)
         }
         return type_scheme.apply_mapping(instantiation_map)
 
@@ -252,7 +253,8 @@ class Solver(Loggable):
                 callees.add(dtv.base_var)
 
         new_constraints = ConstraintSet()
-        for callee in callees:
+        # sort to avoid non-determinism
+        for callee in sorted(callees):
             new_constraints |= sketch_map[
                 callee
             ].instantiate_sketch_capabilities(callee, types, fresh_var_factory)
@@ -683,8 +685,10 @@ class Solver(Loggable):
         """
         fresh_var_factory = FreshVarFactory()
         # assign names to type vars
+        # sort to avoid non-determinism
         type_var_map = {
-            type_var: fresh_var_factory.fresh_var() for type_var in type_vars
+            type_var: fresh_var_factory.fresh_var()
+            for type_var in sorted(type_vars)
         }
         return constraints.apply_mapping(type_var_map)
 
