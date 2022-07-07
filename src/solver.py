@@ -680,8 +680,8 @@ class Solver(Loggable):
         constraints: ConstraintSet, type_vars: Set[DerivedTypeVariable]
     ) -> ConstraintSet:
         """
-        Substitute the type variables in `type_vars` in the constraint
-        set `constraints`.
+        The type variables in `type_vars` become existentially quantified
+        anonymous variables in the returned constraint set.
         """
         fresh_var_factory = FreshVarFactory()
         # assign names to type vars
