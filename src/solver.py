@@ -693,7 +693,7 @@ class Solver(Loggable):
         initial_constraints: ConstraintSet,
         graph: networkx.DiGraph,
         non_primitive_end_points: Set[DerivedTypeVariable],
-        internal_types: Set[DerivedTypeVariable],
+        primitive_types: Set[DerivedTypeVariable],
     ) -> ConstraintSet:
         """Generate a reduced set of constraints
         that constitute a type scheme.
@@ -703,7 +703,7 @@ class Solver(Loggable):
             - Primitive types
             - Type variables capturing recursive types
         """
-        interesting_dtvs = non_primitive_end_points | internal_types
+        interesting_dtvs = non_primitive_end_points | primitive_types
         all_interesting_nodes = {
             node for node in graph.nodes if node.base in interesting_dtvs
         }
@@ -731,26 +731,26 @@ class Solver(Loggable):
         self,
         graph: networkx.DiGraph,
         non_primitive_end_points: Set[DerivedTypeVariable],
-        internal_types: Set[DerivedTypeVariable],
+        primitive_types: Set[DerivedTypeVariable],
     ) -> ConstraintSet:
         """Generate constraints to populate
         the sketch nodes with primitive types
 
         We explore paths:
-         - From internal_types to non_primitive_end_points.
-         - From non_primitive_end_points to internal_types.
+         - From primitive_types to non_primitive_end_points.
+         - From non_primitive_end_points to primitive_types.
         """
         constraints = ConstraintSet()
 
         # from proc and global vars to primitive types
         start_nodes = Solver.get_start_nodes(graph, non_primitive_end_points)
-        end_nodes = Solver.get_end_nodes(graph, internal_types)
+        end_nodes = Solver.get_end_nodes(graph, primitive_types)
         constraints |= self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
         )
 
         # from primitive types to proc and global vars
-        start_nodes = Solver.get_start_nodes(graph, internal_types)
+        start_nodes = Solver.get_start_nodes(graph, primitive_types)
         end_nodes = Solver.get_end_nodes(graph, non_primitive_end_points)
         constraints |= self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
