@@ -511,6 +511,68 @@ def test_interleaving_elements(config):
     ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
 )
 @pytest.mark.commit
+def test_two_recursive_instantiations(config):
+    """The types of f.in_0 and g.in_0 are recursive.
+    These correspond to h.in_0 and h.in_1.
+    """
+    constraints = {
+        "f": [
+            "f.in_0 <= list",
+            "list.load.σ4@0 <= next",
+            "next <= list",
+            "list.load.σ4@4 <= int",
+        ],
+        "g": [
+            "g.in_0 <= list",
+            "list.load.σ4@4 <= next",
+            "next <= list",
+            "list.load.σ4@0 <= float",
+        ],
+        "h": ["h.in_0 <= f.in_0", "h.in_1 <= g.in_0"],
+    }
+    callgraph = {"h": ["f", "g"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        ["f.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0", "τ$0.load.σ4@4 ⊑ int"]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        ["g.in_0 ⊑ τ$0", "τ$0.load.σ4@4 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ float"]
+    )
+    assert gen_cs[parse_var("h")] == parse_cs_set(
+        [
+            "h.in_0 ⊑ τ$0",
+            "τ$0.load.σ4@0 ⊑ τ$0",
+            "τ$0.load.σ4@4 ⊑ int",
+            "h.in_1 ⊑ τ$1",
+            "τ$1.load.σ4@4 ⊑ τ$1",
+            "τ$1.load.σ4@0 ⊑ float",
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
+@pytest.mark.commit
 def test_in_out_constraints_propagation(config):
     """
     The instantiation of f should allows us to conclude that

@@ -467,6 +467,40 @@ class ConstraintSet:
     def __len__(self) -> int:
         return len(self.subtype)
 
+    def apply_mapping(
+        self, var_mapping: Dict[DerivedTypeVariable, DerivedTypeVariable]
+    ) -> ConstraintSet:
+        """
+        Return an equivalent constraint set in which DTVs have been substituted
+        based on the provided `var_mapping`.
+        """
+        left_suffix = None
+        right_suffix = None
+        mapped_cs = ConstraintSet()
+        for cs in self:
+            for type_var in var_mapping:
+                left_suffix = type_var.get_suffix(cs.left)
+                if left_suffix is not None:
+                    left_base = var_mapping[type_var]
+                    break
+            for type_var in var_mapping:
+                right_suffix = type_var.get_suffix(cs.right)
+                if right_suffix is not None:
+                    right_base = var_mapping[type_var]
+                    break
+            new_left = (
+                left_base.extend(left_suffix)
+                if left_suffix is not None
+                else cs.left
+            )
+            new_right = (
+                right_base.extend(right_suffix)
+                if right_suffix is not None
+                else cs.right
+            )
+            mapped_cs.add(SubtypeConstraint(new_left, new_right))
+        return mapped_cs
+
 
 T = TypeVar("T")
 
@@ -568,9 +602,12 @@ class FreshVarFactory:
         self.fresh_var_counter = 0
 
     def fresh_var(self) -> DerivedTypeVariable:
-        fresh_var = DerivedTypeVariable(f"fresh-var-{self.fresh_var_counter}")
+        fresh_var = DerivedTypeVariable(f"τ${self.fresh_var_counter}")
         self.fresh_var_counter += 1
         return fresh_var
+
+    def is_anonymous_variable(self, dtv: DerivedTypeVariable):
+        return dtv.base.startswith("τ$")
 
 
 class RetypdError(Exception):

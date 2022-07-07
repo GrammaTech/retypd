@@ -210,6 +210,27 @@ class Solver(Loggable):
         self.config = config
 
     @staticmethod
+    def instantiate_type_scheme(
+        fresh_var_factory: FreshVarFactory, type_scheme: ConstraintSet
+    ) -> ConstraintSet:
+        """
+        Instantiate a type scheme by substituting the anonymous variables
+        in the type scheme by fresh variables.
+        This guarantees that there will be no naming conflics from anonymous variables
+        coming from different calls.
+        """
+        anonymous_vars = {
+            dtv.base_var
+            for dtv in type_scheme.all_dtvs()
+            if fresh_var_factory.is_anonymous_variable(dtv)
+        }
+        instantiation_map = {
+            original: fresh_var_factory.fresh_var()
+            for original in anonymous_vars
+        }
+        return type_scheme.apply_mapping(instantiation_map)
+
+    @staticmethod
     def instantiate_calls(
         cs: ConstraintSet,
         sketch_map: Dict[DerivedTypeVariable, Sketches],
@@ -223,6 +244,9 @@ class Solver(Loggable):
         """
         fresh_var_factory = FreshVarFactory()
         callees = set()
+        # TODO in order to support different instantiations for different calls
+        # to the same function, we need to encode function actuals
+        # differently than function formals
         for dtv in cs.all_dtvs():
             if dtv.base_var in sketch_map:
                 callees.add(dtv.base_var)
@@ -232,7 +256,9 @@ class Solver(Loggable):
             new_constraints |= sketch_map[
                 callee
             ].instantiate_sketch_capabilities(callee, types, fresh_var_factory)
-            new_constraints |= type_schemes[callee]
+            new_constraints |= Solver.instantiate_type_scheme(
+                fresh_var_factory, type_schemes[callee]
+            )
         return new_constraints
 
     @staticmethod
@@ -655,37 +681,12 @@ class Solver(Loggable):
         Substitute the type variables in `type_vars` in the constraint
         set `constraints`.
         """
-        modified_cs = ConstraintSet()
-        type_var_map = {}
+        fresh_var_factory = FreshVarFactory()
         # assign names to type vars
-        for i, type_var in enumerate(type_vars):
-            type_var_map[type_var] = DerivedTypeVariable(f"τ${i}")
-        left_suffix = None
-        right_suffix = None
-        # substitute type vars in constraints
-        for cs in constraints:
-            for type_var in type_vars:
-                left_suffix = type_var.get_suffix(cs.left)
-                if left_suffix is not None:
-                    left_base = type_var_map[type_var]
-                    break
-            for type_var in type_vars:
-                right_suffix = type_var.get_suffix(cs.right)
-                if right_suffix is not None:
-                    right_base = type_var_map[type_var]
-                    break
-            new_left = (
-                left_base.extend(left_suffix)
-                if left_suffix is not None
-                else cs.left
-            )
-            new_right = (
-                right_base.extend(right_suffix)
-                if right_suffix is not None
-                else cs.right
-            )
-            modified_cs.add(SubtypeConstraint(new_left, new_right))
-        return modified_cs
+        type_var_map = {
+            type_var: fresh_var_factory.fresh_var() for type_var in type_vars
+        }
+        return constraints.apply_mapping(type_var_map)
 
     def _generate_type_scheme(
         self,
