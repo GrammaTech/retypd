@@ -70,7 +70,7 @@ def compute_sketches(
     return solver()
 
 
-@pytest.mark.parametrize(
+all_solver_configs = pytest.mark.parametrize(
     "config",
     [
         SolverConfig(
@@ -88,6 +88,9 @@ def compute_sketches(
     ],
     ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
 )
+
+
+@all_solver_configs
 @pytest.mark.commit
 def test_recursive(config):
     """A test based on the running example from the paper (Figure 2 on p. 3) and the slides
@@ -129,24 +132,7 @@ def test_recursive(config):
     ).upper_bound == parse_var("#FileDescriptor")
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
-        ),
-    ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
-)
+@all_solver_configs
 @pytest.mark.commit
 def test_recursive_no_primitive(config):
     """The type of f.in_0 is recursive.
@@ -233,24 +219,7 @@ def test_recursive_through_procedures():
     assert isinstance(rec_struct.fields[1].ctype, IntType)
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
-        ),
-    ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
-)
+@all_solver_configs
 @pytest.mark.commit
 def test_multiple_label_nodes(config):
     """The type of f.in_0 is:
@@ -334,24 +303,7 @@ def test_multiple_label_nodes(config):
     assert isinstance(rec_struct.fields[2].ctype, IntType)
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
-        ),
-    ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
-)
+@all_solver_configs
 @pytest.mark.commit
 def test_multiple_label_nodes_store(config):
     """The type of f.out and g.out is
@@ -396,24 +348,7 @@ def test_multiple_label_nodes_store(config):
     )
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
-        ),
-    ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
-)
+@all_solver_configs
 @pytest.mark.commit
 def test_interleaving_elements(config):
     """
@@ -492,24 +427,7 @@ def test_interleaving_elements(config):
     assert isinstance(A_struct.fields[1].ctype, IntType)
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
-        ),
-    ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
-)
+@all_solver_configs
 @pytest.mark.commit
 def test_two_recursive_instantiations(config):
     """The types of f.in_0 and g.in_0 are recursive.
@@ -554,24 +472,7 @@ def test_two_recursive_instantiations(config):
     )
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
-        ),
-    ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
-)
+@all_solver_configs
 @pytest.mark.commit
 def test_in_out_constraints_propagation(config):
     """
@@ -618,24 +519,7 @@ def test_argument_constraints_propagation():
     assert isinstance(dtv2type[DerivedTypeVariable("g")].params[0], IntType)
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
-        ),
-    ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
-)
+@all_solver_configs
 @pytest.mark.commit
 def test_regression1(config):
     """
@@ -675,24 +559,7 @@ def test_regression1(config):
     ).upper_bound == parse_var("int")
 
 
-@pytest.mark.parametrize(
-    "config",
-    [
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
-        ),
-        SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
-        ),
-        SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
-        ),
-    ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
-)
+@all_solver_configs
 @pytest.mark.commit
 def test_vListInsert_issue9(config):
     """
