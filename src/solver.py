@@ -172,13 +172,13 @@ def enumerate_non_looping_paths(path_expr: RExp) -> List[List[EdgeLabel]]:
                 paths, enumerate_non_looping_paths(child)
             )
         return paths
-    # path_expr.label == RExp.Label.OR
-    else:
+    elif path_expr.label == RExp.Label.OR:
         paths = []
         for child in path_expr.children:
             paths.extend(enumerate_non_looping_paths(child))
         return paths
-
+    else:
+        assert False
 
 # There are two main aspects created by the solver: output constraints and sketches. The output
 # constraints are _intra-procedural_: the constraints for a function f() will not contain

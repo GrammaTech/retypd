@@ -161,14 +161,14 @@ class RExp:
         if self.label == self.Label.OR:
             return (
                 "("
-                + " U ".join(child.__repr__() for child in self.children)
+                + " U ".join(map(repr, self.children))
                 + ")"
             )
 
         elif self.label == self.Label.DOT:
             return (
                 "("
-                + " . ".join(child.__repr__() for child in self.children)
+                + " . ".join(map(repr, self.children))
                 + ")"
             )
         elif self.label == self.Label.STAR:
