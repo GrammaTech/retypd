@@ -590,16 +590,20 @@ class FreshVarFactory:
     A class that produces DTVs with unique names
     """
 
+    FRESH_VAR_PREFIX = "τ$"
+
     def __init__(self) -> None:
         self.fresh_var_counter = 0
 
     def fresh_var(self) -> DerivedTypeVariable:
-        fresh_var = DerivedTypeVariable(f"τ${self.fresh_var_counter}")
+        fresh_var = DerivedTypeVariable(
+            f"{FreshVarFactory.FRESH_VAR_PREFIX}{self.fresh_var_counter}"
+        )
         self.fresh_var_counter += 1
         return fresh_var
 
     def is_anonymous_variable(self, dtv: DerivedTypeVariable):
-        return dtv.base.startswith("τ$")
+        return dtv.base.startswith(FreshVarFactory.FRESH_VAR_PREFIX)
 
 
 class RetypdError(Exception):
