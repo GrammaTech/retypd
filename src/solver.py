@@ -180,6 +180,7 @@ def enumerate_non_looping_paths(path_expr: RExp) -> List[List[EdgeLabel]]:
     else:
         assert False
 
+
 # There are two main aspects created by the solver: output constraints and sketches. The output
 # constraints are _intra-procedural_: the constraints for a function f() will not contain
 # constraints from its callees or callers.
@@ -642,38 +643,28 @@ class Solver(Loggable):
         return type_vars
 
     @staticmethod
-    def get_start_nodes(
-        graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
-    ) -> Set[Node]:
+    def get_start_end_nodes(
+        graph: networkx.Digraph,
+        start_dtvs: Set[DerivedTypeVariable],
+        end_dtvs: Set[DerivedTypeVariable],
+    ) -> Tuple[Set[Node], Set[Node]]:
         """
-        Obtain the starting graph nodes corresponding to the given
-        set of DTVs.
+        Obtain the start and end graph nodes corresponding to the given
+        sets of DTVs.
 
         We allow start  nodes to be both PRE_FORGET and POST_FORGET
         because we could have paths of the form FORGET* (without any recalls).
-        """
-        return {
-            node
-            for node in graph.nodes
-            if node.base in dtvs and node.side_mark == SideMark.LEFT
-        }
-
-    @staticmethod
-    def get_end_nodes(
-        graph: networkx.Digraph, dtvs: Set[DerivedTypeVariable]
-    ) -> Set[Node]:
-        """
-        Obtain the end graph nodes corresponding to the given
-        set of DTVs.
-
         We allow end_nodes to be both PRE_FORGET and POST_FORGET
         because we could have paths of the form RECALL* (without any forgets).
         """
-        return {
-            node
-            for node in graph.nodes
-            if node.base in dtvs and node.side_mark == SideMark.RIGHT
-        }
+        start_nodes = set()
+        end_nodes = set()
+        for node in graph.nodes:
+            if node.base in start_dtvs and node.side_mark == SideMark.LEFT:
+                start_nodes.add(node)
+            if node.base in end_dtvs and node.side_mark == SideMark.RIGHT:
+                end_nodes.add(node)
+        return start_nodes, end_nodes
 
     @staticmethod
     def substitute_type_vars(
@@ -724,8 +715,9 @@ class Solver(Loggable):
             # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
             Solver._recall_forget_split(graph)
 
-        start_nodes = Solver.get_start_nodes(graph, interesting_dtvs)
-        end_nodes = Solver.get_end_nodes(graph, interesting_dtvs)
+        start_nodes, end_nodes = Solver.get_start_end_nodes(
+            graph, interesting_dtvs, interesting_dtvs
+        )
         constraints = self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
         )
@@ -747,15 +739,17 @@ class Solver(Loggable):
         constraints = ConstraintSet()
 
         # from proc and global vars to primitive types
-        start_nodes = Solver.get_start_nodes(graph, non_primitive_end_points)
-        end_nodes = Solver.get_end_nodes(graph, primitive_types)
+        start_nodes, end_nodes = Solver.get_start_end_nodes(
+            graph, non_primitive_end_points, primitive_types
+        )
         constraints |= self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
         )
 
         # from primitive types to proc and global vars
-        start_nodes = Solver.get_start_nodes(graph, primitive_types)
-        end_nodes = Solver.get_end_nodes(graph, non_primitive_end_points)
+        start_nodes, end_nodes = Solver.get_start_end_nodes(
+            graph, primitive_types, non_primitive_end_points
+        )
         constraints |= self._generate_constraints_from_to(
             graph, start_nodes, end_nodes
         )
