@@ -955,8 +955,6 @@ def test_regression2():
         lattice=lattice,
         config=SolverConfig(),
     )
-    for cs in gen_cs[parse_var("test_ll")]:
-        print(cs)
     # TODO These final constraints contain some redundancy.
     # The three taus are basically equivalent.
     # We should revisit the process of tau variable creation
