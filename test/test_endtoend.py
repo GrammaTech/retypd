@@ -875,6 +875,26 @@ def test_tight_bounds_out():
 
 @pytest.mark.commit
 def test_regression2():
+    """
+    Extracted from:
+
+
+    struct linkedlist {
+    int value;
+    struct linkedlist* next;
+    };
+
+    void test_ll(struct linkedlist* ll) {
+        if (  ll->value > 2 ) {
+                ll->value = 1;
+                ll->next = ll->next->next;
+        }
+        else {
+                ll->value = 0;
+                ll->next = ll->next->next->next;
+        }
+    }
+    """
     constraints = {
         "test_ll": [
             "RBP_1998 ⊑ RBP_2001",
@@ -910,14 +930,13 @@ def test_regression2():
             "int ⊑ RAX_2052.store.σ4@0",
             "RBP_1998 ⊑ RBP_2038",
             "RDX_2070 ⊑ RDX_2078",
-            "RAX_2009 ⊑ RAX_2011",
             "RDX_2078 ⊑ RAX_2078.store.σ8@8",
             "RBP_1998 ⊑ RBP_2016",
             "RAX_2048 ⊑ RAX_2052",
             "RDI_2001 ⊑ stack_2001",
             "RAX_2011 ⊑ int",
             "int ⊑ RAX_2020.store.σ4@0",
-            "RAX_2009.load.σ4@0 ⊑ RAX_2009",
+            "RAX_2009.load.σ4@0 ⊑ RAX_2011",
             "RBP_1998 ⊑ RBP_2026",
             "stack_2001 ⊑ RAX_2048",
             "RFLAGS_2011 ⊑ RFLAGS_2014",
@@ -936,4 +955,25 @@ def test_regression2():
         lattice=lattice,
         config=SolverConfig(),
     )
-    # TODO add some checks
+    for cs in gen_cs[parse_var("test_ll")]:
+        print(cs)
+    # TODO These final constraints contain some redundancy.
+    # The three taus are basically equivalent.
+    # We should revisit the process of tau variable creation
+    # once more to try to avoid these duplicate but equivalent
+    # taus.
+    assert gen_cs[parse_var("test_ll")] == parse_cs_set(
+        [
+            "test_ll.in_0 ⊑ test_ll.out",
+            "test_ll.in_0.load.σ4@0 ⊑ int",
+            "test_ll.in_0 ⊑ τ$0",
+            "test_ll.in_0 ⊑ τ$1",
+            "τ$0.load.σ8@8 ⊑ τ$0",
+            "τ$0.load.σ8@8 ⊑ test_ll.in_0.store.σ8@8",
+            "τ$1 ⊑ τ$2",
+            "τ$1.load.σ8@8 ⊑ τ$1",
+            "τ$2.load.σ8@8 ⊑ τ$2",
+            "τ$2.load.σ8@8 ⊑ test_ll.in_0.store.σ8@8",
+            "int ⊑ test_ll.in_0.store.σ4@0",
+        ]
+    )
