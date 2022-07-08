@@ -215,8 +215,9 @@ class Solver(Loggable):
         fresh_var_factory: FreshVarFactory, type_scheme: ConstraintSet
     ) -> ConstraintSet:
         """
-        Instantiate a type scheme by substituting the anonymous variables
-        in the type scheme by fresh variables.
+        Instantiate a type scheme by renaming the anonymous variables
+        in the type scheme with fresh names in the current SCC context.
+
         This guarantees that there will be no naming conflics from anonymous variables
         coming from different calls.
         """
