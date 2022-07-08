@@ -944,10 +944,11 @@ def test_regression2():
             "RAX_2030 ⊑ RAX_2034",
             "stack_2001 ⊑ RAX_2026",
             "RSP_1998 ⊑ RBP_1998",
-        ]
+        ],
+        "caller": ["caller.in_0 <= test_ll.in_0"],
     }
 
-    callgraph = {"test_ll": []}
+    callgraph = {"caller": ["test_ll"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
         constraints,
@@ -975,3 +976,22 @@ def test_regression2():
             "int ⊑ test_ll.in_0.store.σ4@0",
         ]
     )
+    gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+    dtv2type = gen()
+    ll_ptr = dtv2type[DerivedTypeVariable("test_ll")].params[0]
+    ll_struct = ll_ptr.target_type
+    # the struct has two fields
+    assert len(ll_struct.fields) == 2
+    # field 0 is an integer
+    assert isinstance(ll_struct.fields[0].ctype, IntType)
+    # field 1 is a recursive pointer
+    assert ll_struct.fields[1].ctype.target_type.name == ll_struct.name
+
+    caller_ptr = dtv2type[DerivedTypeVariable("caller")].params[0]
+    caller_struct = caller_ptr.target_type
+    # the struct has two fields
+    assert len(caller_struct.fields) == 2
+    # field 0 is an integer
+    assert isinstance(caller_struct.fields[0].ctype, IntType)
+    # field 1 is a recursive pointer
+    assert caller_struct.fields[1].ctype.target_type.name == caller_struct.name
