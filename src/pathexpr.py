@@ -120,6 +120,8 @@ class RExp:
                 else:
                     if not child.is_null:
                         new_children.add(child)
+            if len(new_children) == 0:
+                return RExp.null()
             if len(new_children) == 1:
                 return new_children.pop()
             else:
@@ -159,18 +161,10 @@ class RExp:
 
     def __repr__(self) -> str:
         if self.label == self.Label.OR:
-            return (
-                "("
-                + " U ".join(map(repr, self.children))
-                + ")"
-            )
+            return "(" + " U ".join(map(repr, self.children)) + ")"
 
         elif self.label == self.Label.DOT:
-            return (
-                "("
-                + " . ".join(map(repr, self.children))
-                + ")"
-            )
+            return "(" + " . ".join(map(repr, self.children)) + ")"
         elif self.label == self.Label.STAR:
             return f"{self.children[0]}*"
         elif self.label == self.Label.EMPTY:
