@@ -270,6 +270,10 @@ class Sketches(Loggable):
                 and right not in self.types.internal_types
             ):
                 right_node = self.lookup(right)
+                if right_node is None:
+                    raise RetypdError(
+                        f"Sketch node corresponding to {right} does not exist"
+                    )
                 self.debug("JOIN: %s, %s", right_node, left)
                 right_node.lower_bound = self.types.join(
                     right_node.lower_bound, left
@@ -280,6 +284,10 @@ class Sketches(Loggable):
                 and left not in self.types.internal_types
             ):
                 left_node = self.lookup(left)
+                if left_node is None:
+                    raise RetypdError(
+                        f"Sketch node corresponding to {left} does not exist"
+                    )
                 self.debug("MEET: %s, %s", left_node, left)
                 left_node.upper_bound = self.types.meet(
                     left_node.upper_bound, right
