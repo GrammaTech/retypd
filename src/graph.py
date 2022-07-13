@@ -219,12 +219,37 @@ class ConstraintGraph:
         self,
         constraints: ConstraintSet,
         interesting_vars: Set[DerivedTypeVariable],
+        keep_graph_before_split: bool = False,
     ) -> None:
         self.graph = networkx.DiGraph()
         for constraint in constraints.subtype:
             self.add_edges(constraint.left, constraint.right, interesting_vars)
         self.saturate()
         self._remove_self_loops()
+        if keep_graph_before_split:
+            self.graph_before_split = self.graph.copy()
+        self._recall_forget_split(self.graph)
+
+    # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
+    @staticmethod
+    def _recall_forget_split(graph: networkx.DiGraph) -> None:
+        """The algorithm, after saturation, only admits paths such that recall edges all precede
+        the first forget edge (if there is such an edge). To enforce this, we modify the graph by
+        splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
+        in the original graph are changed to point to the 'forgotten' duplicate of their original
+        target. As a result, no recall edges are reachable after traversing a single forget edge.
+        """
+        for head, tail in list(graph.edges):
+            atts = graph[head][tail]
+            label = atts.get("label")
+            if label and label.kind == EdgeLabel.Kind.RECALL:
+                continue
+            forget_head = head.split_recall_forget()
+            forget_tail = tail.split_recall_forget()
+            if label and label.kind == EdgeLabel.Kind.FORGET:
+                graph.remove_edge(head, tail)
+                graph.add_edge(head, forget_tail, **atts)
+            graph.add_edge(forget_head, forget_tail, **atts)
 
     def add_edge(self, head: Node, tail: Node, **atts) -> bool:
         """Add an edge to the graph. The optional atts dict should include, if anything, a mapping
