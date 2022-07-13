@@ -33,16 +33,7 @@ from retypd.solver import SolverConfig
 VERBOSE_TESTS = False
 parse_var = SchemaParser.parse_variable
 parse_cs = SchemaParser.parse_constraint
-
-
-def parse_cs_set(constraints: List[str]) -> ConstraintSet:
-    """
-    Auxiliary function to parse a set of constraints
-    """
-    cs = ConstraintSet()
-    for c in constraints:
-        cs.add(parse_cs(c))
-    return cs
+parse_cs_set = SchemaParser.parse_constraint_set
 
 
 def compute_sketches(
