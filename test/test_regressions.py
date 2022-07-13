@@ -2,6 +2,7 @@ from test_endtoend import (
     compute_sketches,
     all_solver_configs,
     parse_var,
+    parse_cs,
 )
 import pytest
 from retypd import CLattice
@@ -132,3 +133,23 @@ def test_regression4(config):
     (gen_const, sketches) = compute_sketches(
         constraints, callgraph, CLattice(), config
     )
+    assert (
+        sketches[parse_var("b")].lookup(parse_var("b.in_0.load.σ4@0"))
+        is not None
+    )
+    assert (
+        sketches[parse_var("b")].lookup(parse_var("b.in_0.load.σ4@4"))
+        is not None
+    )
+
+    assert (
+        sketches[parse_var("a")].lookup(parse_var("a.in_0.load.σ4@0"))
+        is not None
+    )
+    assert (
+        sketches[parse_var("a")].lookup(parse_var("a.in_0.load.σ4@4"))
+        is not None
+    )
+
+    assert parse_cs("a.in_0.load.σ4@4 ⊑ int") in gen_const[parse_var("a")]
+    assert parse_cs("int ⊑ a.in_0.store.σ4@0") in gen_const[parse_var("a")]
