@@ -445,11 +445,25 @@ class ConstraintSet:
         )
 
     def all_dtvs(self) -> Set[DerivedTypeVariable]:
+        """
+        Return al the derived type variables in a
+        constraint set.
+        """
         dtvs = set()
         for c in self:
             dtvs.add(c.left)
             dtvs.add(c.right)
         return dtvs
+
+    def all_tvs(self) -> Set[DerivedTypeVariable]:
+        """
+        Return all type variables in a constraint set.
+        """
+        tvs = set()
+        for c in self:
+            tvs.add(c.left.base_var)
+            tvs.add(c.right.base_var)
+        return tvs
 
     def __or__(self, other: ConstraintSet) -> ConstraintSet:
         return ConstraintSet(self.subtype | other.subtype)
