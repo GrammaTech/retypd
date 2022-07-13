@@ -66,9 +66,16 @@ def dump_labeled_graph(graph, label, filename):
     for i, n in enumerate(graph.nodes):
         nodes[n] = i
         G.node(f"n{i}", label=str(n))
-    for head, tail in graph.edges:
-        label = str(graph.get_edge_data(head, tail).get("label", "<NO LABEL>"))
-        G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
+
+    if isinstance(graph, networkx.MultiGraph):
+        for head, tail, label in graph.edges(data="label"):
+            G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=str(label))
+    else:
+        for head, tail in graph.edges:
+            label = str(
+                graph.get_edge_data(head, tail).get("label", "<NO LABEL>")
+            )
+            G.edge(f"n{nodes[head]}", f"n{nodes[tail]}", label=label)
     G.render(filename, format="svg", view=False)
 
 
@@ -124,7 +131,7 @@ class EquivRelation:
 
     def find_equiv_rep(
         self, x: DerivedTypeVariable
-    ) -> Optional[Set[DerivedTypeVariable]]:
+    ) -> Optional[FrozenSet[DerivedTypeVariable]]:
         """
         Return the equivalence class of x.
         """
@@ -320,17 +327,44 @@ class Solver(Loggable):
                                     equiv.find_equiv_rep(dest2),
                                 )
 
+        # We always have 'a <= a' (S-Refl) so if a.load and a.store exist,
+        # we have an implicit rule 'a.load <= a.store' (S-Pointer) and we need to unify a.load and a.store.
+        for node in g.nodes:
+            out_edges = {
+                label: dest
+                for (_, dest, label) in g.out_edges(node, data="label")
+            }
+            if (
+                LoadLabel.instance() in out_edges
+                and StoreLabel.instance() in out_edges
+            ):
+                unify(
+                    equiv.find_equiv_rep(out_edges[LoadLabel.instance()]),
+                    equiv.find_equiv_rep(out_edges[StoreLabel.instance()]),
+                )
+
         for constraint in constraints:
             unify(
                 equiv.find_equiv_rep(constraint.left),
                 equiv.find_equiv_rep(constraint.right),
             )
 
-        return equiv, networkx.quotient_graph(
-            g,
-            equiv.get_equivalence_classes(),
-            create_using=networkx.MultiDiGraph,
-        )
+        # compute quotient graph
+        # networkx.quotient_graph does not support self-edges
+        # https://github.com/networkx/networkx/issues/5853
+        # and is very inefficient
+        # https://github.com/networkx/networkx/issues/4935
+        quotient_g = networkx.MultiDiGraph()
+        quotient_g.add_nodes_from(equiv.get_equivalence_classes())
+        for (src, dest, label) in g.edges(data="label"):
+            src_class = equiv.find_equiv_rep(src)
+            dest_class = equiv.find_equiv_rep(dest)
+            edge_data = quotient_g.get_edge_data(src_class, dest_class)
+            if edge_data is None or label not in {
+                data["label"] for data in edge_data.values()
+            }:
+                quotient_g.add_edge(src_class, dest_class, label=label)
+        return equiv, quotient_g
 
     @staticmethod
     def infer_shapes(
@@ -347,6 +381,9 @@ class Solver(Loggable):
         if len(constraints) == 0:
             return
         equiv, g_quotient = Solver.compute_quotient_graph(constraints)
+
+        # Uncomment to generate graph for debugging
+        # dump_labeled_graph(g_quotient,"quotient","/tmp/quotient")
 
         # The paper says "By collapsing isomorphic subtrees, we can represent
         # sketches as deterministic finite state automata with each state labeled by
