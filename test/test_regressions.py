@@ -83,3 +83,52 @@ def test_regression3(config):
     assert sk.lookup(
         parse_var("prvListTasksWithinSingleList.in_1.store.σ4@4.load.σ4@4")
     ) is sk.lookup(parse_var("prvListTasksWithinSingleList.in_1.store.σ4@4"))
+
+
+@pytest.mark.commit
+@all_solver_configs
+def test_regression4(config):
+    constraints = {
+        "b": [
+            "RSP_1735 ⊑ int",
+            "RBX_1732 ⊑ int",
+            "RAX_1719.load.σ4@0 ⊑ RDX_1723",
+            "int ⊑ RSP_1711",
+            "RBP_1707.load.σ8@-24 ⊑ RAX_1725",
+            "RAX_1729 ⊑ int",
+            "RSP_1710 ⊑ int",
+            "b.in_0 ⊑ RDI_1715",
+            "int ⊑ RSP_1742",
+            "RBP_1707.load.σ8@-24 ⊑ RAX_1719",
+            "RDI_1715 ⊑ RBP_1707.store.σ8@-24",
+            "RAX_1740 ⊑ b.out",
+            "RAX_1725.load.σ4@4 ⊑ RAX_1729",
+            "int ⊑ RAX_1740",
+        ],
+        "a": [
+            "RAX_1771 ⊑ a.out",
+            "stack_1757 ⊑ RAX_1761",
+            "RSP_1749 ⊑ int",
+            "RDI_1775 ⊑ b.in_0",
+            "RDI_1757 ⊑ stack_1757",
+            "int ⊑ RSP_1753",
+            "a.in_0 ⊑ b.in_0",
+            "int ⊑ RAX_1761.store.σ4@0",
+            "a.in_0 ⊑ RDI_1757",
+            "stack_1757 ⊑ RAX_1771",
+        ],
+        "main": [
+            "RAX_1808 ⊑ main.out",
+            "RSP_1785 ⊑ int",
+            "int ⊑ RSP_1789",
+            "RDX_1820 ⊑ uint",
+            "RAX_1802 ⊑ stack_1802",
+            "stack_1802 ⊑ RDX_1820",
+            "uint ⊑ RDX_1824",
+            "RDI_1812 ⊑ a.in_0",
+        ],
+    }
+    callgraph = {"a": {"b"}, "main": {"a", "FUN_570"}, "b": {"FUN_580"}}
+    (gen_const, sketches) = compute_sketches(
+        constraints, callgraph, CLattice(), config
+    )
