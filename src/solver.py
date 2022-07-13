@@ -443,27 +443,6 @@ class Solver(Loggable):
             visited_nodes = {quotient_node: proc_or_global_node}
             all_paths(quotient_node, visited_nodes)
 
-    # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
-    @staticmethod
-    def _recall_forget_split(graph: networkx.DiGraph) -> None:
-        """The algorithm, after saturation, only admits paths such that recall edges all precede
-        the first forget edge (if there is such an edge). To enforce this, we modify the graph by
-        splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
-        in the original graph are changed to point to the 'forgotten' duplicate of their original
-        target. As a result, no recall edges are reachable after traversing a single forget edge.
-        """
-        for head, tail in list(graph.edges):
-            atts = graph[head][tail]
-            label = atts.get("label")
-            if label and label.kind == EdgeLabel.Kind.RECALL:
-                continue
-            forget_head = head.split_recall_forget()
-            forget_tail = tail.split_recall_forget()
-            if label and label.kind == EdgeLabel.Kind.FORGET:
-                graph.remove_edge(head, tail)
-                graph.add_edge(head, forget_tail, **atts)
-            graph.add_edge(forget_head, forget_tail, **atts)
-
     @staticmethod
     def _maybe_constraint(
         origin: Node, dest: Node, string: List[EdgeLabel]
@@ -724,7 +703,6 @@ class Solver(Loggable):
     def _generate_type_scheme(
         self,
         initial_constraints: ConstraintSet,
-        graph: networkx.DiGraph,
         non_primitive_end_points: Set[DerivedTypeVariable],
         primitive_types: Set[DerivedTypeVariable],
     ) -> ConstraintSet:
@@ -737,6 +715,7 @@ class Solver(Loggable):
             - Type variables capturing recursive types
         """
         interesting_dtvs = non_primitive_end_points | primitive_types
+        graph = ConstraintGraph(initial_constraints, interesting_dtvs).graph
         all_interesting_nodes = {
             node for node in graph.nodes if node.base in interesting_dtvs
         }
@@ -751,7 +730,6 @@ class Solver(Loggable):
             ).graph
             # Uncomment to output graph for debugging
             # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
-            Solver._recall_forget_split(graph)
 
         start_nodes, end_nodes = Solver.get_start_end_nodes(
             graph, interesting_dtvs, interesting_dtvs
@@ -763,7 +741,7 @@ class Solver(Loggable):
 
     def _generate_primitive_constraints(
         self,
-        graph: networkx.DiGraph,
+        initial_constraints: ConstraintSet,
         non_primitive_end_points: Set[DerivedTypeVariable],
         primitive_types: Set[DerivedTypeVariable],
     ) -> ConstraintSet:
@@ -774,6 +752,10 @@ class Solver(Loggable):
          - From primitive_types to non_primitive_end_points.
          - From non_primitive_end_points to primitive_types.
         """
+
+        graph = ConstraintGraph(
+            initial_constraints, non_primitive_end_points | primitive_types
+        ).graph
         constraints = ConstraintSet()
 
         # from proc and global vars to primitive types
@@ -833,44 +815,52 @@ class Solver(Loggable):
 
             self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
 
+            self.debug("# Inferring shapes")
             scc_sketches = Sketches(self.program.types, self.verbose)
             Solver.infer_shapes(
                 scc | self.program.global_vars,
                 scc_sketches,
                 scc_initial_constraints,
             )
-            non_primitive_endpoints = frozenset(
-                scc | set(self.program.global_vars)
-            )
+            for proc in scc:
+                self.debug("# Inferring type scheme of proc: %s", proc)
+                sketches_map[proc] = scc_sketches
 
-            graph = ConstraintGraph(
-                scc_initial_constraints,
-                non_primitive_endpoints | self.program.types.internal_types,
-            ).graph
-            # Uncomment to output graph for debugging
-            # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
-            Solver._recall_forget_split(graph)
+                non_primitive_endpoints = frozenset([proc])
+                type_scheme = self._generate_type_scheme(
+                    scc_initial_constraints,
+                    non_primitive_endpoints,
+                    self.program.types.internal_types,
+                )
+                type_schemes[proc] = type_scheme
+                self.debug(
+                    "# Inferring primitive constraints of proc: %s", proc
+                )
+                primitive_constraints = self._generate_primitive_constraints(
+                    type_scheme,
+                    non_primitive_endpoints,
+                    self.program.types.internal_types,
+                )
+                scc_sketches.add_constraints(primitive_constraints)
 
-            type_scheme = self._generate_type_scheme(
-                scc_initial_constraints,
-                graph,
-                non_primitive_endpoints,
-                self.program.types.internal_types,
+            involved_globals = (
+                self.program.global_vars & scc_initial_constraints.all_tvs()
             )
-            primitive_constraints = self._generate_primitive_constraints(
-                graph,
-                non_primitive_endpoints,
-                self.program.types.internal_types,
-            )
-            scc_sketches.add_constraints(primitive_constraints)
-
+            if len(involved_globals) > 0:
+                self.debug(
+                    "# Inferring primitive constraints of globals: %s", proc
+                )
+                # Compute primitive constraints for globals
+                primitive_global_constraints = (
+                    self._generate_primitive_constraints(
+                        scc_initial_constraints,
+                        self.program.global_vars,
+                        self.program.types.internal_types,
+                    )
+                )
+                scc_sketches.add_constraints(primitive_global_constraints)
             # Copy globals from our callees, if we are analyzing globals precisely.
             global_handler.copy_globals(scc_sketches, scc, sketches_map)
-
-            for proc in scc:
-                sketches_map[proc] = scc_sketches
-                type_schemes[proc] = type_scheme
-
             global_handler.post_scc(scc_node, sketches_map)
 
     def __call__(
