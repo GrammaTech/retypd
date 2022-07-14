@@ -4,28 +4,28 @@ stages:
 
 test_module:
   stage: test
-  image: python:3.7-slim
+  image: python:3.8-slim
   script:
     - pip install -r requirements-dev.txt
     - flake8 src/
     - pip install -r requirements.txt
     - pip install .
-    - pytest --cov=retypd --cov-config=.coveragerc test/
-  tags: 
+    - pytest -m commit --cov=retypd --cov-config=.coveragerc test/
+  tags:
     - kubernetes
   rules:
     - if: '$CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_REF_PATH'
 
 export_module:
   stage: export
-  image: python:3.7-slim
+  image: python:3.8-slim
   script:
     - pip install -r requirements-dev.txt
     - python3 setup.py bdist_wheel --dist-dir=$CI_PROJECT_DIR/dist
     - ls $CI_PROJECT_DIR/dist/*.whl | xargs $CI_PROJECT_DIR/delete_remote_packages.py $GL_PKG_API_TOKEN
     - sed "s/password = <access token>/password = $GL_PKG_API_TOKEN/" $CI_PROJECT_DIR/.pypirc > ~/.pypirc
     - python3 -m twine upload --verbose --repository repypi $CI_PROJECT_DIR/dist/*.whl
-  tags: 
+  tags:
     - kubernetes
   rules:
     - if: '$CI_COMMIT_BRANCH == "master"'

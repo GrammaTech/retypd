@@ -13,13 +13,13 @@ import networkx
 
 class CLattice(Lattice[DerivedTypeVariable]):
     INT_SIZES = [8, 16, 32, 64]
- 
+
     # Unsized C integers
     _int = DerivedTypeVariable("int")
-    _int_size = [DerivedTypeVariable(f'int{z}') for z in INT_SIZES]
+    _int_size = [DerivedTypeVariable(f"int{z}") for z in INT_SIZES]
     _uint = DerivedTypeVariable("uint")
-    _uint_size = [DerivedTypeVariable(f'uint{z}') for z in INT_SIZES]
-        
+    _uint_size = [DerivedTypeVariable(f"uint{z}") for z in INT_SIZES]
+
     # Floats
     _float = DerivedTypeVariable("float")
     _double = DerivedTypeVariable("double")
@@ -32,15 +32,21 @@ class CLattice(Lattice[DerivedTypeVariable]):
     _top = DerivedTypeVariable("┬")
     _bottom = DerivedTypeVariable("┴")
 
-    _internal = frozenset({
-        _int,
-        _uint,
-        _float,
-        _double,
-        _void,
-        _char,
-        _bool,
-    }) | frozenset(_int_size) | frozenset(_uint_size)
+    _internal = (
+        frozenset(
+            {
+                _int,
+                _uint,
+                _float,
+                _double,
+                _void,
+                _char,
+                _bool,
+            }
+        )
+        | frozenset(_int_size)
+        | frozenset(_uint_size)
+    )
     _endcaps = frozenset({_top, _bottom})
 
     def __init__(self) -> None:
@@ -54,14 +60,14 @@ class CLattice(Lattice[DerivedTypeVariable]):
 
         for dtv in self._int_size:
             self.graph.add_edge(dtv, self._int)
-        
+
         for int_dtv, uint_dtv in zip(self._int_size, self._uint_size):
             self.graph.add_edge(int_dtv, uint_dtv)
 
         self.graph.add_edge(self._float, self.top)
         self.graph.add_edge(self._double, self.top)
 
-        # char is a int8_t with some semantic information. NOTE: This assumes 
+        # char is a int8_t with some semantic information. NOTE: This assumes
         # that INT_SIZES[0] == 8
         self.graph.add_edge(self._char, self._int_size[0])
         self.graph.add_edge(self._void, self.top)

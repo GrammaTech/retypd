@@ -24,6 +24,7 @@ from abc import ABC
 from typing import Iterable, Optional, Sequence
 import os
 
+
 class CType(ABC):
     @property
     def size(self) -> int:
@@ -34,7 +35,7 @@ class CType(ABC):
         return None
 
     def pretty_print(self, name: str) -> str:
-        return f'{self} {name}'
+        return f"{self} {name}"
 
 
 class VoidType(CType):
@@ -43,7 +44,7 @@ class VoidType(CType):
         return 0
 
     def __str__(self) -> str:
-        return 'void'
+        return "void"
 
 
 class IntType(CType):
@@ -56,10 +57,10 @@ class IntType(CType):
         return self.width
 
     def __str__(self) -> str:
-        signed_tag = ''
+        signed_tag = ""
         if not self.signed:
-            signed_tag = 'u'
-        return f'{signed_tag}int{self.width*8}_t'
+            signed_tag = "u"
+        return f"{signed_tag}int{self.width*8}_t"
 
 
 class FloatType(CType):
@@ -71,7 +72,7 @@ class FloatType(CType):
         return self.width
 
     def __str__(self) -> str:
-        return f'float{self.width}_t'
+        return f"float{self.width}_t"
 
 
 class CharType(CType):
@@ -84,7 +85,7 @@ class CharType(CType):
         return self.width
 
     def __str__(self) -> str:
-        return f'char{self.width}_t'
+        return f"char{self.width}_t"
 
 
 class BoolType(CType):
@@ -96,11 +97,12 @@ class BoolType(CType):
         return self.width
 
     def __str__(self) -> str:
-        return f'bool{self.width}_t'
+        return f"bool{self.width}_t"
 
 
 class ArrayType(CType):
     next_id = 0
+
     def __init__(self, member_type: CType, length: int) -> None:
         self.member_type = member_type
         self.length = length
@@ -112,10 +114,10 @@ class ArrayType(CType):
         return self.member_type.size * self.length
 
     def __str__(self) -> str:
-        return f'{self.member_type}[{self.length}]'
+        return f"{self.member_type}[{self.length}]"
 
     def pretty_print(self, name: str) -> str:
-        return f'{self.member_type} {name}[{self.length}]'
+        return f"{self.member_type} {name}[{self.length}]"
 
 
 class PointerType(CType):
@@ -128,21 +130,24 @@ class PointerType(CType):
         return self.width
 
     def __str__(self) -> str:
-        return f'{self.target_type}*'
+        return f"{self.target_type}*"
 
 
 class FunctionType(CType):
     next_id = 0
-    def __init__(self,
-                 return_type: CType,
-                 params: Sequence[CType],
-                 name: Optional[str]=None) -> None:
+
+    def __init__(
+        self,
+        return_type: CType,
+        params: Sequence[CType],
+        name: Optional[str] = None,
+    ) -> None:
         self.return_type = return_type
         self.params = params
         if name:
             self.name = name
         else:
-            self.name = f'function_{FunctionType.next_id}'
+            self.name = f"function_{FunctionType.next_id}"
             FunctionType.next_id += 1
 
     @property
@@ -157,10 +162,9 @@ class FunctionType(CType):
 
 
 class Field:
-    def __init__(self,
-                 ctype: CType,
-                 offset: Optional[int]=None,
-                 name: str="") -> None:
+    def __init__(
+        self, ctype: CType, offset: Optional[int] = None, name: str = ""
+    ) -> None:
         self.ctype = ctype
         self.offset = offset
         self.name = name
@@ -173,7 +177,7 @@ class Field:
 class CompoundType(CType):
     @property
     def compound_type(self) -> str:
-        return 'compound'
+        return "compound"
 
     @property
     def fields(self) -> Iterable[Field]:
@@ -181,31 +185,33 @@ class CompoundType(CType):
 
     @property
     def name(self) -> str:
-        return 'UNKNOWN'
+        return "UNKNOWN"
 
     def __str__(self) -> str:
-        return f'{self.compound_type} {self.name}'
+        return f"{self.compound_type} {self.name}"
 
     def pretty_print(self, name: str) -> str:
-        nt = f'{os.linesep}\t'
-        result = f'{self.compound_type} {name} {{'
+        nt = f"{os.linesep}\t"
+        result = f"{self.compound_type} {name} {{"
         for index, field in enumerate(self.fields):
-            name = f'field_{index}'
-            result += f'{nt}{field.ctype.pretty_print(name)};'
+            name = f"field_{index}"
+            result += f"{nt}{field.ctype.pretty_print(name)};"
             if field.offset is not None:
-                result += f' // offset {field.offset}'
-        return f'{result}{os.linesep}}};'
+                result += f" // offset {field.offset}"
+        return f"{result}{os.linesep}}};"
 
 
 class StructType(CompoundType):
     next_id = 0
 
-    def __init__(self, fields: Iterable[Field] = [], name: Optional[str]=None) -> None:
+    def __init__(
+        self, fields: Iterable[Field] = [], name: Optional[str] = None
+    ) -> None:
         self.set_fields(fields)
         if name:
             self._name = name
         else:
-            self._name = f'struct_{StructType.next_id}'
+            self._name = f"struct_{StructType.next_id}"
             StructType.next_id += 1
 
     def set_fields(self, fields: Iterable[Field]):
@@ -223,7 +229,7 @@ class StructType(CompoundType):
 
     @property
     def compound_type(self) -> str:
-        return 'struct'
+        return "struct"
 
     @property
     def name(self) -> str:
@@ -236,12 +242,15 @@ class StructType(CompoundType):
 
 class UnionType(CompoundType):
     next_id = 0
-    def __init__(self, fields: Iterable[Field], name: Optional[str]=None) -> None:
+
+    def __init__(
+        self, fields: Iterable[Field], name: Optional[str] = None
+    ) -> None:
         self._fields = fields
         if name:
             self._name = name
         else:
-            self._name = f'union_{UnionType.next_id}'
+            self._name = f"union_{UnionType.next_id}"
             UnionType.next_id += 1
 
     @property
@@ -250,7 +259,7 @@ class UnionType(CompoundType):
 
     @property
     def compound_type(self) -> str:
-        return 'union'
+        return "union"
 
     @property
     def name(self) -> str:

@@ -20,13 +20,13 @@
 # reflect the position or policy of the Government and no official
 # endorsement should be inferred.
 
-'''An implementation of retypd based on the paper and slides included in the reference subdirectory.
+"""An implementation of retypd based on the paper and slides included in the reference subdirectory.
 
 To invoke, create a Program, which requires a lattice of atomic types, a set of global variables of
 interest, a mapping from functions to constraints generated from them, and a call graph. Then,
 instantiate a Solver with the Program. Lastly, invoke the solver. The result of calling the solver
 object is the set of constraints generated from the analysis.
-'''
+"""
 
 from .graph import EdgeLabel, Node
 from .dummylattice import DummyLattice, DummyLatticeCTypes
@@ -63,4 +63,5 @@ from .c_types import (
     StructType,
     UnionType,
 )
+from .sketches import Sketches
 from .loggable import LogLevel

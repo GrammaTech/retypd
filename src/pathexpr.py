@@ -7,32 +7,36 @@ import networkx
 
 class RExp:
     """Regular expression class with some helper methods and simplification"""
+
     class Label(enum.Enum):
-        NULL = "null"
-        EMPTY = "empty"
-        DOT = "dot"
-        OR = "or"
-        STAR = "star"
-        NODE = "node"
+        NULL = 0
+        EMPTY = 1
+        NODE = 2
+        DOT = 3
+        OR = 4
+        STAR = 5
 
     def __init__(self, label: Label, data=None, children=[]):
         self.label = label
         self.data: Any = data
-        self.children: List[RExp] = children
-    
+        self.children: Tuple[RExp] = tuple(children)
+        self.hash = hash((self.label, self.data, self.children))
+
+    def __hash__(self) -> int:
+        return self.hash
+
     def __and__(self, rhs: RExp) -> RExp:
-        return RExp(self.Label.DOT, children=[self, rhs])
-    
+        return RExp(self.Label.DOT, children=(self, rhs))
+
     def __or__(self, rhs: RExp) -> RExp:
-        return RExp(self.Label.OR, children=[self, rhs])
+        return RExp(self.Label.OR, children=(self, rhs))
 
     def star(self):
-        return RExp(self.Label.STAR, children=[self])
+        return RExp(self.Label.STAR, children=(self,))
 
     def __eq__(self, other: RExp) -> bool:
         if self.label != other.label:
             return False
-
         if self.label in (self.Label.NULL, self.Label.EMPTY):
             return True
         elif self.label in (self.Label.DOT, self.Label.OR, self.Label.STAR):
@@ -41,6 +45,33 @@ class RExp:
             return self.data == other.data
         else:
             raise NotImplementedError()
+
+    def __lt__(self, other: RExp) -> bool:
+        """
+        Compare two regular expressions.
+        """
+        if not isinstance(other, RExp):
+            raise ValueError(f"Cannot compare RExp to {type(other)}")
+        if self.label != other.label:
+            return self.label.value < other.label.value
+        # Same label
+        if self.label in (self.Label.NULL, self.Label.EMPTY):
+            return False
+        elif self.label in (self.Label.DOT, self.Label.OR, self.Label.STAR):
+            if len(self.children) != len(other.children):
+                return len(self.children) < len(other.children)
+            else:
+                for a, b in zip(self.children, other.children):
+                    if a < b:
+                        return True
+                    elif a > b:
+                        return False
+                # all equal
+                return False
+        elif self.label == self.Label.NODE:
+            return self.data < other.data
+
+        raise NotImplementedError()
 
     @classmethod
     def null(cls) -> RExp:
@@ -58,36 +89,57 @@ class RExp:
     def from_graph_edge(
         cls, graph: networkx.DiGraph, src: Any, dest: Any, data: str
     ) -> RExp:
-        """Generate a regular expression from a graph node. For no label on 
+        """Generate a regular expression from a graph node. For no label on
         data we assume an empty string, otherwise a node labeled by that label
         """
-        attrs = graph.edges[src, dest]
-
+        attrs = graph[src][dest]
         if data not in attrs:
             return cls.empty()
         else:
             return cls.node(attrs[data])
 
     def simplify(self) -> RExp:
-        """Regular expression simplification procedure, page 9"""
-        children = [child.simplify() for child in self.children]
+        """Regular expression simplification procedure, page 9
+
+        This simplification procedure has been expanded to
+        deal with many other sources of redundancy.
+        The simplification is not recursive, it only simplifies
+        the two top levels of the RExp, deeper levels have
+        been already simplified.
+
+        """
+        children = self.children
 
         if self.label == self.Label.OR:
-            if children[0].is_null:
-                return children[1]
-            elif children[1].is_null:
-                return children[0]
-            else:
-                return children[0] | children[1]
-        elif self.label == self.Label.DOT:
-            if children[0].is_null or children[1].is_null:
+            # use a set to avoid duplicates
+            new_children = set()
+            for child in children:
+                # flatten nested OR
+                if child.label == RExp.Label.OR:
+                    new_children |= set(child.children)
+                else:
+                    if not child.is_null:
+                        new_children.add(child)
+            if len(new_children) == 0:
                 return RExp.null()
-            elif children[0].is_empty:
-                return children[1]
-            elif children[1].is_empty:
-                return children[0]
+            if len(new_children) == 1:
+                return new_children.pop()
             else:
-                return children[0] & children[1]
+                return RExp(RExp.Label.OR, children=sorted(new_children))
+        elif self.label == self.Label.DOT:
+            if any(child.is_null for child in children):
+                return RExp.null()
+            new_children = []
+            for child in children:
+                # flatten nested DOT
+                if child.label == RExp.Label.DOT:
+                    new_children.extend(child.children)
+                else:
+                    if not child.is_empty:
+                        new_children.append(child)
+            if len(new_children) == 1:
+                return new_children.pop()
+            return RExp(RExp.Label.DOT, children=new_children)
         elif self.label == self.Label.STAR:
             if children[0].is_null or children[0].is_empty:
                 return RExp.empty()
@@ -103,19 +155,24 @@ class RExp:
     def is_empty(self) -> bool:
         return self.label == self.Label.EMPTY
 
+    @property
+    def is_node(self) -> bool:
+        return self.label == self.Label.NODE
+
     def __repr__(self) -> str:
         if self.label == self.Label.OR:
-            return f'({self.children[0]} U {self.children[1]})'
+            return "(" + " U ".join(map(repr, self.children)) + ")"
+
         elif self.label == self.Label.DOT:
-            return f'({self.children[0]} . {self.children[1]})'
+            return "(" + " . ".join(map(repr, self.children)) + ")"
         elif self.label == self.Label.STAR:
-            return f'{self.children[0]}*'
+            return f"{self.children[0]}*"
         elif self.label == self.Label.EMPTY:
-            return 'Λ'
+            return "Λ"
         elif self.label == self.Label.NULL:
-            return '∅'
+            return "∅"
         elif self.label == self.Label.NODE:
-            return f'{self.data}'
+            return f"{self.data}"
         else:
             raise NotImplementedError()
 
@@ -127,7 +184,10 @@ def eliminate(
     # Initialize
     P = defaultdict(lambda: RExp.null())
 
-    for h, t in graph.edges:
+    # consider edges in the subgraph defined by the range
+    for h, t in graph.edges(range(min_num, max_num)):
+        if t < min_num or t >= max_num:
+            continue
         edge = RExp.from_graph_edge(graph, h, t, data)
         P[h, t] = (P[h, t] | edge).simplify()
 
@@ -138,7 +198,7 @@ def eliminate(
         for u in range(v + 1, max_num):
             if P[u, v].is_null:
                 continue
-        
+
             P[u, v] = (P[u, v] & P[v, v]).simplify()
 
             for w in range(v + 1, max_num):
@@ -158,7 +218,7 @@ def compute_path_sequence(
     min_num: int,
     max_num: int,
 ) -> PathSeq:
-    """Compute path sequence from the ELIMINATE procedure, per Theorem 4 on 
+    """Compute path sequence from the ELIMINATE procedure, per Theorem 4 on
     page 14
     """
 
@@ -176,16 +236,18 @@ def compute_path_sequence(
 
         if expr.is_null:
             continue
-        
+        # no need to include empty self-paths
+        if expr.is_empty and start == end:
+            continue
+
         if start <= end:
             ascending.append((indices, expr))
         else:
             descending.append((indices, expr))
 
-    # Sort by the starting node 
-    output = (
-        sorted(ascending, key=lambda pair: pair[0][0])
-        + sorted(descending, key=lambda pair: pair[0][0], reverse=True)
+    # Sort by the starting node
+    output = sorted(ascending, key=lambda pair: pair[0][0]) + sorted(
+        descending, key=lambda pair: pair[0][0], reverse=True
     )
 
     return output
@@ -194,7 +256,7 @@ def compute_path_sequence(
 def solve_paths_from(
     path_seq: PathSeq, source: int
 ) -> Dict[Tuple[int, int], RExp]:
-    """Solve path expressions from a source given a path sequence for a 
+    """Solve path expressions from a source given a path sequence for a
     numbered graph, per procedure SOLVE on page 9 of Tarjan
     """
     P = defaultdict(lambda: RExp.null())
@@ -220,9 +282,9 @@ GraphNumbering = Dict[Any, int]
 
 
 def topological_numbering(
-    graph: networkx.DiGraph
+    graph: networkx.DiGraph,
 ) -> Tuple[GraphNumbering, networkx.DiGraph]:
-    """ Generate a numeral graph from the topological sort of the DAG """
+    """Generate a numeral graph from the topological sort of the DAG"""
     nodes = list(networkx.topological_sort(graph))
     numbering = {node: num for num, node in enumerate(nodes)}
     rev_numbering = dict(enumerate(nodes))
@@ -232,7 +294,7 @@ def topological_numbering(
 
 
 def dag_path_seq(graph: networkx.DiGraph, data: str) -> PathSeq:
-    """Per Theorem 5, Page 14 of the paper, generate path sequences for a 
+    """Per Theorem 5, Page 14 of the paper, generate path sequences for a
     directed acyclic graph in a more efficient manner.
     """
     # Sort edges by increasing source node
@@ -245,7 +307,7 @@ def dag_path_seq(graph: networkx.DiGraph, data: str) -> PathSeq:
 def scc_decompose_path_seq(
     graph: networkx.DiGraph, data: str
 ) -> Tuple[GraphNumbering, PathSeq]:
-    """ Per Theorem 6, Page 14 of the paper, generate path sequences for a graph
+    """Per Theorem 6, Page 14 of the paper, generate path sequences for a graph
     that has been decomposed into strongly connected components.
     """
     # Generate the graph of SCCs
@@ -255,12 +317,12 @@ def scc_decompose_path_seq(
     graph_numbering = {}
     curr_number = 0
 
-    # Generate a numbering for each SCC in increasing topological order to 
-    # maintain that any edge G_i -> G_j whare are in SCCs S_i and S_j 
-    # respectively, if theres an edge in the condensation from S_i -> S_j then 
+    # Generate a numbering for each SCC in increasing topological order to
+    # maintain that any edge G_i -> G_j whare are in SCCs S_i and S_j
+    # respectively, if theres an edge in the condensation from S_i -> S_j then
     # G_i < G_j
     for component in networkx.topological_sort(component_graph):
-        # Generate numbering for this SCC, we do so in a sorted order as 
+        # Generate numbering for this SCC, we do so in a sorted order as
         # NetworkX returns a set whose non-deterministic ordering can return
         # inconsistent results
         scc = component_graph.nodes[component]["members"]
@@ -340,7 +402,7 @@ def path_expression_between(
         seqs = dag_path_seq(number_graph, data)
     else:
         numbering, seqs = scc_decompose_path_seq(graph, data)
-    
+
     # Solve all paths for source, and output the one for (source, sink)
     paths = solve_paths_from(seqs, numbering[source])
     return paths[(numbering[source], numbering[sink])]
