@@ -283,6 +283,8 @@ class DerivedTypeVariable:
 
     def __lt__(self, other: DerivedTypeVariable) -> bool:
         if self._base == other.base:
+            if len(self._path) != len(other.path):
+                return len(self._path) < len(other.path)
             return list(self._path) < list(other.path)
         return self._base < other.base
 
@@ -437,6 +439,11 @@ class ConstraintSet:
         self.subtype.add(constraint)
         return True
 
+    def __eq__(self, other: Any) -> bool:
+        return (
+            isinstance(other, ConstraintSet) and self.subtype == other.subtype
+        )
+
     def all_dtvs(self) -> Set[DerivedTypeVariable]:
         dtvs = set()
         for c in self:
@@ -459,6 +466,32 @@ class ConstraintSet:
 
     def __len__(self) -> int:
         return len(self.subtype)
+
+    def apply_mapping(
+        self, var_mapping: Dict[DerivedTypeVariable, DerivedTypeVariable]
+    ) -> ConstraintSet:
+        """
+        Return an equivalent constraint set in which DTVs have been substituted
+        based on the provided `var_mapping`.
+        """
+
+        def apply_mapping_to_dtv(
+            dtv: DerivedTypeVariable,
+        ) -> DerivedTypeVariable:
+            suffix = None
+            for type_var in var_mapping:
+                suffix = type_var.get_suffix(dtv)
+                if suffix is not None:
+                    base = var_mapping[type_var]
+                    break
+            return base.extend(suffix) if suffix is not None else dtv
+
+        mapped_cs = ConstraintSet()
+        for cs in self:
+            new_left = apply_mapping_to_dtv(cs.left)
+            new_right = apply_mapping_to_dtv(cs.right)
+            mapped_cs.add(SubtypeConstraint(new_left, new_right))
+        return mapped_cs
 
 
 T = TypeVar("T")
@@ -557,15 +590,20 @@ class FreshVarFactory:
     A class that produces DTVs with unique names
     """
 
+    FRESH_VAR_PREFIX = "τ$"
+
     def __init__(self) -> None:
         self.fresh_var_counter = 0
 
     def fresh_var(self) -> DerivedTypeVariable:
         fresh_var = DerivedTypeVariable(
-            f"$$fresh-var-{self.fresh_var_counter}$$"
+            f"{FreshVarFactory.FRESH_VAR_PREFIX}{self.fresh_var_counter}"
         )
         self.fresh_var_counter += 1
         return fresh_var
+
+    def is_anonymous_variable(self, dtv: DerivedTypeVariable):
+        return dtv.base.startswith(FreshVarFactory.FRESH_VAR_PREFIX)
 
 
 class RetypdError(Exception):

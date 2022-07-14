@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 from enum import Enum, unique
-from typing import Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 from .schema import (
     AccessPathLabel,
     ConstraintSet,
@@ -60,6 +60,11 @@ class EdgeLabel:
             and self.kind == other.kind
         )
 
+    def __lt__(self, other: EdgeLabel) -> bool:
+        if not isinstance(other, EdgeLabel):
+            raise ValueError(f"Cannot compare EdgeLabel to {type(other)}")
+        return self._str < other._str
+
     def __hash__(self) -> int:
         return self._hash
 
@@ -68,6 +73,18 @@ class EdgeLabel:
 
     def __repr__(self) -> str:
         return self._str
+
+
+@unique
+class SideMark(Enum):
+    """
+    Marking of interesting graph nodes to avoid non-elementary proofs.
+    See Definition D.2 and Note 1 in section D.1 of the paper.
+    """
+
+    NO = 0
+    LEFT = 1
+    RIGHT = 2
 
 
 class Node:
@@ -86,28 +103,46 @@ class Node:
         self,
         base: DerivedTypeVariable,
         suffix_variance: Variance,
+        side_mark: SideMark = SideMark.NO,
         forgotten: Forgotten = Forgotten.PRE_FORGET,
     ) -> None:
         self.base = base
         self.suffix_variance = suffix_variance
+        self.side_mark = side_mark
+        if side_mark == SideMark.LEFT:
+            side_mark_str = "L:"
+        elif side_mark == SideMark.RIGHT:
+            side_mark_str = "R:"
+        else:
+            side_mark_str = ""
         if suffix_variance == Variance.COVARIANT:
             variance = ".⊕"
         else:
             variance = ".⊖"
         self._forgotten = forgotten
         if forgotten == Node.Forgotten.POST_FORGET:
-            self._str = "F:" + str(self.base) + variance
+            self._str = "F:" + side_mark_str + str(self.base) + variance
         else:
-            self._str = str(self.base) + variance
-        self._hash = hash((self.base, self.suffix_variance, self._forgotten))
+            self._str = side_mark_str + str(self.base) + variance
+        self._hash = hash(
+            (self.base, self.suffix_variance, self.side_mark, self._forgotten)
+        )
 
-    def __eq__(self, other: Node) -> bool:
+    def __eq__(self, other: Any) -> bool:
         return (
             isinstance(other, Node)
             and self.base == other.base
             and self.suffix_variance == other.suffix_variance
             and self._forgotten == other._forgotten
+            and self.side_mark == other.side_mark
         )
+
+    def __lt__(self, other: Node) -> bool:
+        if not isinstance(other, Node):
+            raise ValueError(
+                f"Cannot compare objects of type Node and {type(other)} "
+            )
+        return self._str < other._str
 
     def __hash__(self) -> int:
         return self._hash
@@ -127,6 +162,7 @@ class Node:
                 Node(
                     prefix,
                     Variance.combine(last.variance(), self.suffix_variance),
+                    self.side_mark,
                 ),
             )
         return (None, None)
@@ -138,21 +174,39 @@ class Node:
         path = list(self.base.path)
         path.append(label)
         variance = Variance.combine(self.suffix_variance, label.variance())
-        return Node(DerivedTypeVariable(self.base.base, path), variance)
+        return Node(
+            DerivedTypeVariable(self.base.base, path),
+            variance,
+            self.side_mark,
+        )
 
     def __str__(self) -> str:
+        return self._str
+
+    def __repr__(self) -> str:
         return self._str
 
     def split_recall_forget(self) -> Node:
         """Get a duplicate of self for use in the post-recall subgraph."""
         return Node(
-            self.base, self.suffix_variance, Node.Forgotten.POST_FORGET
+            self.base,
+            self.suffix_variance,
+            self.side_mark,
+            Node.Forgotten.POST_FORGET,
         )
 
     def inverse(self) -> Node:
-        """Get a Node identical to this one but with inverted variance."""
+        """Get a Node identical to this one but with inverted variance and mark."""
+        new_side_mark = SideMark.NO
+        if self.side_mark == SideMark.LEFT:
+            new_side_mark = SideMark.RIGHT
+        elif self.side_mark == SideMark.RIGHT:
+            new_side_mark = SideMark.LEFT
         return Node(
-            self.base, Variance.invert(self.suffix_variance), self._forgotten
+            self.base,
+            Variance.invert(self.suffix_variance),
+            new_side_mark,
+            self._forgotten,
         )
 
 
@@ -161,10 +215,14 @@ class ConstraintGraph:
     Appendix D. Edge weights use the formulation from the paper.
     """
 
-    def __init__(self, constraints: ConstraintSet) -> None:
+    def __init__(
+        self,
+        constraints: ConstraintSet,
+        interesting_vars: Set[DerivedTypeVariable],
+    ) -> None:
         self.graph = networkx.DiGraph()
         for constraint in constraints.subtype:
-            self.add_edges(constraint.left, constraint.right)
+            self.add_edges(constraint.left, constraint.right, interesting_vars)
         self.saturate()
         self._remove_self_loops()
 
@@ -178,7 +236,11 @@ class ConstraintGraph:
         return False
 
     def add_edges(
-        self, sub: DerivedTypeVariable, sup: DerivedTypeVariable, **atts
+        self,
+        sub: DerivedTypeVariable,
+        sup: DerivedTypeVariable,
+        interesting_vars: Set[DerivedTypeVariable],
+        **atts,
     ) -> bool:
         """Add an edge to the underlying graph. Also add its reverse with reversed variance.
         Each constraint, becomes two pushdown rules in the paper.
@@ -186,8 +248,14 @@ class ConstraintGraph:
         and forget edges to the right-hand side.
         """
         changed = False
-        forward_from = Node(sub, Variance.COVARIANT)
-        forward_to = Node(sup, Variance.COVARIANT)
+        left = (
+            SideMark.LEFT if sub.base_var in interesting_vars else SideMark.NO
+        )
+        right = (
+            SideMark.RIGHT if sup.base_var in interesting_vars else SideMark.NO
+        )
+        forward_from = Node(sub, Variance.COVARIANT, left)
+        forward_to = Node(sup, Variance.COVARIANT, right)
         changed = self.add_edge(forward_from, forward_to, **atts) or changed
         self.add_recalls(forward_from)
         self.add_forgets(forward_to)
@@ -304,3 +372,28 @@ class ConstraintGraph:
         return (
             f"ConstraintGraph:{nt}{ConstraintGraph.graph_to_str(self.graph)}"
         )
+
+
+def remove_unreachable_states(
+    graph: networkx.DiGraph, start_nodes: Set[Node], end_nodes: Set[Node]
+) -> Tuple[networkx.DiGraph, Set[Node], Set[Node]]:
+    """
+    Remove states that not reachable from start_nodes or do not reach end_nodes.
+    This can speed up path exploration since we do not have to search
+    paths through nodes that do not reach interesting destinations.
+    """
+    if len(graph) == 0 or len(start_nodes) == 0 or len(end_nodes) == 0:
+        return graph, set(), set()
+
+    reachable_nodes = set(
+        networkx.multi_source_dijkstra_path_length(graph, start_nodes).keys()
+    )
+    rev_reachable_nodes = set(
+        networkx.multi_source_dijkstra_path_length(
+            graph.reverse(), end_nodes
+        ).keys()
+    )
+    keep = reachable_nodes & rev_reachable_nodes
+    keep_start = start_nodes & keep
+    keep_end = end_nodes & keep
+    return graph.subgraph(keep), keep_start, keep_end

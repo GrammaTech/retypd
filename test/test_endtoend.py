@@ -35,7 +35,16 @@ parse_var = SchemaParser.parse_variable
 parse_cs = SchemaParser.parse_constraint
 
 
-@pytest.mark.commit
+def parse_cs_set(constraints: List[str]) -> ConstraintSet:
+    """
+    Auxiliary function to parse a set of constraints
+    """
+    cs = ConstraintSet()
+    for c in constraints:
+        cs.add(parse_cs(c))
+    return cs
+
+
 def compute_sketches(
     cs: Dict[str, List[str]],
     callgraph: Dict[str, List[str]],
@@ -48,11 +57,7 @@ def compute_sketches(
     """
     parsed_cs = {}
     for proc, proc_cs in cs.items():
-
-        proc_parsed_cs = ConstraintSet()
-        for c in proc_cs:
-            proc_parsed_cs.add(parse_cs(c))
-        parsed_cs[DerivedTypeVariable(proc)] = proc_parsed_cs
+        parsed_cs[DerivedTypeVariable(proc)] = parse_cs_set(proc_cs)
 
     parsed_callgraph = {
         DerivedTypeVariable(proc): [
@@ -65,35 +70,104 @@ def compute_sketches(
     return solver()
 
 
+all_solver_configs = pytest.mark.parametrize(
+    "config",
+    [
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=True
+        ),
+        SolverConfig(
+            use_path_expressions=False, restrict_graph_to_reachable=False
+        ),
+        SolverConfig(
+            use_path_expressions=True, restrict_graph_to_reachable=False
+        ),
+    ],
+    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+)
+
+
+@all_solver_configs
 @pytest.mark.commit
-def test_recursive():
+def test_recursive(config):
     """A test based on the running example from the paper (Figure 2 on p. 3) and the slides
     (slides 67-83, labeled as slides 13-15).
     """
     F = parse_var("F")
-    close = parse_var("close")
-    constraints = {F: ConstraintSet(), close: ConstraintSet()}
-    constraints[F].add(parse_cs("F.in_0 ⊑ δ"))
-    constraints[F].add(parse_cs("α ⊑ φ"))
-    constraints[F].add(parse_cs("δ ⊑ φ"))
-    constraints[F].add(parse_cs("φ.load.σ4@0 ⊑ α"))
-    constraints[F].add(parse_cs("φ.load.σ4@4 ⊑ α'"))
-    constraints[F].add(parse_cs("α' ⊑ close.in_0"))
-    constraints[F].add(parse_cs("close.out ⊑ F.out"))
-    constraints[close].add(parse_cs("close.in_0 ⊑ #FileDescriptor"))
-    constraints[close].add(parse_cs("#SuccessZ ⊑ close.out"))
-    program = Program(DummyLattice(), {}, constraints, {F: [close]})
-    solver = Solver(program, verbose=VERBOSE_TESTS)
-    (gen_const, sketches) = solver()
-    # Inter-procedural results (sketches)
+    constraints = {
+        "F": [
+            "F.in_0 ⊑ δ",
+            "α ⊑ φ",
+            "δ ⊑ φ",
+            "φ.load.σ4@0 ⊑ α",
+            "φ.load.σ4@4 ⊑ α'",
+            "α' ⊑ close.in_0",
+            "close.out ⊑ F.out",
+        ],
+        "close": ["close.in_0 ⊑ #FileDescriptor", "#SuccessZ ⊑ close.out"],
+    }
+    callgraph = {"F": ["close"]}
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=DummyLattice(), config=config
+    )
+    # Check constraints
+    assert gen_cs[F] == parse_cs_set(
+        [
+            "F.in_0 ⊑ τ$0",
+            "τ$0.load.σ4@0 ⊑ τ$0",
+            "τ$0.load.σ4@4 ⊑ #FileDescriptor",
+            "#SuccessZ ⊑ F.out",
+        ]
+    )
+    # Check sketches
     F_sketches = sketches[F]
-    # Equivalent to "#SuccessZ ⊑ F.out"
     assert F_sketches.lookup(parse_var("F.out")).lower_bound == parse_var(
         "#SuccessZ"
     )
     assert F_sketches.lookup(
         parse_var("F.in_0.load.σ4@4")
     ).upper_bound == parse_var("#FileDescriptor")
+
+
+@all_solver_configs
+@pytest.mark.commit
+def test_recursive_no_primitive(config):
+    """The type of f.in_0 is recursive.
+    struct list{
+        list* next;
+        int elem;
+    }
+    We don't know anything about elem, so we need to create a type
+    variable for the recursive variable to capture that behavior.
+    """
+    constraints = {
+        "f": [
+            "f.in_0 <= list",
+            "list.load.σ4@0 <= next",
+            "next <= list",
+        ],
+        "g": ["g.in_0 <= f.in_0"],
+    }
+    callgraph = {"g": ["f"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        ["f.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0"]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        ["g.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0"]
+    )
+
+    g_sketch = sketches[DerivedTypeVariable("g")]
+    assert g_sketch.lookup(parse_var("g.in_0.load.σ4@0")) == g_sketch.lookup(
+        parse_var("g.in_0")
+    )
 
 
 @pytest.mark.commit
@@ -121,6 +195,13 @@ def test_recursive_through_procedures():
     (gen_cs, sketches) = compute_sketches(
         constraints, callgraph, lattice=lattice
     )
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        ["f.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0", "τ$0.load.σ4@4 ⊑ int"]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        ["g.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0", "τ$0.load.σ4@4 ⊑ int"]
+    )
+
     g_sketch = sketches[DerivedTypeVariable("g")]
     assert g_sketch.lookup(parse_var("g.in_0.load.σ4@4")) is not None
     assert (
@@ -138,8 +219,9 @@ def test_recursive_through_procedures():
     assert isinstance(rec_struct.fields[1].ctype, IntType)
 
 
+@all_solver_configs
 @pytest.mark.commit
-def test_multiple_label_nodes():
+def test_multiple_label_nodes(config):
     """The type of f.in_0 is:
     struct list{
         list* next;
@@ -168,7 +250,23 @@ def test_multiple_label_nodes():
     callgraph = {"g": ["f"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
-        constraints, callgraph, lattice=lattice
+        constraints, callgraph, lattice=lattice, config=config
+    )
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        [
+            "f.in_0 <= τ$0",
+            "τ$0.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@4 <= τ$0",
+            "τ$0.load.σ4@8 <= int",
+        ]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        [
+            "g.in_0 <= τ$0",
+            "τ$0.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@4 <= τ$0",
+            "τ$0.load.σ4@8 <= int",
+        ]
     )
     f_sketch = sketches[DerivedTypeVariable("f")]
     assert f_sketch.lookup(parse_var("f.in_0.load.σ4@0")) is not None
@@ -205,8 +303,9 @@ def test_multiple_label_nodes():
     assert isinstance(rec_struct.fields[2].ctype, IntType)
 
 
+@all_solver_configs
 @pytest.mark.commit
-def test_multiple_label_nodes_store():
+def test_multiple_label_nodes_store(config):
     """The type of f.out and g.out is
     as subtype of:
     struct list{
@@ -227,12 +326,12 @@ def test_multiple_label_nodes_store():
             "elem <= list.store.σ4@8",
             "int <= elem",
         ],
-        "g": ["C <= g.out", "f.out <= C"],
+        "g": ["g.out <= C ", "C <= f.out"],
     }
     callgraph = {"g": ["f"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
-        constraints, callgraph, lattice=lattice
+        constraints, callgraph, lattice=lattice, config=config
     )
     # check that information is transferred correctly to "g"
     g_sketch = sketches[DerivedTypeVariable("g")]
@@ -249,8 +348,9 @@ def test_multiple_label_nodes_store():
     )
 
 
+@all_solver_configs
 @pytest.mark.commit
-def test_interleaving_elements():
+def test_interleaving_elements(config):
     """
     There are two mutually recursive types
     struct A{
@@ -282,7 +382,27 @@ def test_interleaving_elements():
     callgraph = {"g": ["f"]}
     lattice = CLattice()
     (gen_cs, sketches) = compute_sketches(
-        constraints, callgraph, lattice=lattice
+        constraints, callgraph, lattice=lattice, config=config
+    )
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        [
+            "f.in_0 <= τ$0",
+            "f.in_1.load.σ4@4 <= float",
+            "f.in_1.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@4 <= int",
+            "τ$0.load.σ4@0.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@0.load.σ4@4 <= float",
+        ]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        [
+            "g.in_0 <= τ$0",
+            "g.in_1.load.σ4@4 <= float",
+            "g.in_1.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@4 <= int",
+            "τ$0.load.σ4@0.load.σ4@0 <= τ$0",
+            "τ$0.load.σ4@0.load.σ4@4 <= float",
+        ]
     )
     gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
     dtv2type = gen()
@@ -307,8 +427,101 @@ def test_interleaving_elements():
     assert isinstance(A_struct.fields[1].ctype, IntType)
 
 
+@all_solver_configs
 @pytest.mark.commit
-def test_regression1():
+def test_two_recursive_instantiations(config):
+    """The types of f.in_0 and g.in_0 are recursive.
+    These correspond to h.in_0 and h.in_1.
+    """
+    constraints = {
+        "f": [
+            "f.in_0 <= list",
+            "list.load.σ4@0 <= next",
+            "next <= list",
+            "list.load.σ4@4 <= int",
+        ],
+        "g": [
+            "g.in_0 <= list",
+            "list.load.σ4@4 <= next",
+            "next <= list",
+            "list.load.σ4@0 <= float",
+        ],
+        "h": ["h.in_0 <= f.in_0", "h.in_1 <= g.in_0"],
+    }
+    callgraph = {"h": ["f", "g"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        ["f.in_0 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ τ$0", "τ$0.load.σ4@4 ⊑ int"]
+    )
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        ["g.in_0 ⊑ τ$0", "τ$0.load.σ4@4 ⊑ τ$0", "τ$0.load.σ4@0 ⊑ float"]
+    )
+    assert gen_cs[parse_var("h")] == parse_cs_set(
+        [
+            "h.in_0 ⊑ τ$0",
+            "τ$0.load.σ4@0 ⊑ τ$0",
+            "τ$0.load.σ4@4 ⊑ int",
+            "h.in_1 ⊑ τ$1",
+            "τ$1.load.σ4@4 ⊑ τ$1",
+            "τ$1.load.σ4@0 ⊑ float",
+        ]
+    )
+
+
+@all_solver_configs
+@pytest.mark.commit
+def test_in_out_constraints_propagation(config):
+    """
+    The instantiation of f should allows us to conclude that
+    g.in_0 is int32.
+    """
+    constraints = {
+        "f": [
+            "f.in_0 <= f.out",
+        ],
+        "g": ["g.in_0 <= C", "C <= f.in_0", "f.out <= int32"],
+    }
+    callgraph = {"g": ["f"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+    assert parse_cs("g.in_0 <= int32") in gen_cs[parse_var("g")]
+    gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+    dtv2type = gen()
+    assert isinstance(dtv2type[DerivedTypeVariable("g")].params[0], IntType)
+
+
+@pytest.mark.commit
+def test_argument_constraints_propagation():
+    """
+    The instantiation of f should allows us to conclude that
+    g.in_0 is int32.
+    """
+    constraints = {
+        "f": [
+            "f.in_0 <= f.in_1",
+        ],
+        "g": ["g.in_0 <= C", "C <= f.in_0", "f.in_1 <= int32"],
+    }
+    callgraph = {"g": ["f"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice
+    )
+    assert parse_cs("g.in_0 <= int32") in gen_cs[parse_var("g")]
+    gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+    dtv2type = gen()
+    assert isinstance(dtv2type[DerivedTypeVariable("g")].params[0], IntType)
+
+
+@all_solver_configs
+@pytest.mark.commit
+def test_regression1(config):
     """
     When more than one typevar gets instantiated in a chain of constraints,
     we weren't following the entire chain (transitively) to get the atomic
@@ -335,7 +548,7 @@ def test_regression1():
         if line.strip():
             constraints[nf_apply].add(parse_cs(line))
     program = Program(DummyLattice(), {}, constraints, {nf_apply: []})
-    solver = Solver(program, verbose=True)
+    solver = Solver(program, config=config, verbose=True)
     (gen_const, sketches) = solver()
     nf_sketches = sketches[nf_apply]
     assert nf_sketches.lookup(
@@ -346,8 +559,9 @@ def test_regression1():
     ).upper_bound == parse_var("int")
 
 
+@all_solver_configs
 @pytest.mark.commit
-def test_vListInsert_issue9():
+def test_vListInsert_issue9(config):
     """
     This is a method from crazyflie
     vlistInsert(List_t * const pxList, ListItem_t * const pxNewListItem)
@@ -412,12 +626,15 @@ def test_vListInsert_issue9():
         constraints,
         callgraph,
         lattice=lattice,
+        config=config,
     )
     gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
     dtv2type = gen()
     ListItem_t_ptr = dtv2type[DerivedTypeVariable("vListInsert")].params[1]
     ListItem_t = ListItem_t_ptr.target_type
     assert len(ListItem_t.fields) >= 4
+    # field 0 is an integer
+    assert isinstance(ListItem_t.fields[0].ctype, IntType)
     # second and third are pointers to next and previous
     assert ListItem_t.fields[1].ctype.target_type.name == ListItem_t.name
     assert ListItem_t.fields[2].ctype.target_type.name == ListItem_t.name
@@ -654,3 +871,127 @@ def test_tight_bounds_out():
     f_ft = output[f]
     assert isinstance(f_ft, FunctionType)
     assert isinstance(f_ft.return_type, IntType)
+
+
+@pytest.mark.commit
+def test_regression2():
+    """
+    Extracted from:
+
+
+    struct linkedlist {
+    int value;
+    struct linkedlist* next;
+    };
+
+    void test_ll(struct linkedlist* ll) {
+        if (  ll->value > 2 ) {
+                ll->value = 1;
+                ll->next = ll->next->next;
+        }
+        else {
+                ll->value = 0;
+                ll->next = ll->next->next->next;
+        }
+    }
+    """
+    constraints = {
+        "test_ll": [
+            "RBP_1998 ⊑ RBP_2001",
+            "RDX_2034 ⊑ RDX_2042",
+            "RAX_2005 ⊑ RAX_2009",
+            "RAX_2062 ⊑ RAX_2066",
+            "RBP_1998 ⊑ RBP_2048",
+            "RAX_2038 ⊑ RAX_2042",
+            "RSP_2083 ⊑ RSP_2084",
+            "RSP_1997 ⊑ RSP_2083",
+            "RAX_2062.load.σ8@8 ⊑ RAX_2062",
+            "stack_2001 ⊑ RAX_2005",
+            "RBP_1998 ⊑ RBP_2058",
+            "RDX_2042 ⊑ RAX_2042.store.σ8@8",
+            "stack_2001 ⊑ RAX_2058",
+            "test_ll.in_0 ⊑ RDI_2001",
+            "stack_2001 ⊑ RAX_2038",
+            "RAX_2070.load.σ8@8 ⊑ RDX_2070",
+            "RAX_2074 ⊑ test_ll.out",
+            "RAX_2066 ⊑ RAX_2070",
+            "stack_2001 ⊑ RAX_2016",
+            "RAX_2030.load.σ8@8 ⊑ RAX_2030",
+            "RAX_2074 ⊑ RAX_2078",
+            "RBP_1998 ⊑ RBP_2005",
+            "RBP_1998 ⊑ RBP_2074",
+            "RAX_2034.load.σ8@8 ⊑ RDX_2034",
+            "RAX_2066.load.σ8@8 ⊑ RAX_2066",
+            "RAX_2038 ⊑ test_ll.out",
+            "RAX_2026 ⊑ RAX_2030",
+            "RSP_1997 ⊑ RSP_1998",
+            "RAX_2016 ⊑ RAX_2020",
+            "RAX_2058 ⊑ RAX_2062",
+            "int ⊑ RAX_2052.store.σ4@0",
+            "RBP_1998 ⊑ RBP_2038",
+            "RDX_2070 ⊑ RDX_2078",
+            "RDX_2078 ⊑ RAX_2078.store.σ8@8",
+            "RBP_1998 ⊑ RBP_2016",
+            "RAX_2048 ⊑ RAX_2052",
+            "RDI_2001 ⊑ stack_2001",
+            "RAX_2011 ⊑ int",
+            "int ⊑ RAX_2020.store.σ4@0",
+            "RAX_2009.load.σ4@0 ⊑ RAX_2011",
+            "RBP_1998 ⊑ RBP_2026",
+            "stack_2001 ⊑ RAX_2048",
+            "RFLAGS_2011 ⊑ RFLAGS_2014",
+            "stack_2001 ⊑ RAX_2074",
+            "RAX_2030 ⊑ RAX_2034",
+            "stack_2001 ⊑ RAX_2026",
+            "RSP_1998 ⊑ RBP_1998",
+        ],
+        "caller": ["caller.in_0 <= test_ll.in_0"],
+    }
+
+    callgraph = {"caller": ["test_ll"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints,
+        callgraph,
+        lattice=lattice,
+        config=SolverConfig(),
+    )
+    # TODO These final constraints contain some redundancy.
+    # The three taus are basically equivalent.
+    # We should revisit the process of tau variable creation
+    # once more to try to avoid these duplicate but equivalent
+    # taus.
+    assert gen_cs[parse_var("test_ll")] == parse_cs_set(
+        [
+            "test_ll.in_0 ⊑ test_ll.out",
+            "test_ll.in_0.load.σ4@0 ⊑ int",
+            "test_ll.in_0 ⊑ τ$0",
+            "test_ll.in_0 ⊑ τ$1",
+            "τ$0.load.σ8@8 ⊑ τ$0",
+            "τ$0.load.σ8@8 ⊑ test_ll.in_0.store.σ8@8",
+            "τ$1 ⊑ τ$2",
+            "τ$1.load.σ8@8 ⊑ τ$1",
+            "τ$2.load.σ8@8 ⊑ τ$2",
+            "τ$2.load.σ8@8 ⊑ test_ll.in_0.store.σ8@8",
+            "int ⊑ test_ll.in_0.store.σ4@0",
+        ]
+    )
+    gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
+    dtv2type = gen()
+    ll_ptr = dtv2type[DerivedTypeVariable("test_ll")].params[0]
+    ll_struct = ll_ptr.target_type
+    # the struct has two fields
+    assert len(ll_struct.fields) == 2
+    # field 0 is an integer
+    assert isinstance(ll_struct.fields[0].ctype, IntType)
+    # field 1 is a recursive pointer
+    assert ll_struct.fields[1].ctype.target_type.name == ll_struct.name
+
+    caller_ptr = dtv2type[DerivedTypeVariable("caller")].params[0]
+    caller_struct = caller_ptr.target_type
+    # the struct has two fields
+    assert len(caller_struct.fields) == 2
+    # field 0 is an integer
+    assert isinstance(caller_struct.fields[0].ctype, IntType)
+    # field 1 is a recursive pointer
+    assert caller_struct.fields[1].ctype.target_type.name == caller_struct.name
