@@ -92,7 +92,7 @@ class SolverConfig:
     # Maximum paths total to explore per SCC
     max_total_paths: int = 2**64
     # Use path expressions or naive exploration of the graph.
-    use_path_expressions: bool = False
+    use_path_expressions: bool = True
     # Restrict graph to reachable nodes from and to endpoints
     # before doing the path exploration.
     restrict_graph_to_reachable: bool = True
