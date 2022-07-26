@@ -137,7 +137,9 @@ class RExp:
                 else:
                     if not child.is_empty:
                         new_children.append(child)
-            if len(new_children) == 1:
+            if len(new_children) == 0:
+                return RExp.empty()
+            elif len(new_children) == 1:
                 return new_children.pop()
             return RExp(RExp.Label.DOT, children=new_children)
         elif self.label == self.Label.STAR:
