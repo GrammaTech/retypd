@@ -52,6 +52,8 @@ class RExp:
         """
         if not isinstance(other, RExp):
             raise ValueError(f"Cannot compare RExp to {type(other)}")
+        if self.hash != other.hash:
+            return self.hash < other.hash
         if self.label != other.label:
             return self.label.value < other.label.value
         # Same label
@@ -125,7 +127,7 @@ class RExp:
             if len(new_children) == 1:
                 return new_children.pop()
             else:
-                return RExp(RExp.Label.OR, children=new_children)
+                return RExp(RExp.Label.OR, children=sorted(new_children))
         elif self.label == self.Label.DOT:
             if any(child.is_null for child in children):
                 return RExp.null()
