@@ -52,6 +52,8 @@ class RExp:
         """
         if not isinstance(other, RExp):
             raise ValueError(f"Cannot compare RExp to {type(other)}")
+        if self is other:
+            return False
         if self.hash != other.hash:
             return self.hash < other.hash
         if self.label != other.label:
