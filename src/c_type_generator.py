@@ -214,6 +214,8 @@ class CTypeGenerator(Loggable):
                 *[self._succ_no_loadstore([], sketches, n, set()) for n in ns]
             )
         )
+        available_tails = {access_paths[-1] for access_paths, _ in children}
+
         if len(children) == 0:
             # Compute the atomic type bounds and size bound
             lb = self.lattice.bottom
@@ -252,6 +254,31 @@ class CTypeGenerator(Loggable):
             for n in ns:
                 self.dtv2type[base_dtv][n.dtv] = rv
             self.debug("Terminal type: %s -> %s", ns, rv)
+        elif all(
+            isinstance(tail, (InLabel, OutLabel)) for tail in available_tails
+        ):
+            outputs = set()
+            inputs = defaultdict(set)
+
+            for access_path, child in children:
+                tail = access_path[-1]
+
+                if isinstance(tail, OutLabel):
+                    outputs.add(child)
+                elif isinstance(tail, InLabel):
+                    inputs[tail.index].add(child)
+                else:
+                    assert False, "Unreachable type generation state"
+
+            output_type = self.c_type_from_nodeset(base_dtv, sketches, outputs)
+            input_types = [
+                self.c_type_from_nodeset(base_dtv, sketches, inputs[index])
+                for index in range(len(inputs))
+            ]
+
+            return PointerType(
+                FunctionType(output_type, input_types), self.default_ptr_size
+            )
         else:
             # We could recurse on types below, so we populate the struct _first_
             s = StructType()

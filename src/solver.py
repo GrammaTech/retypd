@@ -275,6 +275,7 @@ class Solver(Loggable):
     @staticmethod
     def compute_quotient_graph(
         constraints: ConstraintSet,
+        lattice_types: Set[DerivedTypeVariable],
     ) -> Tuple[EquivRelation, networkx.DiGraph]:
         """
         Compute the quotient graph corresponding to a set of
@@ -344,6 +345,12 @@ class Solver(Loggable):
                 )
 
         for constraint in constraints:
+            # Don't unify across lattice types
+            if (
+                constraint.left in lattice_types
+                or constraint.right in lattice_types
+            ):
+                continue
             unify(
                 equiv.find_equiv_rep(constraint.left),
                 equiv.find_equiv_rep(constraint.right),
@@ -371,6 +378,7 @@ class Solver(Loggable):
         scc_and_globals: Set[DerivedTypeVariable],
         sketches: Sketches,
         constraints: ConstraintSet,
+        lattice_types: Set[DerivedTypeVariable],
     ) -> None:
         """
         Infer shapes takes a set of constraints and populates shapes of the sketches
@@ -380,7 +388,9 @@ class Solver(Loggable):
         """
         if len(constraints) == 0:
             return
-        equiv, g_quotient = Solver.compute_quotient_graph(constraints)
+        equiv, g_quotient = Solver.compute_quotient_graph(
+            constraints, lattice_types
+        )
 
         # Uncomment to generate graph for debugging
         # dump_labeled_graph(g_quotient,"quotient","/tmp/quotient")
@@ -821,6 +831,7 @@ class Solver(Loggable):
                 scc | self.program.global_vars,
                 scc_sketches,
                 scc_initial_constraints,
+                self.program.types.atomic_types,
             )
             for proc in scc:
                 self.debug("# Inferring type scheme of proc: %s", proc)
