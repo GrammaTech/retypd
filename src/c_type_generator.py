@@ -260,6 +260,13 @@ class CTypeGenerator(Loggable):
             outputs = set()
             inputs = defaultdict(set)
 
+            ptr_func = PointerType(
+                FunctionType(None, []), self.default_ptr_size
+            )
+
+            for n in ns:
+                self.dtv2type[base_dtv][n.dtv] = ptr_func
+
             for access_path, child in children:
                 tail = access_path[-1]
 
@@ -270,15 +277,15 @@ class CTypeGenerator(Loggable):
                 else:
                     assert False, "Unreachable type generation state"
 
-            output_type = self.c_type_from_nodeset(base_dtv, sketches, outputs)
-            input_types = [
+            ptr_func.target_type.return_type = self.c_type_from_nodeset(
+                base_dtv, sketches, outputs
+            )
+            ptr_func.target_type.params = [
                 self.c_type_from_nodeset(base_dtv, sketches, inputs[index])
                 for index in range(len(inputs))
             ]
 
-            return PointerType(
-                FunctionType(output_type, input_types), self.default_ptr_size
-            )
+            return ptr_func
         else:
             # We could recurse on types below, so we populate the struct _first_
             s = StructType()
