@@ -129,20 +129,20 @@ class Node:
         )
 
     def __eq__(self, other: Any) -> bool:
-        return (
-            isinstance(other, Node)
-            and self.base == other.base
-            and self.suffix_variance == other.suffix_variance
-            and self._forgotten == other._forgotten
-            and self.side_mark == other.side_mark
-        )
+        if not isinstance(other, Node):
+            return False
+
+        if self._hash != other._hash:
+            return False
+
+        return self._str == other._str
 
     def __lt__(self, other: Node) -> bool:
         if not isinstance(other, Node):
             raise ValueError(
                 f"Cannot compare objects of type Node and {type(other)} "
             )
-        return self._str < other._str
+        return self._hash < other._hash
 
     def __hash__(self) -> int:
         return self._hash

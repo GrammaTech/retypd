@@ -57,6 +57,12 @@ import networkx
 import tqdm
 from dataclasses import dataclass
 from graphviz import Digraph
+from pyformlang.finite_automaton import (
+    EpsilonNFA,
+    State,
+    Symbol,
+    Epsilon,
+)
 
 
 def dump_labeled_graph(graph, label, filename):
@@ -93,6 +99,8 @@ class SolverConfig:
     max_total_paths: int = 2**64
     # Use path expressions or naive exploration of the graph.
     use_path_expressions: bool = True
+    # Use DFA simplification
+    use_dfa_simplification: bool = False
     # Restrict graph to reachable nodes from and to endpoints
     # before doing the path exploration.
     restrict_graph_to_reachable: bool = True
@@ -587,6 +595,81 @@ class Solver(Loggable):
             explore(origin)
         return constraints
 
+    def _graph_to_dfa(
+        self,
+        graph: networkx.DiGraph,
+        start_nodes: Set[Node],
+        end_nodes: Set[Node],
+    ) -> EpsilonNFA:
+        enfa = EpsilonNFA()
+
+        for (from_node, to_node, label) in graph.edges(data="label"):
+            if label is None:
+                sym = Epsilon()
+            else:
+                sym = Symbol(label)
+
+            enfa.add_transition(State(from_node), sym, State(to_node))
+
+        for node in graph.nodes():
+            if node.base.base.startswith("τ"):
+                enfa.add_start_state(State(node))
+                enfa.add_final_state(State(node))
+
+        enfa.add_start_state(State("START"))
+        enfa.add_final_state(State("FINAL"))
+
+        for start in start_nodes:
+            enfa.add_transition(State("START"), Symbol(start), State(start))
+
+        for end in end_nodes:
+            enfa.add_transition(State(end), Symbol(end), State("FINAL"))
+
+        return enfa
+
+    def _dfa_generate_constraints_from_to(
+        self,
+        graph: networkx.DiGraph,
+        start_nodes: Set[Node],
+        end_nodes: Set[Node],
+    ) -> ConstraintSet:
+        # dump_labeled_graph(graph, "orig", "/tmp/orig")
+        enfa = self._graph_to_dfa(graph, start_nodes, end_nodes)
+        # dump_labeled_graph(enfa.copy().to_networkx(), "enfa", "/tmp/enfa")
+        dfa = enfa.to_deterministic()
+        # dump_labeled_graph(dfa.copy().to_networkx(), "dfa", "/tmp/dfa")
+        mdfa = dfa.minimize()
+        # dump_labeled_graph(mdfa.copy().to_networkx(), "mdfa", "/tmp/mdfa")
+        dfa_g = mdfa.to_networkx()
+        # dump_labeled_graph(dfa_g, "dfa_g", "/tmp/dfa_g")
+
+        constraints = ConstraintSet()
+
+        for final_state in mdfa.final_states:
+            for path in networkx.all_simple_edge_paths(
+                dfa_g, mdfa.start_state, final_state
+            ):
+                path_labels = [
+                    dfa_g.get_edge_data(s, e)[index]["label"]
+                    for s, e, index in path
+                ]
+                start_node = path_labels[0]
+                end_node = path_labels[-1]
+
+                if not isinstance(start_node, Node) or not isinstance(
+                    end_node, Node
+                ):
+                    continue
+
+                constraint = Solver._maybe_constraint(
+                    start_node, end_node, path_labels[1:-1]
+                )
+
+                if constraint:
+                    constraints.add(constraint)
+
+        return constraints
+
     def _generate_constraints_from_to(
         self,
         graph: networkx.DiGraph,
@@ -606,7 +689,11 @@ class Solver(Loggable):
 
         if len(graph) == 0:
             return ConstraintSet()
-        if self.config.use_path_expressions:
+        if self.config.use_dfa_simplification:
+            return self._dfa_generate_constraints_from_to(
+                graph, start_nodes, end_nodes
+            )
+        elif self.config.use_path_expressions:
             return self._pathexpr_generate_constraints_from_to(
                 graph, start_nodes, end_nodes
             )

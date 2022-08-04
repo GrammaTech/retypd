@@ -76,9 +76,50 @@ all_solver_configs = pytest.mark.parametrize(
         SolverConfig(
             use_path_expressions=True, restrict_graph_to_reachable=False
         ),
+        SolverConfig(
+            use_path_expressions=False,
+            use_dfa_simplification=True,
+        ),
     ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+    ids=[
+        "naive-reachable",
+        "pathexpr-reachable",
+        "naive-all",
+        "pathexpr-all",
+        "dfa-all",
+    ],
 )
+
+
+@all_solver_configs
+@pytest.mark.commit
+def test_basic(config):
+    F = parse_var("F")
+    constraints = {
+        "F": [
+            "F.in_0 ⊑ δ",
+            "α ⊑ φ",
+            "δ ⊑ φ",
+            "φ.load.σ4@0 ⊑ α",
+            "φ.load.σ4@4 ⊑ α'",
+            "α' ⊑ close.in_0",
+            "close.out ⊑ F.out",
+        ],
+        "close": ["close.in_0 ⊑ #FileDescriptor", "#SuccessZ ⊑ close.out"],
+    }
+    callgraph = {"F": ["close"]}
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=DummyLattice(), config=config
+    )
+    # Check constraints
+    assert gen_cs[F] == parse_cs_set(
+        [
+            "F.in_0 ⊑ τ$0",
+            "τ$0.load.σ4@0 ⊑ τ$0",
+            "τ$0.load.σ4@4 ⊑ #FileDescriptor",
+            "#SuccessZ ⊑ F.out",
+        ]
+    )
 
 
 @all_solver_configs
