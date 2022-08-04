@@ -1,26 +1,45 @@
 from __future__ import annotations
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
-import enum
+from typing import Any, Dict, List, Optional, Set, Tuple
 import networkx
+
+
+HC_K = 0x9DDFEA08EB382D69
+HC_M = (2**64) - 1
+
+
+def hash_combine(lhs: int, rhs: int) -> int:
+    """Combine two hashes"""
+    a = rhs
+
+    a = ((a ^ lhs) * HC_K) & HC_M
+    a ^= a >> 47
+
+    a = ((a ^ lhs) * HC_K) & HC_M
+    a ^= a >> 47
+
+    return a
 
 
 class RExp:
     """Regular expression class with some helper methods and simplification"""
 
-    class Label(enum.Enum):
-        NULL = 0
-        EMPTY = 1
-        NODE = 2
-        DOT = 3
-        OR = 4
-        STAR = 5
+    class Label:
+        NULL = 0xFA1118ECFC2E5C78
+        EMPTY = 0xEA759E93D6E9FF37
+        NODE = 0x091F738A11133080
+        DOT = 0xAF201303AC824465
+        OR = 0xBDF5EA44D36816CB
+        STAR = 0xC2B42C47A64FC2AD
 
-    def __init__(self, label: Label, data=None, children=[]):
+    def __init__(self, label: int, data=None, children=[]):
         self.label = label
         self.data: Any = data
         self.children: Tuple[RExp] = tuple(children)
-        self.hash = hash((self.label, self.data, self.children))
+        self.hash = hash_combine(self.label, hash(self.data))
+
+        for child in self.children:
+            self.hash = hash_combine(self.hash, child.hash)
 
     def __hash__(self) -> int:
         return self.hash
@@ -35,6 +54,8 @@ class RExp:
         return RExp(self.Label.STAR, children=(self,))
 
     def __eq__(self, other: RExp) -> bool:
+        if self.hash != other.hash:
+            return False
         if self.label != other.label:
             return False
         if self.label in (self.Label.NULL, self.Label.EMPTY):
@@ -57,7 +78,7 @@ class RExp:
         if self.hash != other.hash:
             return self.hash < other.hash
         if self.label != other.label:
-            return self.label.value < other.label.value
+            return self.label < other.label
         # Same label
         if self.label in (self.Label.NULL, self.Label.EMPTY):
             return False
@@ -102,6 +123,77 @@ class RExp:
         else:
             return cls.node(attrs[data])
 
+    def _simplify_factor_dots(self, new_children: Set[RExp]) -> Optional[RExp]:
+        """Compute the factoring out of two sets of labels
+        (a . b . d) u (a . c) ==> a . ((b . d) u c)
+
+        :param new_children: Set of new children to add
+        """
+
+        if all(child.label == RExp.Label.DOT for child in new_children):
+            common_prefix = []
+            common_suffix = []
+            least_length = min(len(child.children) for child in new_children)
+
+            # Collect the prefix of conjuncts which our disjuncts have in common
+            for i in range(least_length):
+                ith_disjoint = {child.children[i] for child in new_children}
+
+                if len(ith_disjoint) == 1:
+                    common_prefix.append(ith_disjoint.pop())
+                else:
+                    break
+
+            # Collect the suffix of conjuncts which our disjuncts have in common
+            for i in range(least_length - 1, -1, -1):
+                ith_disjoint = {child.children[i] for child in new_children}
+
+                if len(ith_disjoint) == 1:
+                    common_suffix.append(ith_disjoint.pop())
+                else:
+                    break
+
+            common_suffix = common_suffix[::-1]
+
+            if len(common_prefix) > 0:
+                inner_or_children = set()
+
+                # Construct the disjunct thats the suffix of the rest
+                for child in new_children:
+                    dot_children = child.children[len(common_prefix) :]
+
+                    if len(dot_children) > 1:
+                        child_after_prefix = RExp(
+                            RExp.Label.DOT, children=dot_children
+                        )
+                    elif len(dot_children) == 1:
+                        child_after_prefix = dot_children[0]
+                    else:
+                        child_after_prefix = self.empty()
+
+                    if child_after_prefix.label == RExp.Label.OR:
+                        for child in child_after_prefix.children:
+                            inner_or_children.add(child)
+                    else:
+                        inner_or_children.add(child_after_prefix)
+
+                if len(inner_or_children) > 1:
+                    inner_or = RExp(
+                        RExp.Label.OR, children=sorted(inner_or_children)
+                    )
+                    assert not any(
+                        child.label == RExp.Label.OR
+                        for child in inner_or_children
+                    ), f"Created inner or: {inner_or}"
+                else:
+                    inner_or = inner_or_children.pop()
+
+                return RExp(
+                    RExp.Label.DOT, children=common_prefix + [inner_or]
+                )
+
+        return None
+
     def simplify(self) -> RExp:
         """Regular expression simplification procedure, page 9
 
@@ -126,7 +218,7 @@ class RExp:
                         new_children.add(child)
             if len(new_children) == 0:
                 return RExp.null()
-            if len(new_children) == 1:
+            elif len(new_children) == 1:
                 return new_children.pop()
             else:
                 return RExp(RExp.Label.OR, children=sorted(new_children))
@@ -149,8 +241,6 @@ class RExp:
         elif self.label == self.Label.STAR:
             if children[0].is_null or children[0].is_empty:
                 return RExp.empty()
-            else:
-                return children[0].star()
         return self
 
     @property
