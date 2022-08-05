@@ -111,6 +111,9 @@ class GraphSolver(abc.ABC):
 
 
 class DFAGraphSolver(GraphSolver):
+    START = State("$$START$$")
+    FINAL = State("$$FINAL$$")
+
     def _graph_to_dfa(
         self,
         graph: networkx.DiGraph,
@@ -134,16 +137,16 @@ class DFAGraphSolver(GraphSolver):
         # type-variables as also final states
         for node in graph.nodes():
             if node.base.base.startswith("τ"):
-                enfa.add_transition(State(node), Epsilon(), State("FINAL"))
+                enfa.add_transition(State(node), Epsilon(), self.FINAL)
 
-        enfa.add_start_state(State("START"))
-        enfa.add_final_state(State("FINAL"))
+        enfa.add_start_state(self.START)
+        enfa.add_final_state(self.FINAL)
 
         for start in start_nodes:
-            enfa.add_transition(State("START"), Symbol(start), State(start))
+            enfa.add_transition(self.START, Symbol(start), State(start))
 
         for end in end_nodes:
-            enfa.add_transition(State(end), Symbol(end), State("FINAL"))
+            enfa.add_transition(State(end), Symbol(end), self.FINAL)
 
         return enfa
 
