@@ -24,7 +24,7 @@
 """
 
 from __future__ import annotations
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Any
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 from .graph import (
     EdgeLabel,
     SideMark,
@@ -41,7 +41,6 @@ from .schema import (
     ConstraintSet,
     DerivedTypeVariable,
     FreshVarFactory,
-    Lattice,
     Program,
     LoadLabel,
     StoreLabel,
@@ -210,7 +209,6 @@ class Solver(Loggable):
         cs: ConstraintSet,
         sketch_map: Dict[DerivedTypeVariable, Sketches],
         type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
-        types: Lattice[DerivedTypeVariable],
     ) -> ConstraintSet:
         """
         For every constraint involving a procedure that has already been
@@ -218,20 +216,20 @@ class Solver(Loggable):
         capability constraints based on the sketch.
         """
         fresh_var_factory = FreshVarFactory()
-        callees = set()
+
         # TODO in order to support different instantiations for different calls
         # to the same function, we need to encode function actuals
         # differently than function formals
-        for dtv in cs.all_dtvs():
-            if dtv.base_var in sketch_map:
-                callees.add(dtv.base_var)
+        callees = {
+            dtv.base_var for dtv in cs.all_dtvs() if dtv.base_var in sketch_map
+        }
 
         new_constraints = ConstraintSet()
         # sort to avoid non-determinism
         for callee in sorted(callees):
             new_constraints |= sketch_map[
                 callee
-            ].instantiate_sketch_capabilities(callee, types, fresh_var_factory)
+            ].instantiate_sketch_capabilities(callee, fresh_var_factory)
             new_constraints |= Solver.instantiate_type_scheme(
                 fresh_var_factory, type_schemes[callee]
             )
@@ -270,7 +268,7 @@ class Solver(Loggable):
             """
             Unify two equivalent classes and all the successors
             that can be reached:
-             - Throught the same label
+             - Through the same label
              - Through a 'load' label in one and a 'store' label in the other.
             See UNIFY in Algorithm E.1 and proof of Theorem E.1
             """
@@ -347,7 +345,7 @@ class Solver(Loggable):
     ) -> None:
         """
         Infer shapes takes a set of constraints and populates shapes of the sketches
-        for all DVS in scc.
+        for all DTVs in scc.
 
         This corresponds to Algorithm E.1 'InferShapes' in the original Retypd paper.
         """
@@ -604,7 +602,6 @@ class Solver(Loggable):
         self,
         global_handler: GlobalHandler,
         scc_dag: networkx.DiGraph,
-        constraint_map: Dict[Any, ConstraintSet],
         sketches_map: Dict[DerivedTypeVariable, Sketches],
         type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
     ):
@@ -630,15 +627,18 @@ class Solver(Loggable):
         ):
             global_handler.pre_scc(scc_node)
             scc = scc_dag.nodes[scc_node]["members"]
+            self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
             scc_initial_constraints = ConstraintSet()
+
             for proc in scc:
-                constraints = constraint_map.get(proc, ConstraintSet())
+                self.debug("# Initializing call-sites for %s", proc)
+                constraints = self.program.proc_constraints.get(
+                    proc, ConstraintSet()
+                )
                 constraints |= Solver.instantiate_calls(
-                    constraints, sketches_map, type_schemes, self.program.types
+                    constraints, sketches_map, type_schemes
                 )
                 scc_initial_constraints |= constraints
-
-            self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
 
             self.debug("# Inferring shapes")
             scc_sketches = Sketches(self.program.types, self.verbose)
@@ -733,7 +733,6 @@ class Solver(Loggable):
         self._solve_topo_graph(
             global_handler,
             scc_dag,
-            self.program.proc_constraints,
             sketches_map,
             type_schemes,
         )
