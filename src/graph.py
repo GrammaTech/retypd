@@ -415,7 +415,7 @@ def remove_unreachable_states(
     )
     rev_reachable_nodes = set(
         networkx.multi_source_dijkstra_path_length(
-            graph.reverse(), end_nodes
+            graph.reverse(copy=False), end_nodes
         ).keys()
     )
     keep = reachable_nodes & rev_reachable_nodes

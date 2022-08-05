@@ -25,7 +25,6 @@
 
 from __future__ import annotations
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Any
-
 from .pathexpr import RExp, scc_decompose_path_seq, solve_paths_from
 from .graph import (
     EdgeLabel,
@@ -601,6 +600,9 @@ class Solver(Loggable):
         start_nodes: Set[Node],
         end_nodes: Set[Node],
     ) -> EpsilonNFA:
+        """
+        Generate an ε-NFA from graph.
+        """
         enfa = EpsilonNFA()
 
         for (from_node, to_node, label) in graph.edges(data="label"):
@@ -611,9 +613,10 @@ class Solver(Loggable):
 
             enfa.add_transition(State(from_node), sym, State(to_node))
 
+        # In order to keep recursive constraints, we mark generated
+        # type-variables as also final states
         for node in graph.nodes():
             if node.base.base.startswith("τ"):
-                enfa.add_start_state(State(node))
                 enfa.add_final_state(State(node))
 
         enfa.add_start_state(State("START"))
@@ -633,15 +636,14 @@ class Solver(Loggable):
         start_nodes: Set[Node],
         end_nodes: Set[Node],
     ) -> ConstraintSet:
-        # dump_labeled_graph(graph, "orig", "/tmp/orig")
+        """
+        Treat the graph as a ε-NFA, then convert to a DFA and subsequent minimal
+        DFA. Compute path labels between start/ends over minimized DFA.
+        """
         enfa = self._graph_to_dfa(graph, start_nodes, end_nodes)
-        # dump_labeled_graph(enfa.copy().to_networkx(), "enfa", "/tmp/enfa")
         dfa = enfa.to_deterministic()
-        # dump_labeled_graph(dfa.copy().to_networkx(), "dfa", "/tmp/dfa")
         mdfa = dfa.minimize()
-        # dump_labeled_graph(mdfa.copy().to_networkx(), "mdfa", "/tmp/mdfa")
         dfa_g = mdfa.to_networkx()
-        # dump_labeled_graph(dfa_g, "dfa_g", "/tmp/dfa_g")
 
         constraints = ConstraintSet()
 
@@ -656,6 +658,9 @@ class Solver(Loggable):
                 start_node = path_labels[0]
                 end_node = path_labels[-1]
 
+                # In minimized form these might be created, so we have to
+                # explicitly check even though our original NFA would not have
+                # these
                 if not isinstance(start_node, Node) or not isinstance(
                     end_node, Node
                 ):
