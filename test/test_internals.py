@@ -12,6 +12,7 @@ from retypd import (
     SchemaParser,
     Solver,
     DerefLabel,
+    Program,
     CType,
     CLatticeCTypes,
     BoolType,
@@ -53,7 +54,7 @@ def test_simple_constraints():
     )
     f, x, y = SchemaParser.parse_variables(["f", "x", "y"])
     lattice = DummyLattice()
-    solver = Solver(None)
+    solver = Solver(Program(CLattice(), {}, {}, {}))
     generated = solver._generate_type_scheme(
         constraints, {x, y}, lattice.internal_types
     )
@@ -68,7 +69,7 @@ def test_other_simple_constraints():
     )
     f, A, B = SchemaParser.parse_variables(["f", "A", "B"])
     lattice = DummyLattice()
-    solver = Solver(None)
+    solver = Solver(Program(CLattice(), {}, {}, {}))
     generated = solver._generate_type_scheme(
         constraints, {A, B}, lattice.internal_types
     )
@@ -85,7 +86,7 @@ def test_forgets():
     constraint = parse_cs("l ⊑ F.in_1.load.σ8@0")
     constraints.add(constraint)
     lattice = DummyLattice()
-    solver = Solver(None)
+    solver = Solver(Program(CLattice(), {}, {}, {}))
     generated = solver._generate_type_scheme(
         constraints, {l, F}, lattice.internal_types
     )
