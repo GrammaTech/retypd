@@ -617,7 +617,7 @@ class Solver(Loggable):
         # type-variables as also final states
         for node in graph.nodes():
             if node.base.base.startswith("τ"):
-                enfa.add_final_state(State(node))
+                enfa.add_transition(State(node), Epsilon(), State("FINAL"))
 
         enfa.add_start_state(State("START"))
         enfa.add_final_state(State("FINAL"))
