@@ -228,28 +228,27 @@ class ConstraintGraph:
         self._remove_self_loops()
         if keep_graph_before_split:
             self.graph_before_split = self.graph.copy()
-        self._recall_forget_split(self.graph)
+        self._recall_forget_split()
 
     # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
-    @staticmethod
-    def _recall_forget_split(graph: networkx.DiGraph) -> None:
+    def _recall_forget_split(self) -> None:
         """The algorithm, after saturation, only admits paths such that recall edges all precede
         the first forget edge (if there is such an edge). To enforce this, we modify the graph by
         splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
         in the original graph are changed to point to the 'forgotten' duplicate of their original
         target. As a result, no recall edges are reachable after traversing a single forget edge.
         """
-        for head, tail in list(graph.edges):
-            atts = graph[head][tail]
+        for head, tail in list(self.graph.edges):
+            atts = self.graph[head][tail]
             label = atts.get("label")
             if label and label.kind == EdgeLabel.Kind.RECALL:
                 continue
             forget_head = head.split_recall_forget()
             forget_tail = tail.split_recall_forget()
             if label and label.kind == EdgeLabel.Kind.FORGET:
-                graph.remove_edge(head, tail)
-                graph.add_edge(head, forget_tail, **atts)
-            graph.add_edge(forget_head, forget_tail, **atts)
+                self.graph.remove_edge(head, tail)
+                self.graph.add_edge(head, forget_tail, **atts)
+            self.graph.add_edge(forget_head, forget_tail, **atts)
 
     def add_edge(self, head: Node, tail: Node, **atts) -> bool:
         """Add an edge to the graph. The optional atts dict should include, if anything, a mapping
@@ -373,6 +372,14 @@ class ConstraintGraph:
         self.graph.remove_edges_from(
             {(node, node) for node in self.graph.nodes}
         )
+
+    @classmethod
+    def from_constraints(
+        cls,
+        constraints: ConstraintSet,
+        interesting_vars: Set[DerivedTypeVariable],
+    ) -> networkx.DiGraph:
+        return cls(constraints, interesting_vars).graph
 
     @staticmethod
     def edge_to_str(graph, edge: Tuple[Node, Node]) -> str:

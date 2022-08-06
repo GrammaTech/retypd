@@ -523,6 +523,23 @@ class Solver(Loggable):
         }
         return constraints.apply_mapping(type_var_map)
 
+    def _solve_constraints_between(
+        self,
+        graph: networkx.DiGraph,
+        start_dtvs: Set[DerivedTypeVariable],
+        end_dtvs: Set[DerivedTypeVariable],
+    ) -> ConstraintSet:
+        """
+        Get graph nodes from start/end DTVs, and solve for constraints that
+        exist between those nodes in the graph
+        """
+        start_nodes, end_nodes = Solver.get_start_end_nodes(
+            graph, start_dtvs, end_dtvs
+        )
+        return self.graph_solver.generate_constraints_from_to(
+            graph, start_nodes, end_nodes
+        )
+
     def _generate_type_scheme(
         self,
         initial_constraints: ConstraintSet,
@@ -538,27 +555,27 @@ class Solver(Loggable):
             - Type variables capturing recursive types
         """
         interesting_dtvs = non_primitive_end_points | primitive_types
-        graph = ConstraintGraph(initial_constraints, interesting_dtvs).graph
+        graph = ConstraintGraph.from_constraints(
+            initial_constraints, interesting_dtvs
+        )
         all_interesting_nodes = {
             node for node in graph.nodes if node.base in interesting_dtvs
         }
         type_vars = Solver._generate_type_vars(graph, all_interesting_nodes)
-        interesting_dtvs |= type_vars
 
         if len(type_vars) > 0:
+            interesting_dtvs |= type_vars
+
             # If we have type vars, we recompute the graph
             # considering type vars as interesting
-            graph = ConstraintGraph(
+            graph = ConstraintGraph.from_constraints(
                 initial_constraints, interesting_dtvs
-            ).graph
+            )
             # Uncomment to output graph for debugging
             # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
 
-        start_nodes, end_nodes = Solver.get_start_end_nodes(
+        constraints = self._solve_constraints_between(
             graph, interesting_dtvs, interesting_dtvs
-        )
-        constraints = self.graph_solver.generate_constraints_from_to(
-            graph, start_nodes, end_nodes
         )
         return Solver.substitute_type_vars(constraints, type_vars)
 
@@ -576,26 +593,21 @@ class Solver(Loggable):
          - From non_primitive_end_points to primitive_types.
         """
 
-        graph = ConstraintGraph(
+        graph = ConstraintGraph.from_constraints(
             initial_constraints, non_primitive_end_points | primitive_types
-        ).graph
+        )
         constraints = ConstraintSet()
 
         # from proc and global vars to primitive types
-        start_nodes, end_nodes = Solver.get_start_end_nodes(
+        constraints |= self._solve_constraints_between(
             graph, non_primitive_end_points, primitive_types
-        )
-        constraints |= self.graph_solver.generate_constraints_from_to(
-            graph, start_nodes, end_nodes
         )
 
         # from primitive types to proc and global vars
-        start_nodes, end_nodes = Solver.get_start_end_nodes(
+        constraints |= self._solve_constraints_between(
             graph, primitive_types, non_primitive_end_points
         )
-        constraints |= self.graph_solver.generate_constraints_from_to(
-            graph, start_nodes, end_nodes
-        )
+
         return constraints
 
     def _solve_topo_graph(
