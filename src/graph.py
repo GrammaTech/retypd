@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 from enum import Enum, unique
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import AbstractSet, Any, Dict, Optional, Set, Tuple
 from .schema import (
     AccessPathLabel,
     ConstraintSet,
@@ -385,7 +385,7 @@ class ConstraintGraph:
     def from_constraints(
         cls,
         constraints: ConstraintSet,
-        interesting_vars: Set[DerivedTypeVariable],
+        interesting_vars: AbstractSet[DerivedTypeVariable],
     ) -> networkx.DiGraph:
         return cls(constraints, interesting_vars).graph
 

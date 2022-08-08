@@ -24,7 +24,7 @@
 """
 
 from __future__ import annotations
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import AbstractSet, Dict, FrozenSet, List, Optional, Set, Tuple
 from .graph import (
     EdgeLabel,
     SideMark,
@@ -335,7 +335,7 @@ class Solver(Loggable):
         scc_and_globals: Set[DerivedTypeVariable],
         sketches: Sketches,
         constraints: ConstraintSet,
-        lattice_types: Set[DerivedTypeVariable],
+        lattice_types: FrozenSet[DerivedTypeVariable],
     ) -> None:
         """
         Infer shapes takes a set of constraints and populates shapes of the sketches
@@ -543,8 +543,8 @@ class Solver(Loggable):
     def _solve_constraints_between(
         self,
         graph: networkx.DiGraph,
-        start_dtvs: Set[DerivedTypeVariable],
-        end_dtvs: Set[DerivedTypeVariable],
+        start_dtvs: AbstractSet[DerivedTypeVariable],
+        end_dtvs: AbstractSet[DerivedTypeVariable],
     ) -> ConstraintSet:
         """
         Get graph nodes from start/end DTVs, and solve for constraints that
@@ -563,8 +563,8 @@ class Solver(Loggable):
     def _generate_type_scheme(
         self,
         initial_constraints: ConstraintSet,
-        non_primitive_end_points: Set[DerivedTypeVariable],
-        primitive_types: Set[DerivedTypeVariable],
+        non_primitive_end_points: AbstractSet[DerivedTypeVariable],
+        primitive_types: AbstractSet[DerivedTypeVariable],
     ) -> ConstraintSet:
         """Generate a reduced set of constraints
         that constitute a type scheme.
@@ -604,8 +604,8 @@ class Solver(Loggable):
     def _generate_primitive_constraints(
         self,
         initial_constraints: ConstraintSet,
-        non_primitive_end_points: Set[DerivedTypeVariable],
-        primitive_types: Set[DerivedTypeVariable],
+        non_primitive_end_points: AbstractSet[DerivedTypeVariable],
+        primitive_types: AbstractSet[DerivedTypeVariable],
     ) -> ConstraintSet:
         """Generate constraints to populate
         the sketch nodes with primitive types
