@@ -179,10 +179,10 @@ class Sketches(Loggable):
         if (head, tail) not in self.sketches.edges:
             self.sketches.add_edge(head, tail, label=label)
         else:
-            if label != self.sketches.edges[head][tail]["label"]:
+            if label != self.sketches.edges[head, tail]["label"]:
                 raise RetypdError(
                     f"Failed to add edge {label} between {head} and {tail}."
-                    f" Label {self.sketches.edges[head][tail]['label']} exists"
+                    f" Label {self.sketches.edges[head, tail]['label']} exists"
                 )
 
     def _copy_global_recursive(
