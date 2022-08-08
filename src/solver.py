@@ -110,7 +110,7 @@ class EquivRelation:
     for better performance.
     """
 
-    def __init__(self, elems: Set[DerivedTypeVariable]) -> None:
+    def __init__(self, elems: AbstractSet[DerivedTypeVariable]) -> None:
         self._equiv_repr = {elem: frozenset((elem,)) for elem in elems}
 
     def make_equiv(
@@ -252,6 +252,7 @@ class Solver(Loggable):
             g.add_node(dtv)
             while len(dtv.path) > 0:
                 prefix = dtv.largest_prefix
+                assert prefix, "Failed to calculate largest prefix"
                 g.add_edge(prefix, dtv, label=dtv.tail)
                 dtv = prefix
 
@@ -401,6 +402,9 @@ class Solver(Loggable):
                     all_paths(dest, visited_nodes)
                     del visited_nodes[dest]
                 else:
+                    # Determine if we have already have an edge from current_node to a label node
+                    # on an edge labeled with label. This is relevant in cases where we are using
+                    # an existing Sketches and adding more information to it during top-down.
                     if curr_node in sketches.sketches:
                         out_edges = {
                             out_edge
@@ -497,8 +501,8 @@ class Solver(Loggable):
     @staticmethod
     def get_start_end_nodes(
         graph: networkx.DiGraph,
-        start_dtvs: Set[DerivedTypeVariable],
-        end_dtvs: Set[DerivedTypeVariable],
+        start_dtvs: AbstractSet[DerivedTypeVariable],
+        end_dtvs: AbstractSet[DerivedTypeVariable],
     ) -> Tuple[Set[Node], Set[Node]]:
         """
         Obtain the start and end graph nodes corresponding to the given
@@ -778,7 +782,7 @@ class Solver(Loggable):
             )
             if len(involved_globals) > 0:
                 self.debug(
-                    "# Inferring primitive constraints of globals: %s", proc
+                    "# Inferring primitive constraints of globals: %s", scc
                 )
                 # Compute primitive constraints for globals
                 primitive_global_constraints = (
@@ -867,7 +871,7 @@ class Solver(Loggable):
             sketches_map,
             type_schemes,
         )
-        global_handler.finalize(self, sketches_map)
+        global_handler.finalize(self.program.types, sketches_map)
 
         # Note: all globals point to the same "Sketches" graph, which has all the globals
         # in it. It would be nice to separate them out, but not a priority right now (clients
