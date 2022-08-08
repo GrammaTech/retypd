@@ -336,6 +336,7 @@ class Solver(Loggable):
 
     @staticmethod
     def infer_shapes(
+        scc_and_globals: Set[DerivedTypeVariable],
         sketches: Sketches,
         constraints: ConstraintSet,
         lattice_types: FrozenSet[DerivedTypeVariable],
@@ -424,7 +425,7 @@ class Solver(Loggable):
                     label_node = LabelNode(visited_nodes[dest].dtv)
                     sketches.add_edge(curr_node, label_node, label)
 
-        for proc_or_global in constraints.all_tvs():
+        for proc_or_global in scc_and_globals:
             proc_or_global_node = sketches.make_node(proc_or_global)
             quotient_node = equiv.find_equiv_rep(proc_or_global)
             if quotient_node is None:
@@ -668,6 +669,7 @@ class Solver(Loggable):
         the sketches_map and type_schemes
         """
         Solver.infer_shapes(
+            scc | self.program.global_vars,
             scc_sketches,
             scc_initial_constraints,
             self.program.types.atomic_types,
