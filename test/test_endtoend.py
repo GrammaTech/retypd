@@ -90,6 +90,7 @@ all_solver_configs = pytest.mark.parametrize(
             ),
         ),
         SolverConfig(graph_solver="dfa"),
+        SolverConfig(graph_solver="dfa", top_down_propation=True),
     ],
     ids=[
         "naive-reachable",
@@ -97,6 +98,7 @@ all_solver_configs = pytest.mark.parametrize(
         "naive-all",
         "pathexpr-all",
         "dfa-all",
+        "dfa-all-topdown",
     ],
 )
 

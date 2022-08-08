@@ -12,6 +12,7 @@ from retypd import (
     DummyLattice,
     SchemaParser,
     Solver,
+    SolverConfig,
     DerefLabel,
     Program,
     CType,
@@ -166,3 +167,23 @@ def test_infers_all_inputs():
     assert dtv2type[F].params[2].target_type.params[0] is not None
     assert isinstance(dtv2type[F].params[2].target_type.params[1], IntType)
     assert dtv2type[F].params[2].target_type.params[1] is not None
+
+@pytest.mark.commit
+def test_top_down():
+    config = SolverConfig(top_down_propagation=True)
+    F, G = SchemaParser.parse_variables(["F", "G"])
+    constraints = {F: ConstraintSet(), G: ConstraintSet()}
+    constraints[F].add(parse_cs("int ⊑ F.in_1.load.σ8@0"))
+    constraints[G].add(parse_cs("int ⊑ x.load.σ8@8"))
+    constraints[G].add(parse_cs("x ⊑ F.in_1"))
+    constraints[G].add(parse_cs("F.in_1 ⊑ G.in_1"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}}), config=config
+    )
+    gen_cst, sketches = solver()
+
+    assert parse_cs("int ⊑ F.in_1.load.σ8@8") in gen_cst[F]
+    assert sketches[F].lookup(
+        parse_var("F.in_1.load.σ8@8")
+    ).lower_bound == DerivedTypeVariable("int")
