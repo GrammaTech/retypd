@@ -170,6 +170,9 @@ def test_infers_all_inputs():
 
 @pytest.mark.commit
 def test_top_down():
+    """
+    Test that top-down propagation can propagate information correctly
+    """
     config = SolverConfig(top_down_propagation=True)
     F, G = SchemaParser.parse_variables(["F", "G"])
     constraints = {F: ConstraintSet(), G: ConstraintSet()}
@@ -186,4 +189,68 @@ def test_top_down():
     assert parse_cs("int ⊑ F.in_1.load.σ8@8") in gen_cst[F]
     assert sketches[F].lookup(
         parse_var("F.in_1.load.σ8@8")
+    ).lower_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_top_down_two_levels():
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
+    constraints = {F: ConstraintSet(), G: ConstraintSet(), H: ConstraintSet()}
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+    constraints[G].add(parse_cs("G.in_1 ⊑ F.in_1"))
+
+    constraints[H].add(parse_cs("int ⊑ G.in_1"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {G}}), config=config
+    )
+    gen_cst, sketches = solver()
+    assert parse_cs("int ⊑ F.in_1") in gen_cst[F]
+    assert sketches[F].lookup(
+        parse_var("F.in_1")
+    ).lower_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_top_down_three_levels():
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H, I = SchemaParser.parse_variables(["F", "G", "H", "I"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+        H: ConstraintSet(),
+        I: ConstraintSet(),
+    }
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+    constraints[G].add(parse_cs("G.in_1 ⊑ F.in_1"))
+    constraints[G].add(parse_cs("G.in_2 ⊑ F.in_2"))
+    constraints[H].add(parse_cs("H.in_1 ⊑ G.in_1"))
+    constraints[I].add(parse_cs("int ⊑ H.in_1"))
+    constraints[I].add(parse_cs("int ⊑ G.in_2"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {G}, I: {H, G}}),
+        config=config,
+    )
+    gen_cst, sketches = solver()
+    assert parse_cs("int ⊑ F.in_1") in gen_cst[F]
+    assert parse_cs("int ⊑ F.in_2") in gen_cst[F]
+    assert parse_cs("int ⊑ G.in_1") in gen_cst[G]
+    assert parse_cs("int ⊑ G.in_2") in gen_cst[G]
+    assert parse_cs("int ⊑ H.in_1") in gen_cst[H]
+    assert sketches[F].lookup(
+        parse_var("F.in_1")
+    ).lower_bound == DerivedTypeVariable("int")
+    assert sketches[F].lookup(
+        parse_var("F.in_2")
+    ).lower_bound == DerivedTypeVariable("int")
+    assert sketches[G].lookup(
+        parse_var("G.in_1")
+    ).lower_bound == DerivedTypeVariable("int")
+    assert sketches[G].lookup(
+        parse_var("G.in_2")
+    ).lower_bound == DerivedTypeVariable("int")
+    assert sketches[H].lookup(
+        parse_var("H.in_1")
     ).lower_bound == DerivedTypeVariable("int")

@@ -699,6 +699,7 @@ class Solver(Loggable):
         self,
         proc: DerivedTypeVariable,
         callgraph: networkx.DiGraph,
+        type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
     ) -> ConstraintSet:
         """
         Given a procedure, use its callees to populate information inter-procedural information.
@@ -717,12 +718,19 @@ class Solver(Loggable):
         )
 
         for incoming in incoming_procs:
-            constraints |= self._generate_primitive_constraints(
-                self.program.proc_constraints.get(incoming, ConstraintSet()),
+            incoming_constraints = self._generate_primitive_constraints(
+                self.program.proc_constraints.get(incoming, ConstraintSet())
+                | type_schemes[incoming],
                 {proc},
                 self.program.types.internal_types,
             )
-
+            self.debug(
+                "Constraints from %s to %s are %s",
+                incoming,
+                proc,
+                incoming_constraints,
+            )
+            constraints |= incoming_constraints
         return constraints
 
     def _solve_topo_graph(
@@ -809,11 +817,13 @@ class Solver(Loggable):
             scc = scc_dag.nodes[scc_node]["members"]
             self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
 
-            scc_initial_constraints = ConstraintSet()
-
             for proc in scc:
                 constraints = type_schemes[proc]
-                constraints |= self._refine_parameters(proc, callgraph)
+                constraints |= self._refine_parameters(
+                    proc, callgraph, type_schemes
+                )
+
+                self.debug("Refined constraints: %s", constraints)
 
                 sketch = sketches_map[proc]
 
