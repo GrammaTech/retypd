@@ -194,16 +194,19 @@ def test_top_down():
 
 @pytest.mark.commit
 def test_top_down_two_levels():
+    """
+    Validate that top-down propagation can handle two levels of indirection
+    """
     config = SolverConfig(top_down_propagation=True)
     F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
     constraints = {F: ConstraintSet(), G: ConstraintSet(), H: ConstraintSet()}
     constraints[F].add(parse_cs("F.out ⊑ int"))
     constraints[G].add(parse_cs("G.in_1 ⊑ F.in_1"))
-
     constraints[H].add(parse_cs("int ⊑ G.in_1"))
 
     solver = Solver(
-        Program(CLattice(), {}, constraints, {G: {F}, H: {G}}), config=config
+        Program(CLattice(), {}, constraints, {G: {F}, H: {G}}),
+        config=config,
     )
     gen_cst, sketches = solver()
     assert parse_cs("int ⊑ F.in_1") in gen_cst[F]
@@ -214,6 +217,9 @@ def test_top_down_two_levels():
 
 @pytest.mark.commit
 def test_top_down_three_levels():
+    """
+    Validate that top-down propagation can handle three levels of indirection
+    """
     config = SolverConfig(top_down_propagation=True)
     F, G, H, I = SchemaParser.parse_variables(["F", "G", "H", "I"])
     constraints = {
@@ -254,3 +260,41 @@ def test_top_down_three_levels():
     assert sketches[H].lookup(
         parse_var("H.in_1")
     ).lower_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_top_down_multiple_type_variables():
+    """
+    Test that when multiple type variables are propagated to a function, each one is instantiated
+    so that we don't run into overlapping type variables.
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+        H: ConstraintSet(),
+    }
+
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+
+    constraints[G].add(parse_cs("A ⊑ F.in_1"))
+    constraints[G].add(parse_cs("A.load.σ8@0 ⊑ A"))
+    constraints[G].add(parse_cs("int ⊑ A.load.σ8@8"))
+
+    constraints[H].add(parse_cs("A ⊑ F.in_2"))
+    constraints[H].add(parse_cs("A.load.σ8@0 ⊑ A"))
+    constraints[H].add(parse_cs("double ⊑ A.load.σ8@8"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {F}}),
+        config=config,
+    )
+    _, sketches = solver()
+
+    assert sketches[F].lookup(
+        parse_var("F.in_1.load.σ8@8")
+    ).lower_bound == DerivedTypeVariable("int")
+    assert sketches[F].lookup(
+        parse_var("F.in_2.load.σ8@8")
+    ).lower_bound == DerivedTypeVariable("double")

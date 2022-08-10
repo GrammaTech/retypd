@@ -7,6 +7,8 @@ from .schema import (
     SubtypeConstraint,
     Variance,
     RetypdError,
+    InLabel,
+    OutLabel,
 )
 from .loggable import Loggable, LogLevel
 import os
@@ -60,6 +62,48 @@ class SketchNode:
 
     def __repr__(self) -> str:
         return f"SketchNode({self})"
+
+    def meet(self, rhs: SketchNode, types: Lattice[DerivedTypeVariable]):
+        """
+        Meet over the lattice of Sketches, defined in Figure 18
+        """
+        assert self.dtv == rhs.dtv
+
+        if self.dtv.path_variance == Variance.COVARIANT:
+            return SketchNode(
+                self.dtv,
+                types.meet(self.lower_bound, rhs.lower_bound),
+                types.meet(self.upper_bound, rhs.upper_bound),
+            )
+        else:
+            return SketchNode(
+                self.dtv,
+                types.join(self.lower_bound, rhs.lower_bound),
+                types.join(self.upper_bound, rhs.upper_bound),
+            )
+
+    def join(self, rhs: SketchNode, types: Lattice[DerivedTypeVariable]):
+        """
+        Join over the lattice of Sketches, defined in Figure 18
+        """
+        assert self.dtv == rhs.dtv
+
+        # TODO: What do these rules mean?
+        #  - v_X(w) if w \in L(X) \ L(y)
+        #  - v_Y(w) if w \in L(Y) \ L(X)
+
+        if self.dtv.path_variance == Variance.COVARIANT:
+            return SketchNode(
+                self.dtv,
+                types.join(self.lower_bound, rhs.lower_bound),
+                types.join(self.upper_bound, rhs.upper_bound),
+            )
+        else:
+            return SketchNode(
+                self.dtv,
+                types.meet(self.lower_bound, rhs.lower_bound),
+                types.meet(self.upper_bound, rhs.upper_bound),
+            )
 
 
 class LabelNode:
@@ -147,6 +191,39 @@ class Sketches(Loggable):
             if isinstance(curr_node, LabelNode):
                 curr_node = self._lookup[curr_node.target]
         return curr_node
+
+    def all_after(self, node: SketchNode) -> Set[SkNode]:
+        """
+        Get all sketches that derive from a given DTV.
+        """
+        _, paths = networkx.single_source_dijkstra(self.sketches, node)
+        return set(paths.keys())
+
+    def in_out_sketches(
+        self, dtv: DerivedTypeVariable
+    ) -> Tuple[Set[SkNode], Set[SkNode]]:
+        """
+        Get the set of sketch nodes deriving from the input or output of a procedure
+        """
+        in_set = set()
+        out_set = set()
+
+        dtv_node = self.lookup(dtv)
+
+        if not dtv_node:
+            return set(), set()
+
+        assert dtv_node in self.sketches.nodes
+
+        for succ in self.sketches.successors(dtv_node):
+            label = self.sketches.edges[dtv_node, succ]["label"]
+
+            if isinstance(label, InLabel):
+                in_set |= self.all_after(succ)
+            elif isinstance(label, OutLabel):
+                out_set |= self.all_after(succ)
+
+        return in_set, out_set
 
     def _add_node(self, node: SketchNode) -> None:
         """

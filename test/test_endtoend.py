@@ -31,7 +31,7 @@ from retypd.graph_solver import GraphSolverConfig
 from retypd.solver import SolverConfig
 
 
-VERBOSE_TESTS = False
+VERBOSE_TESTS = 2
 parse_var = SchemaParser.parse_variable
 parse_cs = SchemaParser.parse_constraint
 parse_cs_set = SchemaParser.parse_constraint_set
