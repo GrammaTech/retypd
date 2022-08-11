@@ -363,3 +363,32 @@ def test_top_down_merge_incompatible_sketches():
     assert sketches[F].lookup(
         parse_var("F.in_1.load.σ8@0")
     ).lower_bound == DerivedTypeVariable("┬")
+
+
+@pytest.mark.commit
+def test_overlapping_var_in_scc():
+    config = SolverConfig()
+    F, G = SchemaParser.parse_variables(["F", "G"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+    }
+
+    constraints[F].add(parse_cs("F.in_1 ⊑ A"))
+    constraints[F].add(parse_cs("A ⊑ int"))
+
+    constraints[G].add(parse_cs("G.in_1 ⊑ A"))
+    constraints[G].add(parse_cs("A ⊑ double"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, F: {G}}),
+        config=config,
+    )
+    _, sketches = solver()
+
+    assert sketches[F].lookup(
+        parse_var("F.in_1")
+    ).upper_bound == DerivedTypeVariable("int")
+    assert sketches[G].lookup(
+        parse_var("G.in_1")
+    ).upper_bound == DerivedTypeVariable("double")

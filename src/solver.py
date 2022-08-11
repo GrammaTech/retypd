@@ -45,6 +45,7 @@ from .schema import (
     Program,
     LoadLabel,
     StoreLabel,
+    SubtypeConstraint,
 )
 from .global_handler import (
     GlobalHandler,
@@ -178,6 +179,33 @@ class Solver(Loggable):
             self.graph_solver = NaiveGraphSolver(config.graph_solver_config)
         else:
             raise ValueError(f"Unknown graph solver {config.graph_solver}")
+
+    @staticmethod
+    def specialize_temporaries(
+        base: DerivedTypeVariable,
+        constraints: ConstraintSet,
+        interesting_vars: Set[DerivedTypeVariable],
+    ) -> ConstraintSet:
+        """
+        Specialize temporary variables to a specific function
+        """
+
+        def fix_dtv(dtv: DerivedTypeVariable) -> DerivedTypeVariable:
+            if DerivedTypeVariable(dtv.base) not in interesting_vars:
+                return DerivedTypeVariable(f"{base}${dtv.base}", dtv.path)
+            else:
+                return dtv
+
+        output_cs = ConstraintSet()
+
+        for constraint in constraints:
+            output_cs.add(
+                SubtypeConstraint(
+                    fix_dtv(constraint.left), fix_dtv(constraint.right)
+                )
+            )
+
+        return output_cs
 
     @staticmethod
     def instantiate_type_scheme(
@@ -797,6 +825,11 @@ class Solver(Loggable):
                 self.debug("# Initializing call-sites for %s", proc)
                 constraints = self.program.proc_constraints.get(
                     proc, ConstraintSet()
+                )
+                constraints = Solver.specialize_temporaries(
+                    proc,
+                    constraints,
+                    all_interesting | self.program.types.atomic_types,
                 )
                 constraints = Solver.instantiate_calls(
                     constraints, sketches_map, type_schemes
