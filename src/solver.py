@@ -817,17 +817,14 @@ class Solver(Loggable):
                 self.debug("# Inferring type scheme of proc: %s", proc)
                 sketches_map[proc] = scc_sketches
 
-                if proc not in universal_schemas:
-                    # Generate type scheme for all interesting nodes, since the sketches can have
-                    # other procedures' sketch nodes
-                    universal_type_scheme = self._generate_type_scheme(
-                        scc_initial_constraints,
-                        all_interesting,
-                        self.program.types.internal_types,
-                    )
-                    universal_schemas[proc] = universal_type_scheme
-                else:
-                    universal_type_scheme = universal_schemas[proc]
+                # Generate type scheme for all interesting nodes, since the sketches can have
+                # other procedures' sketch nodes
+                universal_type_scheme = self._generate_type_scheme(
+                    scc_initial_constraints,
+                    all_interesting,
+                    self.program.types.internal_types,
+                )
+                universal_schemas[proc] = universal_type_scheme
 
                 self.debug(
                     "# Inferring universal constraints for %s %s",
@@ -894,7 +891,7 @@ class Solver(Loggable):
             for proc in scc:
                 constraints = universal_schemas[proc]
 
-                self.debug("Starting proc %s with %s", proc, constraints)
+                self.debug("# Starting proc %s with %s", proc, constraints)
 
                 if proc in self.program.callgraph.nodes:
                     self._procedure_specialization(
