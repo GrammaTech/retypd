@@ -655,71 +655,6 @@ class Solver(Loggable):
 
         return constraints
 
-    def _solve_scc(
-        self,
-        callgraph: networkx.DiGraph,
-        scc: Set[DerivedTypeVariable],
-        scc_sketches: Sketches,
-        scc_initial_constraints: ConstraintSet,
-        sketches_map: Dict[DerivedTypeVariable, Sketches],
-        type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
-        universal_schemas: Dict[DerivedTypeVariable, ConstraintSet],
-    ):
-        """
-        For an SCC, populate sketches and simplify constraints, outputting to
-        the sketches_map and type_schemes
-        """
-        all_interesting = frozenset(callgraph.nodes | self.program.global_vars)
-
-        Solver.infer_shapes(
-            all_interesting,
-            scc_sketches,
-            scc_initial_constraints,
-            self.program.types.atomic_types,
-        )
-
-        for proc in scc:
-            self.debug("# Inferring type scheme of proc: %s", proc)
-            sketches_map[proc] = scc_sketches
-
-            if proc not in universal_schemas:
-                # Generate type scheme for all interesting nodes, since the sketches can have
-                # other procedures' sketch nodes
-                universal_type_scheme = self._generate_type_scheme(
-                    scc_initial_constraints,
-                    all_interesting,
-                    self.program.types.internal_types,
-                )
-                universal_schemas[proc] = universal_type_scheme
-            else:
-                universal_type_scheme = universal_schemas[proc]
-
-            self.debug(
-                "# Inferring universal constraints for %s %s",
-                proc,
-                universal_type_scheme,
-            )
-
-            # Specialize type-scheme further for just this procedure
-            type_schemes[proc] = self._generate_type_scheme(
-                universal_type_scheme,
-                frozenset({proc}),
-                self.program.types.internal_types,
-            )
-
-            self.debug("# Inferring primitive constraints of proc: %s", proc)
-
-            # Generate primitive between all procedures and variables using the type scheme
-            # defined for all procedures and variables.
-            primitive_constraints = self._generate_primitive_constraints(
-                type_schemes[proc],
-                all_interesting,
-                self.program.types.internal_types,
-            )
-
-            self.debug("# Created for %s %s", proc, primitive_constraints)
-            scc_sketches.add_constraints(primitive_constraints)
-
     def _actual_in_outs(
         self,
         proc: DerivedTypeVariable,
@@ -848,6 +783,7 @@ class Solver(Loggable):
                 return tqdm.tqdm(iterable)
             return iterable
 
+        all_interesting = frozenset(callgraph.nodes | self.program.global_vars)
         scc_dag_topo = list(networkx.topological_sort(scc_dag))
         universal_schemas = {}
 
@@ -870,15 +806,56 @@ class Solver(Loggable):
             self.debug("# Inferring shapes")
             scc_sketches = Sketches(self.program.types, self.verbose)
 
-            self._solve_scc(
-                callgraph,
-                scc,
+            Solver.infer_shapes(
+                all_interesting,
                 scc_sketches,
                 scc_initial_constraints,
-                sketches_map,
-                type_schemes,
-                universal_schemas,
+                self.program.types.atomic_types,
             )
+
+            for proc in scc:
+                self.debug("# Inferring type scheme of proc: %s", proc)
+                sketches_map[proc] = scc_sketches
+
+                if proc not in universal_schemas:
+                    # Generate type scheme for all interesting nodes, since the sketches can have
+                    # other procedures' sketch nodes
+                    universal_type_scheme = self._generate_type_scheme(
+                        scc_initial_constraints,
+                        all_interesting,
+                        self.program.types.internal_types,
+                    )
+                    universal_schemas[proc] = universal_type_scheme
+                else:
+                    universal_type_scheme = universal_schemas[proc]
+
+                self.debug(
+                    "# Inferring universal constraints for %s %s",
+                    proc,
+                    universal_type_scheme,
+                )
+
+                # Specialize type-scheme further for just this procedure
+                type_schemes[proc] = self._generate_type_scheme(
+                    universal_type_scheme,
+                    frozenset({proc}),
+                    self.program.types.internal_types,
+                )
+
+                self.debug(
+                    "# Inferring primitive constraints of proc: %s", proc
+                )
+
+                # Generate primitive between all procedures and variables using the type scheme
+                # defined for all procedures and variables.
+                primitive_constraints = self._generate_primitive_constraints(
+                    type_schemes[proc],
+                    all_interesting,
+                    self.program.types.internal_types,
+                )
+
+                self.debug("# Created for %s %s", proc, primitive_constraints)
+                scc_sketches.add_constraints(primitive_constraints)
 
             involved_globals = (
                 self.program.global_vars & scc_initial_constraints.all_tvs()
@@ -905,7 +882,6 @@ class Solver(Loggable):
             return
 
         self.debug("# Propgating top-down")
-        all_interesting = frozenset(callgraph.nodes | self.program.global_vars)
         prim_constraints = defaultdict(lambda: ConstraintSet())
 
         for scc_node in show_progress(scc_dag_topo):
