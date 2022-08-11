@@ -298,3 +298,68 @@ def test_top_down_multiple_type_variables():
     assert sketches[F].lookup(
         parse_var("F.in_2.load.σ8@8")
     ).lower_bound == DerivedTypeVariable("double")
+
+
+@pytest.mark.commit
+def test_top_down_merge_sketches():
+    """
+    Test that when lattice types are met at an input, they are merged over the lattice correctly
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+        H: ConstraintSet(),
+    }
+
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+
+    constraints[G].add(parse_cs("A ⊑ F.in_1"))
+    constraints[G].add(parse_cs("int ⊑ A.load.σ8@0"))
+
+    constraints[H].add(parse_cs("A ⊑ F.in_1"))
+    constraints[H].add(parse_cs("char ⊑ A.load.σ8@0"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {F}}),
+        config=config,
+    )
+    _, sketches = solver()
+
+    assert sketches[F].lookup(
+        parse_var("F.in_1.load.σ8@0")
+    ).lower_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_top_down_merge_incompatible_sketches():
+    """
+    Test that when conflicting lattice types are met at an input, they are merged over the lattice
+    to top types (i.e. this function can accept the join of the two)
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+        H: ConstraintSet(),
+    }
+
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+
+    constraints[G].add(parse_cs("A ⊑ F.in_1"))
+    constraints[G].add(parse_cs("int ⊑ A.load.σ8@0"))
+
+    constraints[H].add(parse_cs("A ⊑ F.in_1"))
+    constraints[H].add(parse_cs("double ⊑ A.load.σ8@0"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {F}}),
+        config=config,
+    )
+    _, sketches = solver()
+
+    assert sketches[F].lookup(
+        parse_var("F.in_1.load.σ8@0")
+    ).lower_bound == DerivedTypeVariable("┬")
