@@ -887,6 +887,37 @@ def test_tight_bounds_out():
 
 
 @pytest.mark.commit
+def test_unbound_and_discrete():
+    """
+    Validate that unbound dereferences colocated with discrete dereferences is typed correctly
+    """
+    constraints = ConstraintSet()
+    constraints.add(parse_cs("F.in_0.load.σ1@0*[nobound] ⊑ int"))
+    constraints.add(parse_cs("F.in_0.load.σ1@0 ⊑ char"))
+    constraints.add(parse_cs("F.in_0.load.σ1@1 ⊑ char"))
+
+    F = parse_var("F")
+    program = Program(DummyLattice(), set(), {F: constraints}, {F: {}})
+    solver = Solver(program)
+    (gen_const, sketches) = solver()
+
+    gen = CTypeGenerator(
+        sketches,
+        CLattice(),
+        CLatticeCTypes(),
+        4,
+        4,
+    )
+    output = gen()
+    f_ft = output[F]
+
+    assert isinstance(f_ft, FunctionType)
+    assert isinstance(f_ft.params[0], PointerType)
+    assert isinstance(f_ft.params[0].target_type, IntType)
+    assert f_ft.params[0].target_type.size == 1
+
+
+@pytest.mark.commit
 def test_regression2():
     """
     Extracted from:

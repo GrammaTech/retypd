@@ -184,7 +184,7 @@ class CTypeGenerator(Loggable):
         if not count_set:
             return 1
         elif len(count_set) == 1:
-            return list(count_set)[0]
+            return count_set.pop()
         elif DerefLabel.COUNT_NULLTERM in count_set:
             return DerefLabel.COUNT_NULLTERM
         return DerefLabel.COUNT_NOBOUND
@@ -297,11 +297,11 @@ class CTypeGenerator(Loggable):
             s = StructType()
             self.struct_types[s.name] = s
             count = self.merge_counts(
-                [
+                {
                     n.dtv.tail.count
                     for n in ns
                     if isinstance(n.dtv.tail, DerefLabel)
-                ]
+                }
             )
             if count > 1:
                 rv = ArrayType(s, count)
@@ -311,13 +311,41 @@ class CTypeGenerator(Loggable):
                 self.dtv2type[base_dtv][n.dtv] = rv
 
             self.debug("%s has %d children", ns, len(children))
+            children_bases = {
+                (
+                    access_path[-1].offset,
+                    access_path[-1].offset
+                    + access_path[-1].count * access_path[-1].size,
+                ): child
+                for access_path, child in children
+                if isinstance(access_path[-1], DerefLabel)
+                and access_path[-1].count != 1
+            }
+
+            children_to_base = {}
+
+            for access_path, child in children:
+                if not isinstance(access_path[-1], DerefLabel):
+                    continue
+
+                for ((start, end), base) in children_bases.items():
+                    if access_path[-1].offset > start:
+                        if end < start:
+                            children_to_base[child] = start
+                        elif child.offset < end:
+                            children_to_base[child] = start
+
             children_by_offset = defaultdict(set)
+
             for access_path, c in children:
                 tail = access_path[-1]
                 if not isinstance(tail, DerefLabel):
                     self.info(f"WARNING: {c.dtv} does not end in DerefLabel")
                     continue
-                children_by_offset[tail.offset].add(c)
+                if c in children_to_base:
+                    children_by_offset[children_to_base[c]].add(c)
+                else:
+                    children_by_offset[tail.offset].add(c)
 
             fields = []
             for offset, siblings in children_by_offset.items():
