@@ -784,6 +784,22 @@ class Solver(Loggable):
                 ref_node.lower_bound = node.lower_bound
                 ref_node.upper_bound = node.upper_bound
 
+            # Add edges to parent so reachable in sketch
+            prefix = node.dtv.largest_prefix
+
+            if prefix:
+                parent = sketch_map[proc].lookup(prefix)
+
+                if not parent:
+                    parent = SketchNode(
+                        prefix,
+                        self.program.types.bottom,
+                        self.program.types.top,
+                    )
+                    sketch_map[proc].ref_node(parent)
+
+                sketch_map[proc].add_edge(parent, node, node.dtv.tail)
+
             self.debug("Updated to %s", ref_node)
 
     def _solve_topo_graph(
