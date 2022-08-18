@@ -369,9 +369,9 @@ class ConstraintGraph:
             for x in contravariant_vars:
                 for (capability_l, origin_z) in reaching_R[x]:
                     label = None
-                    if capability_l == StoreLabel.instance():
+                    if isinstance(capability_l, StoreLabel):
                         label = LoadLabel.instance()
-                    if capability_l == LoadLabel.instance():
+                    if isinstance(capability_l, LoadLabel):
                         label = StoreLabel.instance()
                     if label:
                         add_forgets(
