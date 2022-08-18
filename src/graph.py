@@ -21,6 +21,7 @@
 # endorsement should be inferred.
 
 from __future__ import annotations
+from collections import defaultdict
 from enum import Enum, unique
 from typing import AbstractSet, Any, Dict, Optional, Set, Tuple
 from .schema import (
@@ -327,7 +328,9 @@ class ConstraintGraph:
     def saturate(self) -> None:
         """Add "shortcut" edges, per algorithm D.2 in the paper."""
         changed = False
-        reaching_R: Dict[Node, Set[Tuple[AccessPathLabel, Node]]] = {}
+        reaching_R: Dict[
+            Node, Set[Tuple[AccessPathLabel, Node]]
+        ] = defaultdict(set)
 
         def add_forgets(
             dest: Node, forgets: Set[Tuple[AccessPathLabel, Node]]
@@ -335,7 +338,7 @@ class ConstraintGraph:
             nonlocal changed
             if dest not in reaching_R or not (forgets <= reaching_R[dest]):
                 changed = True
-                reaching_R.setdefault(dest, set()).update(forgets)
+                reaching_R[dest].update(forgets)
 
         def add_edge(origin: Node, dest: Node):
             nonlocal changed
@@ -352,19 +355,19 @@ class ConstraintGraph:
             changed = False
             for head_x, tail_y in self.graph.edges:
                 if not self.graph[head_x][tail_y].get("label"):
-                    add_forgets(tail_y, reaching_R.get(head_x, set()))
+                    add_forgets(tail_y, reaching_R[head_x])
             existing_edges = list(self.graph.edges)
             for head_x, tail_y in existing_edges:
                 label = self.graph[head_x][tail_y].get("label")
                 if label and label.kind == EdgeLabel.Kind.RECALL:
                     capability_l = label.capability
-                    for (label, origin_z) in reaching_R.get(head_x, set()):
+                    for (label, origin_z) in reaching_R[head_x]:
                         if label == capability_l:
                             add_edge(origin_z, tail_y)
 
             contravariant_vars = filter(is_contravariant, self.graph.nodes)
             for x in contravariant_vars:
-                for (capability_l, origin_z) in reaching_R.get(x, set()):
+                for (capability_l, origin_z) in reaching_R[x]:
                     label = None
                     if capability_l == StoreLabel.instance():
                         label = LoadLabel.instance()
