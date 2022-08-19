@@ -701,68 +701,48 @@ class Solver(Loggable):
         """
         dtv2node: Dict[DerivedTypeVariable, SketchNode] = {}
 
+        formal_ins, formal_outs = sketch_map[proc].in_out_sketches(proc)
         actual_ins, actual_outs = self._actual_in_outs(
             proc, callgraph, sketch_map
         )
 
-        # Join all actual ins
-        for actual_in in actual_ins:
-            if not isinstance(actual_in, SketchNode):
-                continue
+        def accumulate(nodes: Set[SkNode], accumulator):
+            for node in nodes:
+                if not isinstance(node, SketchNode):
+                    continue
 
-            if actual_in.dtv not in dtv2node:
-                dtv2node[actual_in.dtv] = actual_in
-            else:
-                dtv2node[actual_in.dtv] = dtv2node[actual_in.dtv].join(
-                    actual_in, self.program.types
-                )
+                if node.dtv not in dtv2node:
+                    dtv2node[node.dtv] = node
+                else:
+                    dtv2node[node.dtv] = accumulator(dtv2node[node.dtv], node)
+
+        # Join all actual ins
+        accumulate(actual_ins, lambda x, y: x.join(y, self.program.types))
 
         # Meet all actual outs
-        for actual_out in actual_outs:
-            if not isinstance(actual_out, SketchNode):
-                continue
-
-            if actual_out.dtv not in dtv2node:
-                dtv2node[actual_out.dtv] = actual_out
-            else:
-                dtv2node[actual_out.dtv] = dtv2node[actual_out.dtv].meet(
-                    actual_out, self.program.types
-                )
-
-        formal_ins, formal_outs = sketch_map[proc].in_out_sketches(proc)
+        accumulate(actual_outs, lambda x, y: x.meet(y, self.program.types))
 
         # Merge into the formal ins
-        for formal_in in formal_ins:
-            if isinstance(formal_in, SketchNode):
-                if formal_in.dtv in dtv2node:
-                    dtv2node[formal_in.dtv] = formal_in.meet(
-                        dtv2node[formal_in.dtv], self.program.types
-                    )
-                else:
-                    dtv2node[formal_in.dtv] = formal_in
+        accumulate(formal_ins, lambda x, y: y.meet(x, self.program.types))
 
         # Join into the formal outs
-        for formal_out in formal_outs:
-            if isinstance(formal_out, SketchNode):
-                if formal_out.dtv in dtv2node:
-                    dtv2node[formal_out.dtv] = formal_out.join(
-                        dtv2node[formal_out.dtv], self.program.types
-                    )
-                else:
-                    dtv2node[formal_out.dtv] = formal_out
+        accumulate(formal_outs, lambda x, y: y.join(x, self.program.types))
 
         # Update our sketch with the new information
         for dtv, node in dtv2node.items():
             ref_node = sketch_map[proc].lookup(dtv)
 
             if ref_node:
+                # Update an existing sketch node to new bounds
                 assert isinstance(ref_node, SketchNode)
                 ref_node.lower_bound = node.lower_bound
                 ref_node.upper_bound = node.upper_bound
             else:
+                # Insert a new sketch node and its dependent nodes
                 largest = dtv
                 tails: List[AccessPathLabel] = []
 
+                # Calculate the largest dtv that is in the sketch
                 while largest and sketch_map[proc].lookup(largest) is None:
                     tails.append(largest.tail)
                     largest = largest.largest_prefix
@@ -775,6 +755,7 @@ class Solver(Loggable):
 
                 tails = tails[::-1]
 
+                # Insert sketches from the existing largest to the new node
                 for tail in tails:
                     next = current.add_suffix(tail)
                     current_node = sketch_map[proc].lookup(current)
@@ -785,6 +766,12 @@ class Solver(Loggable):
                     next_node = sketch_map[proc].make_node(next)
                     sketch_map[proc].add_edge(current_node, next_node, tail)
                     current = next
+
+                ref_node = sketch_map[proc].lookup(dtv)
+                assert ref_node
+
+            ref_node.lower_bound = node.lower_bound
+            ref_node.upper_bound = node.upper_bound
 
         self.debug(
             "Finished refine parameters for %s with %s", proc, sketch_map[proc]
