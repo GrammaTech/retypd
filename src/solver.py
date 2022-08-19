@@ -248,7 +248,7 @@ class Solver(Loggable):
         # differently than function formals
         callees = {tv for tv in cs.all_tvs() if tv in sketch_map}
 
-        new_constraints = Solver.instantiate_type_scheme(fresh_var_factory, cs)
+        new_constraints = ConstraintSet()
         # sort to avoid non-determinism
         for callee in sorted(callees):
             new_constraints |= sketch_map[
@@ -847,7 +847,7 @@ class Solver(Loggable):
                     constraints,
                     all_interesting | self.program.types.atomic_types,
                 )
-                constraints = Solver.instantiate_calls(
+                constraints |= Solver.instantiate_calls(
                     constraints, sketches_map, type_schemes
                 )
                 scc_initial_constraints |= constraints
