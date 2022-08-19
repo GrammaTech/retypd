@@ -367,6 +367,7 @@ def test_top_down_merge_incompatible_sketches():
 
 @pytest.mark.commit
 def test_overlapping_var_in_scc():
+    """Validate that variables overlapping in SCCs aren't aliased"""
     config = SolverConfig()
     F, G = SchemaParser.parse_variables(["F", "G"])
     constraints = {
@@ -392,3 +393,74 @@ def test_overlapping_var_in_scc():
     assert sketches[G].lookup(
         parse_var("G.in_1")
     ).upper_bound == DerivedTypeVariable("double")
+
+
+@pytest.mark.commit
+def test_sketches_not_overlapping():
+    """
+    Validate that during top-down propagation, sketches are re-inferred from scratch and that when
+    primitive constraints populate those sketches, all sketch nodes are present. This was derived
+    from libpng originally. Crashes were non-deterministic.
+    """
+    (
+        EmptyFunc,
+        RootFunc,
+        CrashFunc,
+        MiddleFunc,
+        SCCFunc1,
+        SCCFunc2,
+        MiddleFunc2,
+    ) = SchemaParser.parse_variables(
+        [
+            "EmptyFunc",
+            "RootFunc",
+            "CrashFunc",
+            "MiddleFunc",
+            "SCCFunc1",
+            "SCCFunc2",
+            "MiddleFunc2",
+        ]
+    )
+    constraints = {
+        EmptyFunc: ConstraintSet(),
+        RootFunc: ConstraintSet(),
+        CrashFunc: ConstraintSet(),
+        MiddleFunc: ConstraintSet(),
+        SCCFunc1: ConstraintSet(),
+        SCCFunc2: ConstraintSet(),
+        MiddleFunc2: ConstraintSet(),
+    }
+    constraints[RootFunc].add(parse_cs("CrashFunc.out ⊑ MiddleFunc.in_2"))
+    constraints[RootFunc].add(
+        parse_cs("CrashFunc.out ⊑ MiddleFunc.in_2.store.σ8@32")
+    )
+    constraints[SCCFunc1].add(parse_cs("A ⊑ MiddleFunc.in_0"))
+    constraints[SCCFunc2].add(parse_cs("A ⊑ MiddleFunc2.in_1"))
+    constraints[MiddleFunc2].add(parse_cs("A ⊑ MiddleFunc2.in_3.store.σ4@80"))
+    constraints[MiddleFunc2].add(
+        parse_cs("MiddleFunc2.in_3 ⊑ MiddleFunc.in_2")
+    )
+    constraints[MiddleFunc].add(parse_cs("MiddleFunc.in_0 ⊑ int"))
+    constraints[MiddleFunc].add(parse_cs("int ⊑ MiddleFunc.in_0"))
+    constraints[MiddleFunc].add(parse_cs("MiddleFunc.in_2.load.σ8@32 ⊑ A"))
+    constraints[MiddleFunc].add(
+        parse_cs("CrashFunc.out ⊑ MiddleFunc.in_2.store")
+    )
+
+    callgraph = {
+        EmptyFunc: [],
+        RootFunc: [CrashFunc, MiddleFunc],
+        CrashFunc: [],
+        MiddleFunc: [CrashFunc],
+        SCCFunc1: [CrashFunc, SCCFunc2, MiddleFunc, EmptyFunc],
+        SCCFunc2: [SCCFunc1, MiddleFunc2],
+        MiddleFunc2: [MiddleFunc],
+    }
+
+    program = Program(CLattice(), {}, constraints, callgraph)
+    config = SolverConfig(
+        use_dfa_simplification=True, top_down_propagation=True
+    )
+    solver = Solver(program, config)
+
+    gen_cs, sketches = solver()

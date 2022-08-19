@@ -39,6 +39,7 @@ from .graph_solver import (
     NaiveGraphSolver,
 )
 from .schema import (
+    AccessPathLabel,
     ConstraintSet,
     DerivedTypeVariable,
     FreshVarFactory,
@@ -430,25 +431,6 @@ class Solver(Loggable):
                     all_paths(dest, visited_nodes)
                     del visited_nodes[dest]
                 else:
-                    # Determine if we have already have an edge from current_node to a label node
-                    # on an edge labeled with label. This is relevant in cases where we are using
-                    # an existing Sketches and adding more information to it during top-down.
-                    if curr_node in sketches.sketches:
-                        out_edges = {
-                            out_edge
-                            for out_edge, data in sketches.sketches[
-                                curr_node
-                            ].items()
-                            if data["label"] == label
-                        }
-
-                        if len(out_edges) == 1:
-                            return
-                        elif len(out_edges) > 1:
-                            raise ValueError(
-                                f"{curr_node} has multiple out-edges on {label} in sketch: {out_edges}"
-                            )
-
                     label_node = LabelNode(visited_nodes[dest].dtv)
                     sketches.add_edge(curr_node, label_node, label)
 
@@ -747,9 +729,6 @@ class Solver(Loggable):
                     actual_out, self.program.types
                 )
 
-        for dtv, node in dtv2node.items():
-            self.debug("Actual In for %s is %s", dtv, node)
-
         formal_ins, formal_outs = sketch_map[proc].in_out_sketches(proc)
 
         # Merge into the formal ins
@@ -772,35 +751,44 @@ class Solver(Loggable):
                 else:
                     dtv2node[formal_out.dtv] = formal_out
 
-        for dtv, node in dtv2node.items():
-            self.debug("Final In for %s is %s", dtv, node)
-
         # Update our sketch with the new information
-        for node in dtv2node.values():
-            ref_node = sketch_map[proc].ref_node(node)
+        for dtv, node in dtv2node.items():
+            ref_node = sketch_map[proc].lookup(dtv)
 
-            if ref_node is not node:
+            if ref_node:
                 assert isinstance(ref_node, SketchNode)
                 ref_node.lower_bound = node.lower_bound
                 ref_node.upper_bound = node.upper_bound
+            else:
+                largest = dtv
+                tails: List[AccessPathLabel] = []
 
-            # Add edges to parent so reachable in sketch
-            prefix = node.dtv.largest_prefix
+                while largest and sketch_map[proc].lookup(largest) is None:
+                    tails.append(largest.tail)
+                    largest = largest.largest_prefix
 
-            if prefix:
-                parent = sketch_map[proc].lookup(prefix)
+                current = largest
 
-                if not parent:
-                    parent = SketchNode(
-                        prefix,
-                        self.program.types.bottom,
-                        self.program.types.top,
-                    )
-                    sketch_map[proc].ref_node(parent)
+                if not current:
+                    current = DerivedTypeVariable(dtv.base)
+                    tails = tails[:-1]
 
-                sketch_map[proc].add_edge(parent, node, node.dtv.tail)
+                tails = tails[::-1]
 
-            self.debug("Updated to %s", ref_node)
+                for tail in tails:
+                    next = current.add_suffix(tail)
+                    current_node = sketch_map[proc].lookup(current)
+
+                    if not current_node:
+                        current_node = sketch_map[proc].make_node(current)
+
+                    next_node = sketch_map[proc].make_node(next)
+                    sketch_map[proc].add_edge(current_node, next_node, tail)
+                    current = next
+
+        self.debug(
+            "Finished refine parameters for %s with %s", proc, sketch_map[proc]
+        )
 
     def _solve_topo_graph(
         self,
@@ -970,25 +958,18 @@ class Solver(Loggable):
                     constraints |= caller_type_scheme
                     constraints |= caller_prims
 
-                sketch = sketches_map[proc]
-                self.debug("Refined parameter constraints: %s", sketch)
-
-                Solver.infer_shapes(
-                    all_interesting,
-                    sketch,
-                    constraints,
-                    self.program.types.atomic_types,
-                )
-
                 self.debug(
                     "Final top-down constraints for %s is %s",
                     proc,
                     constraints,
                 )
-                self.debug(
-                    "Solving between %s and %s",
+
+                sketch = Sketches(self.program.types, self.verbose)
+                Solver.infer_shapes(
                     all_interesting,
-                    self.program.types.internal_types,
+                    sketch,
+                    constraints,
+                    self.program.types.atomic_types,
                 )
 
                 # Generate primitive between all procedures and variables using the type scheme
@@ -1002,18 +983,20 @@ class Solver(Loggable):
                 # Generate primitive between all procedures and variables using the type scheme
                 # defined for all procedures and variables.
                 primitive_constraints = self._generate_primitive_constraints(
-                    type_scheme,
+                    constraints,
                     {proc},
                     self.program.types.internal_types,
                 )
-                self.debug("# Created for %s %s", proc, primitive_constraints)
+                self.debug(
+                    "# Created primitive constraints for %s %s",
+                    proc,
+                    primitive_constraints,
+                )
 
                 prim_constraints[proc] = primitive_constraints
                 type_schemes[proc] = type_scheme
-
-                self.debug("SKETCH WAS %s", sketch)
+                sketches_map[proc] = sketch
                 sketch.add_constraints(primitive_constraints)
-                self.debug("NOW IS %s", sketch)
 
     def __call__(
         self,
