@@ -616,7 +616,8 @@ class FreshVarFactory:
         self.fresh_var_counter += 1
         return fresh_var
 
-    def is_anonymous_variable(self, dtv: DerivedTypeVariable):
+    @staticmethod
+    def is_anonymous_variable(dtv: DerivedTypeVariable) -> bool:
         return dtv.base.startswith(FreshVarFactory.FRESH_VAR_PREFIX)
 
 

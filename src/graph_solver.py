@@ -9,6 +9,7 @@ from .graph import (
 )
 from .schema import (
     ConstraintSet,
+    FreshVarFactory,
     Program,
     SubtypeConstraint,
     Variance,
@@ -136,7 +137,7 @@ class DFAGraphSolver(GraphSolver):
         # In order to keep recursive constraints, we mark generated
         # type-variables as also final states
         for node in graph.nodes():
-            if node.base.base.startswith("τ"):
+            if FreshVarFactory.is_anonymous_variable(node.base):
                 enfa.add_transition(State(node), Epsilon(), self.FINAL)
 
         enfa.add_start_state(self.START)
