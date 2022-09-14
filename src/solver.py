@@ -85,10 +85,8 @@ class SolverConfig:
     Parameters that change how the type solver behaves.
     """
 
-    # Use path expressions or naive exploration of the graph.
-    use_path_expressions: bool = True
-    # Use DFA simplification
-    use_dfa_simplification: bool = False
+    # Use `naive`, `pathexpr`, or `dfa` f
+    graph_solver: str = "dfa"
     # Graph solver configuration
     graph_solver_config: GraphSolverConfig = GraphSolverConfig()
     # More precise global handling
@@ -168,18 +166,20 @@ class Solver(Loggable):
         self.program = program
         # TODO possibly make these values shared across a function
         self.config = config
-        if config.use_dfa_simplification:
+        if config.graph_solver == "dfa":
             self.graph_solver = DFAGraphSolver(
                 config.graph_solver_config, program
             )
-        elif config.use_path_expressions:
+        elif config.graph_solver == "pathexpr":
             self.graph_solver = PathExprGraphSolver(
                 config.graph_solver_config, program
             )
-        else:
+        elif config.graph_solver == "naive":
             self.graph_solver = NaiveGraphSolver(
                 config.graph_solver_config, program
             )
+        else:
+            raise ValueError(f"Unknown graph solver {config.graph_solver}")
 
     @staticmethod
     def instantiate_type_scheme(

@@ -66,33 +66,30 @@ all_solver_configs = pytest.mark.parametrize(
     "config",
     [
         SolverConfig(
-            use_path_expressions=False,
+            graph_solver="naive",
             graph_solver_config=GraphSolverConfig(
                 restrict_graph_to_reachable=True
             ),
         ),
         SolverConfig(
-            use_path_expressions=True,
+            graph_solver="pathexpr",
             graph_solver_config=GraphSolverConfig(
                 restrict_graph_to_reachable=True
             ),
         ),
         SolverConfig(
-            use_path_expressions=False,
+            graph_solver="naive",
             graph_solver_config=GraphSolverConfig(
                 restrict_graph_to_reachable=False
             ),
         ),
         SolverConfig(
-            use_path_expressions=True,
+            graph_solver="pathexpr",
             graph_solver_config=GraphSolverConfig(
                 restrict_graph_to_reachable=False
             ),
         ),
-        SolverConfig(
-            use_path_expressions=False,
-            use_dfa_simplification=True,
-        ),
+        SolverConfig(graph_solver="dfa"),
     ],
     ids=[
         "naive-reachable",

@@ -161,8 +161,7 @@ class DFAGraphSolver(GraphSolver):
         DFA. Compute path labels between start/ends over minimized DFA.
         """
         enfa = self._graph_to_dfa(graph, start_nodes, end_nodes)
-        dfa = enfa.to_deterministic()
-        mdfa = dfa.minimize()
+        mdfa = enfa.minimize()
         dfa_g = mdfa.to_networkx()
 
         constraints = ConstraintSet()
