@@ -11,7 +11,7 @@ HC_M = (2**64) - 1
 
 
 def hash_combine(lhs: int, rhs: int) -> int:
-    """Combine two hashes"""
+    """Combine two hashes using a simple algorithm from the original Retypd implementation"""
     a = rhs
 
     a = ((a ^ lhs) * HC_K) & HC_M
