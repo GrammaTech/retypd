@@ -1,10 +1,12 @@
 from __future__ import annotations
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Tuple
 import networkx
 
 
+# Randomly generated hash constant for hash combination
 HC_K = 0x9DDFEA08EB382D69
+# 64-bit integer wrap around
 HC_M = (2**64) - 1
 
 
@@ -25,6 +27,10 @@ class RExp:
     """Regular expression class with some helper methods and simplification"""
 
     class Label:
+        """Hard-coded label numbers, which each were randomly generated so as
+        to not need to be hashed, instead their value operates as their hash
+        """
+
         NULL = 0xFA1118ECFC2E5C78
         EMPTY = 0xEA759E93D6E9FF37
         NODE = 0x091F738A11133080
@@ -122,77 +128,6 @@ class RExp:
             return cls.empty()
         else:
             return cls.node(attrs[data])
-
-    def _simplify_factor_dots(self, new_children: Set[RExp]) -> Optional[RExp]:
-        """Compute the factoring out of two sets of labels
-        (a . b . d) u (a . c) ==> a . ((b . d) u c)
-
-        :param new_children: Set of new children to add
-        """
-
-        if all(child.label == RExp.Label.DOT for child in new_children):
-            common_prefix = []
-            common_suffix = []
-            least_length = min(len(child.children) for child in new_children)
-
-            # Collect the prefix of conjuncts which our disjuncts have in common
-            for i in range(least_length):
-                ith_disjoint = {child.children[i] for child in new_children}
-
-                if len(ith_disjoint) == 1:
-                    common_prefix.append(ith_disjoint.pop())
-                else:
-                    break
-
-            # Collect the suffix of conjuncts which our disjuncts have in common
-            for i in range(least_length - 1, -1, -1):
-                ith_disjoint = {child.children[i] for child in new_children}
-
-                if len(ith_disjoint) == 1:
-                    common_suffix.append(ith_disjoint.pop())
-                else:
-                    break
-
-            common_suffix = common_suffix[::-1]
-
-            if len(common_prefix) > 0:
-                inner_or_children = set()
-
-                # Construct the disjunct thats the suffix of the rest
-                for child in new_children:
-                    dot_children = child.children[len(common_prefix) :]
-
-                    if len(dot_children) > 1:
-                        child_after_prefix = RExp(
-                            RExp.Label.DOT, children=dot_children
-                        )
-                    elif len(dot_children) == 1:
-                        child_after_prefix = dot_children[0]
-                    else:
-                        child_after_prefix = self.empty()
-
-                    if child_after_prefix.label == RExp.Label.OR:
-                        for child in child_after_prefix.children:
-                            inner_or_children.add(child)
-                    else:
-                        inner_or_children.add(child_after_prefix)
-
-                if len(inner_or_children) > 1:
-                    inner_or = RExp(
-                        RExp.Label.OR, children=sorted(inner_or_children)
-                    )
-                    assert not any(
-                        child.label == RExp.Label.OR
-                        for child in inner_or_children
-                    ), f"Created inner or: {inner_or}"
-                else:
-                    inner_or = inner_or_children.pop()
-
-                return RExp(
-                    RExp.Label.DOT, children=common_prefix + [inner_or]
-                )
-
-        return None
 
     def simplify(self) -> RExp:
         """Regular expression simplification procedure, page 9
