@@ -7,6 +7,7 @@ import pytest
 from retypd import (
     CLattice,
     ConstraintSet,
+    CTypeGenerator,
     DerivedTypeVariable,
     DummyLattice,
     SchemaParser,
@@ -17,11 +18,13 @@ from retypd import (
     CLatticeCTypes,
     BoolType,
     CharType,
+    FunctionType,
     FloatType,
     IntType,
+    PointerType,
     VoidType,
 )
-from test_endtoend import parse_cs_set, parse_cs
+from test_endtoend import parse_cs_set, parse_cs, parse_var
 
 
 @pytest.mark.commit
@@ -141,3 +144,25 @@ def test_atom_to_ctype(name: str, ctype: CType, size: int):
     ctype_rhs = lattice.atom_to_ctype(CLattice._bottom, atom, size)
     assert str(ctype) == str(ctype_lhs)
     assert str(ctype) == str(ctype_rhs)
+
+
+@pytest.mark.commit
+def test_infers_all_inputs():
+    """Test that we infer all the inputs for a function"""
+    F = parse_var("F")
+    constraints = ConstraintSet()
+    constraints.add(parse_cs("F.in_2.in_1 ⊑ int"))
+    lattice = DummyLattice()
+    solver = Solver(Program(CLattice(), {F}, {F: constraints}, {F: {}}))
+    _, sketches = solver()
+
+    gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4, verbose=2)
+    dtv2type = gen()
+    assert isinstance(dtv2type[F], FunctionType)
+    assert dtv2type[F].params[0] is not None
+    assert dtv2type[F].params[1] is not None
+    assert isinstance(dtv2type[F].params[2], PointerType)
+    assert isinstance(dtv2type[F].params[2].target_type, FunctionType)
+    assert dtv2type[F].params[2].target_type.params[0] is not None
+    assert isinstance(dtv2type[F].params[2].target_type.params[1], IntType)
+    assert dtv2type[F].params[2].target_type.params[1] is not None
