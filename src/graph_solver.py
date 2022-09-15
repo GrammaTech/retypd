@@ -10,7 +10,6 @@ from .graph import (
 from .schema import (
     ConstraintSet,
     FreshVarFactory,
-    Program,
     SubtypeConstraint,
     Variance,
 )
@@ -77,9 +76,8 @@ class GraphSolver(abc.ABC):
     should be smaller than the original set of constraints
     """
 
-    def __init__(self, config: GraphSolverConfig, program: Program):
+    def __init__(self, config: GraphSolverConfig):
         self.config = config
-        self.program = program
 
     def _generate_constraints_from_to_internal(
         self,
@@ -253,17 +251,11 @@ class PathExprGraphSolver(GraphSolver):
         Compute path expressions for each pair of start and end nodes.
         For each path expression, enumerate non-looping paths.
         """
-        lattice_types = self.program.types.atomic_types
         numbering, path_seq = scc_decompose_path_seq(graph, "label")
         constraints = ConstraintSet()
         for start_node in start_nodes:
             path_exprs = solve_paths_from(path_seq, numbering[start_node])
             for end_node in end_nodes:
-                if (
-                    start_node.base in lattice_types
-                    and end_node.base in lattice_types
-                ):
-                    continue
                 indices = (numbering[start_node], numbering[end_node])
                 path_expr = path_exprs[indices]
                 for path in self.enumerate_non_looping_paths(path_expr):
@@ -283,7 +275,6 @@ class NaiveGraphSolver(GraphSolver):
         """
         Generate constraints based on the naive exploration of the graph.
         """
-        lattice_types = self.program.types.atomic_types
         constraints = ConstraintSet()
         npaths = 0
         # On large procedures, the graph this is exploring can be quite large (hundreds of nodes,
@@ -304,11 +295,6 @@ class NaiveGraphSolver(GraphSolver):
             if npaths > max_paths_per_root:
                 return
             if path and current_node in end_nodes:
-                if (
-                    current_node.base in lattice_types
-                    and path[0] in lattice_types
-                ):
-                    return
                 constraint = _maybe_constraint(path[0], current_node, string)
 
                 if constraint:

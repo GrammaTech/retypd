@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 from enum import Enum, unique
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, Optional, Set, Tuple
 from .schema import (
     AccessPathLabel,
     ConstraintSet,
@@ -219,12 +219,13 @@ class ConstraintGraph:
         self,
         constraints: ConstraintSet,
         interesting_vars: Set[DerivedTypeVariable],
+        lattice_types: FrozenSet[DerivedTypeVariable],
         keep_graph_before_split: bool = False,
     ) -> None:
         self.graph = networkx.DiGraph()
         for constraint in constraints.subtype:
             self.add_edges(constraint.left, constraint.right, interesting_vars)
-        self.saturate()
+        self.saturate(lattice_types)
         self._remove_self_loops()
         if keep_graph_before_split:
             self.graph_before_split = self.graph.copy()
@@ -318,14 +319,21 @@ class ConstraintGraph:
             node = prefix
             (capability, prefix) = node.forget_once()
 
-    def saturate(self) -> None:
+    def saturate(self, lattice_types: FrozenSet[DerivedTypeVariable]) -> None:
         """Add "shortcut" edges, per algorithm D.2 in the paper."""
         changed = False
         reaching_R: Dict[Node, Set[Tuple[AccessPathLabel, Node]]] = {}
 
+        def is_lattice(arg: Node) -> bool:
+            return arg.base in lattice_types
+
         def add_forgets(
             dest: Node, forgets: Set[Tuple[AccessPathLabel, Node]]
         ):
+            if is_lattice(dest) or any(
+                is_lattice(forgor) for _, forgor in forgets
+            ):
+                return
             nonlocal changed
             if dest not in reaching_R or not (forgets <= reaching_R[dest]):
                 changed = True
@@ -378,8 +386,9 @@ class ConstraintGraph:
         cls,
         constraints: ConstraintSet,
         interesting_vars: Set[DerivedTypeVariable],
+        lattice_types: FrozenSet[DerivedTypeVariable],
     ) -> networkx.DiGraph:
-        return cls(constraints, interesting_vars).graph
+        return cls(constraints, interesting_vars, lattice_types).graph
 
     @staticmethod
     def edge_to_str(graph, edge: Tuple[Node, Node]) -> str:

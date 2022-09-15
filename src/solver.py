@@ -167,17 +167,11 @@ class Solver(Loggable):
         # TODO possibly make these values shared across a function
         self.config = config
         if config.graph_solver == "dfa":
-            self.graph_solver = DFAGraphSolver(
-                config.graph_solver_config, program
-            )
+            self.graph_solver = DFAGraphSolver(config.graph_solver_config)
         elif config.graph_solver == "pathexpr":
-            self.graph_solver = PathExprGraphSolver(
-                config.graph_solver_config, program
-            )
+            self.graph_solver = PathExprGraphSolver(config.graph_solver_config)
         elif config.graph_solver == "naive":
-            self.graph_solver = NaiveGraphSolver(
-                config.graph_solver_config, program
-            )
+            self.graph_solver = NaiveGraphSolver(config.graph_solver_config)
         else:
             raise ValueError(f"Unknown graph solver {config.graph_solver}")
 
@@ -523,6 +517,29 @@ class Solver(Loggable):
         }
         return constraints.apply_mapping(type_var_map)
 
+    def _filter_derived_lattices(self, cs: ConstraintSet) -> ConstraintSet:
+        """
+        Remove constraints which involve derive type variables from lattice elements
+        For example, int64.in_0 is something that would be removed. These are th byproduct of
+        invalid constraints being fed to Retypd.
+        """
+
+        def is_derived(dtv: DerivedTypeVariable) -> bool:
+            return (
+                DerivedTypeVariable(dtv.base)
+                in self.program.types.internal_types
+                and len(dtv.path) > 0
+            )
+
+        output = ConstraintSet()
+
+        for constraint in cs:
+            if is_derived(constraint.left) or is_derived(constraint.right):
+                continue
+            output.add(constraint)
+
+        return output
+
     def _solve_constraints_between(
         self,
         graph: networkx.DiGraph,
@@ -536,9 +553,12 @@ class Solver(Loggable):
         start_nodes, end_nodes = Solver.get_start_end_nodes(
             graph, start_dtvs, end_dtvs
         )
-        return self.graph_solver.generate_constraints_from_to(
-            graph, start_nodes, end_nodes
+        unfiltered_constraints = (
+            self.graph_solver.generate_constraints_from_to(
+                graph, start_nodes, end_nodes
+            )
         )
+        return self._filter_derived_lattices(unfiltered_constraints)
 
     def _generate_type_scheme(
         self,
@@ -556,7 +576,9 @@ class Solver(Loggable):
         """
         interesting_dtvs = non_primitive_end_points | primitive_types
         graph = ConstraintGraph.from_constraints(
-            initial_constraints, interesting_dtvs
+            initial_constraints,
+            interesting_dtvs,
+            self.program.types.internal_types,
         )
         all_interesting_nodes = {
             node for node in graph.nodes if node.base in interesting_dtvs
@@ -569,7 +591,9 @@ class Solver(Loggable):
             # If we have type vars, we recompute the graph
             # considering type vars as interesting
             graph = ConstraintGraph.from_constraints(
-                initial_constraints, interesting_dtvs
+                initial_constraints,
+                interesting_dtvs,
+                self.program.types.internal_types,
             )
             # Uncomment to output graph for debugging
             # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
@@ -594,7 +618,9 @@ class Solver(Loggable):
         """
 
         graph = ConstraintGraph.from_constraints(
-            initial_constraints, non_primitive_end_points | primitive_types
+            initial_constraints,
+            non_primitive_end_points | primitive_types,
+            self.program.types.internal_types,
         )
         constraints = ConstraintSet()
 
