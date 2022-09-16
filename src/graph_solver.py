@@ -136,7 +136,7 @@ class DFAGraphSolver(GraphSolver):
         # type-variables as also final states
         for node in graph.nodes():
             if FreshVarFactory.is_anonymous_variable(node.base):
-                enfa.add_transition(State(node), Epsilon(), self.FINAL)
+                enfa.add_transition(State(node), Symbol(node), self.FINAL)
 
         enfa.add_start_state(self.START)
         enfa.add_final_state(self.FINAL)
@@ -175,14 +175,6 @@ class DFAGraphSolver(GraphSolver):
                 ]
                 start_node = path_labels[0]
                 end_node = path_labels[-1]
-
-                # In minimized form these might be created, so we have to
-                # explicitly check even though our original NFA would not have
-                # these
-                if not isinstance(start_node, Node) or not isinstance(
-                    end_node, Node
-                ):
-                    continue
 
                 constraint = _maybe_constraint(
                     start_node, end_node, path_labels[1:-1]
