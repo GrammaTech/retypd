@@ -330,8 +330,10 @@ class ConstraintGraph:
         def add_forgets(
             dest: Node, forgets: Set[Tuple[AccessPathLabel, Node]]
         ):
+            # This may or may not be valid - it is meant to prevent propagation
+            # of invalid type constraints across lattice types.
             if is_lattice(dest) or any(
-                is_lattice(forgor) for _, forgor in forgets
+                is_lattice(forget) for _, forget in forgets
             ):
                 return
             nonlocal changed
