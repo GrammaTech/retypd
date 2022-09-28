@@ -92,7 +92,7 @@ class SolverConfig:
     # Maximum paths total to explore per SCC
     max_total_paths: int = 2**64
     # Use path expressions or naive exploration of the graph.
-    use_path_expressions: bool = False
+    use_path_expressions: bool = True
     # Restrict graph to reachable nodes from and to endpoints
     # before doing the path exploration.
     restrict_graph_to_reachable: bool = True
@@ -275,6 +275,7 @@ class Solver(Loggable):
     @staticmethod
     def compute_quotient_graph(
         constraints: ConstraintSet,
+        lattice_types: Set[DerivedTypeVariable],
     ) -> Tuple[EquivRelation, networkx.DiGraph]:
         """
         Compute the quotient graph corresponding to a set of
@@ -344,6 +345,12 @@ class Solver(Loggable):
                 )
 
         for constraint in constraints:
+            # Don't unify across lattice types
+            if (
+                constraint.left in lattice_types
+                or constraint.right in lattice_types
+            ):
+                continue
             unify(
                 equiv.find_equiv_rep(constraint.left),
                 equiv.find_equiv_rep(constraint.right),
@@ -371,6 +378,7 @@ class Solver(Loggable):
         scc_and_globals: Set[DerivedTypeVariable],
         sketches: Sketches,
         constraints: ConstraintSet,
+        lattice_types: Set[DerivedTypeVariable],
     ) -> None:
         """
         Infer shapes takes a set of constraints and populates shapes of the sketches
@@ -380,7 +388,9 @@ class Solver(Loggable):
         """
         if len(constraints) == 0:
             return
-        equiv, g_quotient = Solver.compute_quotient_graph(constraints)
+        equiv, g_quotient = Solver.compute_quotient_graph(
+            constraints, lattice_types
+        )
 
         # Uncomment to generate graph for debugging
         # dump_labeled_graph(g_quotient,"quotient","/tmp/quotient")
@@ -487,11 +497,17 @@ class Solver(Loggable):
         Compute path expressions for each pair of start and end nodes.
         For each path expression, enumerate non-looping paths.
         """
+        lattice_types = self.program.types.atomic_types
         numbering, path_seq = scc_decompose_path_seq(graph, "label")
         constraints = ConstraintSet()
         for start_node in start_nodes:
             path_exprs = solve_paths_from(path_seq, numbering[start_node])
             for end_node in end_nodes:
+                if (
+                    start_node.base in lattice_types
+                    and end_node.base in lattice_types
+                ):
+                    continue
                 indices = (numbering[start_node], numbering[end_node])
                 path_expr = path_exprs[indices]
                 for path in enumerate_non_looping_paths(path_expr):
@@ -511,6 +527,7 @@ class Solver(Loggable):
         """
         Generate constraints based on the naive exploration of the graph.
         """
+        lattice_types = self.program.types.atomic_types
         constraints = ConstraintSet()
         npaths = 0
         # On large procedures, the graph this is exploring can be quite large (hundreds of nodes,
@@ -531,6 +548,11 @@ class Solver(Loggable):
             if npaths > max_paths_per_root:
                 return
             if path and current_node in end_nodes:
+                if (
+                    current_node.base in lattice_types
+                    and path[0] in lattice_types
+                ):
+                    return
                 constraint = self._maybe_constraint(
                     path[0], current_node, string
                 )
@@ -821,6 +843,7 @@ class Solver(Loggable):
                 scc | self.program.global_vars,
                 scc_sketches,
                 scc_initial_constraints,
+                self.program.types.atomic_types,
             )
             for proc in scc:
                 self.debug("# Inferring type scheme of proc: %s", proc)

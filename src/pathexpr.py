@@ -1,26 +1,51 @@
 from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
-import enum
 import networkx
+
+
+# Randomly generated hash constant for hash combination
+HC_K = 0x9DDFEA08EB382D69
+# 64-bit integer wrap around
+HC_M = (2**64) - 1
+
+
+def hash_combine(lhs: int, rhs: int) -> int:
+    """Combine two hashes using a simple algorithm from the original Retypd implementation"""
+    a = rhs
+
+    a = ((a ^ lhs) * HC_K) & HC_M
+    a ^= a >> 47
+
+    a = ((a ^ lhs) * HC_K) & HC_M
+    a ^= a >> 47
+
+    return a
 
 
 class RExp:
     """Regular expression class with some helper methods and simplification"""
 
-    class Label(enum.Enum):
-        NULL = 0
-        EMPTY = 1
-        NODE = 2
-        DOT = 3
-        OR = 4
-        STAR = 5
+    class Label:
+        """Hard-coded label numbers, which each were randomly generated so as
+        to not need to be hashed, instead their value operates as their hash
+        """
 
-    def __init__(self, label: Label, data=None, children=[]):
+        NULL = 0xFA1118ECFC2E5C78
+        EMPTY = 0xEA759E93D6E9FF37
+        NODE = 0x091F738A11133080
+        DOT = 0xAF201303AC824465
+        OR = 0xBDF5EA44D36816CB
+        STAR = 0xC2B42C47A64FC2AD
+
+    def __init__(self, label: int, data=None, children=[]):
         self.label = label
         self.data: Any = data
         self.children: Tuple[RExp] = tuple(children)
-        self.hash = hash((self.label, self.data, self.children))
+        self.hash = hash_combine(self.label, hash(self.data))
+
+        for child in self.children:
+            self.hash = hash_combine(self.hash, child.hash)
 
     def __hash__(self) -> int:
         return self.hash
@@ -35,6 +60,8 @@ class RExp:
         return RExp(self.Label.STAR, children=(self,))
 
     def __eq__(self, other: RExp) -> bool:
+        if self.hash != other.hash:
+            return False
         if self.label != other.label:
             return False
         if self.label in (self.Label.NULL, self.Label.EMPTY):
@@ -52,8 +79,12 @@ class RExp:
         """
         if not isinstance(other, RExp):
             raise ValueError(f"Cannot compare RExp to {type(other)}")
+        if self is other:
+            return False
+        if self.hash != other.hash:
+            return self.hash < other.hash
         if self.label != other.label:
-            return self.label.value < other.label.value
+            return self.label < other.label
         # Same label
         if self.label in (self.Label.NULL, self.Label.EMPTY):
             return False
@@ -122,7 +153,7 @@ class RExp:
                         new_children.add(child)
             if len(new_children) == 0:
                 return RExp.null()
-            if len(new_children) == 1:
+            elif len(new_children) == 1:
                 return new_children.pop()
             else:
                 return RExp(RExp.Label.OR, children=sorted(new_children))
@@ -137,14 +168,14 @@ class RExp:
                 else:
                     if not child.is_empty:
                         new_children.append(child)
-            if len(new_children) == 1:
+            if len(new_children) == 0:
+                return RExp.empty()
+            elif len(new_children) == 1:
                 return new_children.pop()
             return RExp(RExp.Label.DOT, children=new_children)
         elif self.label == self.Label.STAR:
             if children[0].is_null or children[0].is_empty:
                 return RExp.empty()
-            else:
-                return children[0].star()
         return self
 
     @property

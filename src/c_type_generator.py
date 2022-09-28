@@ -214,6 +214,8 @@ class CTypeGenerator(Loggable):
                 *[self._succ_no_loadstore([], sketches, n, set()) for n in ns]
             )
         )
+        available_tails = {access_paths[-1] for access_paths, _ in children}
+
         if len(children) == 0:
             # Compute the atomic type bounds and size bound
             lb = self.lattice.bottom
@@ -252,6 +254,44 @@ class CTypeGenerator(Loggable):
             for n in ns:
                 self.dtv2type[base_dtv][n.dtv] = rv
             self.debug("Terminal type: %s -> %s", ns, rv)
+        elif all(
+            isinstance(tail, (InLabel, OutLabel)) for tail in available_tails
+        ):
+            outputs = set()
+            inputs = defaultdict(set)
+
+            ptr_func = PointerType(
+                FunctionType(None, []), self.default_ptr_size
+            )
+
+            for n in ns:
+                self.dtv2type[base_dtv][n.dtv] = ptr_func
+
+            for access_path, child in children:
+                tail = access_path[-1]
+
+                if isinstance(tail, OutLabel):
+                    outputs.add(child)
+                elif isinstance(tail, InLabel):
+                    inputs[tail.index].add(child)
+                else:
+                    assert False, "Unreachable type generation state"
+
+            ptr_func.target_type.return_type = self.c_type_from_nodeset(
+                base_dtv, sketches, outputs
+            )
+            ptr_func.target_type.params = [
+                self.c_type_from_nodeset(base_dtv, sketches, inputs[index])
+                if len(inputs[index]) > 0
+                else self.lattice_ctypes.atom_to_ctype(
+                    self.lattice.bottom,
+                    self.lattice.top,
+                    self.default_int_size,
+                )
+                for index in range(max(inputs.keys(), default=-1) + 1)
+            ]
+
+            return ptr_func
         else:
             # We could recurse on types below, so we populate the struct _first_
             s = StructType()
@@ -343,49 +383,24 @@ class CTypeGenerator(Loggable):
             (typically globals or functions). If None (default), emit all types.
         """
         dtv_to_type = {}
-        for base_dtv, sketches in self.sketch_map.items():
-            node = sketches.lookup(base_dtv)
+        for dtv, sketches in self.sketch_map.items():
+            if filter_to is not None and dtv not in filter_to:
+                continue
+
+            node = sketches.lookup(dtv)
+
             if node is None:
                 continue
-            if filter_to is not None and base_dtv not in filter_to:
-                continue
-            # First, see if it is a function
-            succs = self._succ_no_loadstore([], sketches, node, set())
-            n_params = max(
-                (
-                    access_path[-1].index + 1
-                    for access_path, s in succs
-                    if isinstance(access_path[-1], InLabel)
-                ),
-                default=0,
-            )
-            params = [None] * n_params
-            rtype = None
-            is_func = False
-            for access_path, succ in succs:
-                assert isinstance(succ, SketchNode)
-                if isinstance(succ.dtv.tail, InLabel):
-                    self.debug("(1) Processing %s", succ.dtv)
-                    p = self.c_type_from_nodeset(base_dtv, sketches, {succ})
-                    params[succ.dtv.tail.index] = p
-                    is_func = True
-                elif isinstance(succ.dtv.tail, OutLabel):
-                    self.debug("(2) Processing %s", succ.dtv)
-                    assert rtype is None
-                    rtype = self.c_type_from_nodeset(
-                        base_dtv, sketches, {succ}
-                    )
-                    is_func = True
-            # Not a function
-            if is_func:
-                dtv_to_type[base_dtv] = FunctionType(
-                    rtype, params, name=str(base_dtv)
-                )
+
+            maybe_ptr_func = self.c_type_from_nodeset(dtv, sketches, {node})
+
+            if isinstance(maybe_ptr_func, PointerType) and isinstance(
+                maybe_ptr_func.target_type, FunctionType
+            ):
+                # Consumers expect the function itself, not a pointer to it
+                dtv_to_type[dtv] = maybe_ptr_func.target_type
             else:
-                self.debug("(3) Processing %s", base_dtv)
-                dtv_to_type[base_dtv] = self.c_type_from_nodeset(
-                    base_dtv, sketches, {node}
-                )
+                dtv_to_type[dtv] = maybe_ptr_func
 
         if simplify_pointers:
             self.debug("Simplifying pointers")

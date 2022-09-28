@@ -40,7 +40,7 @@ import networkx
             ],
             [
                 ("a", "b", "(A . B*)"),
-                ("a", "c", "(D U (A . B* . C))"),
+                ("a", "c", {"(D U (A . B* . C))", "((A . B* . C) U D)"}),
             ],
         ),
         (
@@ -55,7 +55,14 @@ import networkx
             [
                 ("a", "b", "(A . B*)"),
                 ("a", "d", "(D . E*)"),
-                ("a", "c", "((A . B* . C) U (D . E* . F))"),
+                (
+                    "a",
+                    "c",
+                    {
+                        "((A . B* . C) U (D . E* . F))",
+                        "((D . E* . F) U (A . B* . C))",
+                    },
+                ),
             ],
         ),
         (
@@ -65,7 +72,14 @@ import networkx
                 ("c", "a", "C"),
             ],
             [
-                ("a", "b", "(A U (A . B . (C . A . B)* . C . A))"),
+                (
+                    "a",
+                    "b",
+                    {
+                        "(A U (A . B . (C . A . B)* . C . A))",
+                        "((A . B . (C . A . B)* . C . A) U A)",
+                    },
+                ),
                 ("b", "c", "(B . (C . A . B)*)"),
                 ("a", "c", "(A . B . (C . A . B)*)"),
             ],
@@ -81,7 +95,14 @@ import networkx
                 ("c", "a", None),
             ],
             [
-                ("a", "b", "(A U (A . B . (A . B)* . A))"),
+                (
+                    "a",
+                    "b",
+                    {
+                        "(A U (A . B . (A . B)* . A))",
+                        "((A . B . (A . B)* . A) U A)",
+                    },
+                ),
                 ("a", "c", "(A . B . (A . B)*)"),
             ],
         ),
@@ -123,4 +144,9 @@ def test_path_expr(edges, path_exprs, decompose):
         generated = path_expression_between(
             graph, "label", source, dest, decompose
         )
-        assert str(generated) == expr
+        if isinstance(expr, str):
+            assert str(generated) == expr
+        elif isinstance(expr, set):
+            assert str(generated) in expr
+        else:
+            raise NotImplementedError()
