@@ -578,7 +578,6 @@ class Solver(Loggable):
         graph = ConstraintGraph.from_constraints(
             initial_constraints,
             interesting_dtvs,
-            self.program.types.internal_types,
         )
         all_interesting_nodes = {
             node for node in graph.nodes if node.base in interesting_dtvs
@@ -593,10 +592,9 @@ class Solver(Loggable):
             graph = ConstraintGraph.from_constraints(
                 initial_constraints,
                 interesting_dtvs,
-                self.program.types.internal_types,
             )
-            # Uncomment to output graph for debugging
-            # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
+        # Uncomment to output graph for debugging
+        # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
 
         constraints = self._solve_constraints_between(
             graph, interesting_dtvs, interesting_dtvs
@@ -620,7 +618,6 @@ class Solver(Loggable):
         graph = ConstraintGraph.from_constraints(
             initial_constraints,
             non_primitive_end_points | primitive_types,
-            self.program.types.internal_types,
         )
         constraints = ConstraintSet()
 

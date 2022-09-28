@@ -158,6 +158,10 @@ def test_regression4(config):
 @pytest.mark.commit
 @all_solver_configs
 def test_case(config):
+    """
+    Test case to ensure that we do not consider paths
+    across lattice types, not even in the saturation algorithm.
+    """
     constraints = {
         "F": [
             "F.in_0 ⊑ A.store.σ8@0",

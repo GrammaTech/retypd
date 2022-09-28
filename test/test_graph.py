@@ -26,7 +26,6 @@ def test_simple():
     graph = ConstraintGraph(
         cs,
         {SchemaParser.parse_variable("f")},
-        frozenset(),
         keep_graph_before_split=True,
     ).graph_before_split
     f_co = Node(
@@ -101,7 +100,6 @@ def test_two_constraints():
     graph = ConstraintGraph(
         cs,
         {SchemaParser.parse_variable("A"), SchemaParser.parse_variable("C")},
-        frozenset(),
         keep_graph_before_split=True,
     ).graph_before_split
     b_co = Node(SchemaParser.parse_variable("B"), Variance.COVARIANT)

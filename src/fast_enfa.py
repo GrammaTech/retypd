@@ -24,7 +24,7 @@ class FastENFA(EpsilonNFA):
         NOTE: This a a modified version of the original EpsilonNFA._to_deterministic_internal
         This has a few small changes:
         - Refactored the call to `add_final_state` to be less redundant
-        - Added some additional checks to `all_trans` comutation to filter out invalid items
+        - Added some additional checks to `all_trans` computation to filter out invalid items
         """
         dfa = DeterministicFiniteAutomaton()
         # Add Eclose

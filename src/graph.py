@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 from enum import Enum, unique
-from typing import Any, Dict, FrozenSet, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 from .schema import (
     AccessPathLabel,
     ConstraintSet,
@@ -195,13 +195,19 @@ class Node:
             Node.Forgotten.POST_FORGET,
         )
 
-    def inverse(self) -> Node:
-        """Get a Node identical to this one but with inverted variance and mark."""
-        new_side_mark = SideMark.NO
-        if self.side_mark == SideMark.LEFT:
-            new_side_mark = SideMark.RIGHT
-        elif self.side_mark == SideMark.RIGHT:
-            new_side_mark = SideMark.LEFT
+    def inverse(self, keep_same_mark: bool = False) -> Node:
+        """
+        Get a Node identical to this one but with inverted variance and mark.
+        If keep_same_mark is true, the side mark is not inverted.
+        """
+        if keep_same_mark:
+            new_side_mark = self.side_mark
+        else:
+            new_side_mark = SideMark.NO
+            if self.side_mark == SideMark.LEFT:
+                new_side_mark = SideMark.RIGHT
+            elif self.side_mark == SideMark.RIGHT:
+                new_side_mark = SideMark.LEFT
         return Node(
             self.base,
             Variance.invert(self.suffix_variance),
@@ -219,13 +225,12 @@ class ConstraintGraph:
         self,
         constraints: ConstraintSet,
         interesting_vars: Set[DerivedTypeVariable],
-        lattice_types: FrozenSet[DerivedTypeVariable],
         keep_graph_before_split: bool = False,
     ) -> None:
         self.graph = networkx.DiGraph()
         for constraint in constraints.subtype:
             self.add_edges(constraint.left, constraint.right, interesting_vars)
-        self.saturate(lattice_types)
+        self.saturate()
         self._remove_self_loops()
         if keep_graph_before_split:
             self.graph_before_split = self.graph.copy()
@@ -319,23 +324,14 @@ class ConstraintGraph:
             node = prefix
             (capability, prefix) = node.forget_once()
 
-    def saturate(self, lattice_types: FrozenSet[DerivedTypeVariable]) -> None:
+    def saturate(self) -> None:
         """Add "shortcut" edges, per algorithm D.2 in the paper."""
         changed = False
         reaching_R: Dict[Node, Set[Tuple[AccessPathLabel, Node]]] = {}
 
-        def is_lattice(arg: Node) -> bool:
-            return arg.base in lattice_types
-
         def add_forgets(
             dest: Node, forgets: Set[Tuple[AccessPathLabel, Node]]
         ):
-            # This may or may not be valid - it is meant to prevent propagation
-            # of invalid type constraints across lattice types.
-            if is_lattice(dest) or any(
-                is_lattice(forget) for _, forget in forgets
-            ):
-                return
             nonlocal changed
             if dest not in reaching_R or not (forgets <= reaching_R[dest]):
                 changed = True
@@ -375,7 +371,9 @@ class ConstraintGraph:
                     if capability_l == LoadLabel.instance():
                         label = StoreLabel.instance()
                     if label:
-                        add_forgets(x.inverse(), {(label, origin_z)})
+                        add_forgets(
+                            x.inverse(keep_same_mark=True), {(label, origin_z)}
+                        )
 
     def _remove_self_loops(self) -> None:
         """Loops from a node directly to itself are not useful, so it's useful to remove them."""
@@ -388,9 +386,8 @@ class ConstraintGraph:
         cls,
         constraints: ConstraintSet,
         interesting_vars: Set[DerivedTypeVariable],
-        lattice_types: FrozenSet[DerivedTypeVariable],
     ) -> networkx.DiGraph:
-        return cls(constraints, interesting_vars, lattice_types).graph
+        return cls(constraints, interesting_vars).graph
 
     @staticmethod
     def edge_to_str(graph, edge: Tuple[Node, Node]) -> str:
