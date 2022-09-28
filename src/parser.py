@@ -34,9 +34,10 @@ from .schema import (
     StoreLabel,
     SubtypeConstraint,
     Variance,
+    ConstraintSet,
 )
 from .graph import EdgeLabel, Node
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 
 class SchemaParser:
@@ -93,6 +94,14 @@ class SchemaParser:
         return DerivedTypeVariable(components[0], path)
 
     @staticmethod
+    def parse_variables(vars: List[str]) -> List[DerivedTypeVariable]:
+        """
+        Parse a list of DerivedTypeVariable. Raises ValueError
+        if any of the strings contains a whitespace.
+        """
+        return [SchemaParser.parse_variable(var) for var in vars]
+
+    @staticmethod
     def parse_constraint(constraint: str) -> SubtypeConstraint:
         """Parse a SubtypeConstraint. Raises a ValueError if constraint does not match
         SchemaParser.subtype_pattern.
@@ -104,6 +113,16 @@ class SchemaParser:
                 SchemaParser.parse_variable(subtype_match.group(2)),
             )
         raise ValueError
+
+    @staticmethod
+    def parse_constraint_set(constraints: List[str]) -> ConstraintSet:
+        """
+        Parse a list of constraints into a ConstraintSet
+        """
+        cs = ConstraintSet()
+        for c in constraints:
+            cs.add(SchemaParser.parse_constraint(c))
+        return cs
 
     @staticmethod
     def parse_node(node: str) -> Node:

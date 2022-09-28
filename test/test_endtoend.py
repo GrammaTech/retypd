@@ -27,22 +27,14 @@ from retypd.c_types import (
     ArrayType,
     FunctionType,
 )
+from retypd.graph_solver import GraphSolverConfig
 from retypd.solver import SolverConfig
 
 
 VERBOSE_TESTS = False
 parse_var = SchemaParser.parse_variable
 parse_cs = SchemaParser.parse_constraint
-
-
-def parse_cs_set(constraints: List[str]) -> ConstraintSet:
-    """
-    Auxiliary function to parse a set of constraints
-    """
-    cs = ConstraintSet()
-    for c in constraints:
-        cs.add(parse_cs(c))
-    return cs
+parse_cs_set = SchemaParser.parse_constraint_set
 
 
 def compute_sketches(
@@ -74,19 +66,38 @@ all_solver_configs = pytest.mark.parametrize(
     "config",
     [
         SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
+            graph_solver="naive",
+            graph_solver_config=GraphSolverConfig(
+                restrict_graph_to_reachable=True
+            ),
         ),
         SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
+            graph_solver="pathexpr",
+            graph_solver_config=GraphSolverConfig(
+                restrict_graph_to_reachable=True
+            ),
         ),
         SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
+            graph_solver="naive",
+            graph_solver_config=GraphSolverConfig(
+                restrict_graph_to_reachable=False
+            ),
         ),
         SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
+            graph_solver="pathexpr",
+            graph_solver_config=GraphSolverConfig(
+                restrict_graph_to_reachable=False
+            ),
         ),
+        SolverConfig(graph_solver="dfa"),
     ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+    ids=[
+        "naive-reachable",
+        "pathexpr-reachable",
+        "naive-all",
+        "pathexpr-all",
+        "dfa-all",
+    ],
 )
 
 
@@ -995,3 +1006,66 @@ def test_regression2():
     assert isinstance(caller_struct.fields[0].ctype, IntType)
     # field 1 is a recursive pointer
     assert caller_struct.fields[1].ctype.target_type.name == caller_struct.name
+
+
+@pytest.mark.commit
+def test_regression3():
+    """Extracted from:
+
+    static int do_callback(json_parser *parser, int type)
+    {
+        if (!parser->callback)
+            return 0;
+        return (*parser->callback)(parser->userdata, type, NULL, 0);
+    }
+    """
+    constraints = {
+        "do_callback": [
+            "int64 ⊑ v_205",
+            "do_callback.in_0 ⊑ v_128",
+            "v_113 ⊑ v_112",
+            "v_3.out ⊑ v_136",
+            "v_129.load.σ8@40 ⊑ v_3",
+            "v_2 ⊑ int64",
+            "v_20 ⊑ int64",
+            "do_callback.in_1 ⊑ v_129",
+            "v_129.load.σ8@48 ⊑ v_63",
+            "v_136 ⊑ do_callback.out",
+            "v_205 ⊑ v_0",
+            "v_63 ⊑ v_3.in_0",
+            "v_62 ⊑ int64",
+            "v_129 ⊑ int64",
+            "v_112 ⊑ do_callback.out",
+            "bool ⊑ v_18",
+            "int64 ⊑ v_206",
+            "v_206 ⊑ v_60",
+            "v_3 ⊑ int64",
+        ],
+    }
+
+    (gen_const, sketches) = compute_sketches(
+        constraints, {"do_callback": {""}}, CLattice()
+    )
+
+    assert gen_const[parse_var("do_callback")] == parse_cs_set(
+        [
+            "do_callback.in_1.load.σ8@40.out ⊑ do_callback.out",
+            "do_callback.in_1.load.σ8@48 ⊑ do_callback.in_1.load.σ8@40.in_0",
+            "do_callback.in_1 ⊑ int64",
+            "do_callback.in_1.load.σ8@40 ⊑ int64",
+        ]
+    )
+
+    gen = CTypeGenerator(sketches, CLattice(), CLatticeCTypes(), 4, 4)
+    dtv2type = gen()
+
+    types = dtv2type[parse_var("do_callback")]
+    assert isinstance(types, FunctionType)
+    assert isinstance(types.params[1], PointerType)
+    assert isinstance(types.params[1].target_type, StructType)
+    fields = list(types.params[1].target_type.fields)
+    func_field = fields[0]
+    assert func_field.offset == 40
+    ctype = func_field.ctype
+    assert isinstance(ctype, PointerType)
+    assert isinstance(ctype.target_type, FunctionType)

@@ -23,7 +23,11 @@ def test_simple():
     cs = ConstraintSet(
         [SchemaParser.parse_constraint("f.in_0 <= A.load.σ4@0")]
     )
-    graph = ConstraintGraph(cs, {SchemaParser.parse_variable("f")}).graph
+    graph = ConstraintGraph(
+        cs,
+        {SchemaParser.parse_variable("f")},
+        keep_graph_before_split=True,
+    ).graph_before_split
     f_co = Node(
         SchemaParser.parse_variable("f"), Variance.COVARIANT, SideMark.RIGHT
     )
@@ -96,7 +100,8 @@ def test_two_constraints():
     graph = ConstraintGraph(
         cs,
         {SchemaParser.parse_variable("A"), SchemaParser.parse_variable("C")},
-    ).graph
+        keep_graph_before_split=True,
+    ).graph_before_split
     b_co = Node(SchemaParser.parse_variable("B"), Variance.COVARIANT)
     b_out_co = Node(SchemaParser.parse_variable("B.out"), Variance.COVARIANT)
     a_co = Node(

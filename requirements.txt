@@ -2,3 +2,4 @@ dataclasses ~= 0.6
 graphviz ~= 0.20
 networkx ~= 2.8.4
 tqdm ~= 4.64.0
+pyformlang ~= 1.0.1

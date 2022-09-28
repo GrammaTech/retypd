@@ -80,6 +80,7 @@ class LabelNode:
         self.target = target
         self.id = LabelNode.counter
         LabelNode.counter += 1
+        self._hash = hash((self.target, self.id))
 
     def __eq__(self, other) -> bool:
         if isinstance(other, LabelNode):
@@ -87,7 +88,7 @@ class LabelNode:
         return False
 
     def __hash__(self) -> int:
-        return hash(self.target) ^ hash(self.id)
+        return self._hash
 
     def __str__(self) -> str:
         return f"{self.target}.label_{self.id}"
@@ -163,18 +164,9 @@ class Sketches(Loggable):
         self._add_node(node)
         return node
 
-    def make_node(
-        self,
-        variable: DerivedTypeVariable,
-        *,
-        lower_bound: Optional[DerivedTypeVariable] = None,
-        upper_bound: Optional[DerivedTypeVariable] = None,
-    ) -> SketchNode:
+    def make_node(self, variable: DerivedTypeVariable) -> SketchNode:
         """Make a node from a DTV. Compute its atom from its access path."""
-
-        lower_bound = lower_bound or self.types.bottom
-        upper_bound = upper_bound or self.types.top
-        result = SketchNode(variable, lower_bound, upper_bound)
+        result = SketchNode(variable, self.types.bottom, self.types.top)
         self._add_node(result)
         return result
 
@@ -232,7 +224,6 @@ class Sketches(Loggable):
     def instantiate_sketch_capabilities(
         self,
         proc: DerivedTypeVariable,
-        types: Lattice[DerivedTypeVariable],
         fresh_var_factory: FreshVarFactory,
     ) -> ConstraintSet:
         """
@@ -242,21 +233,18 @@ class Sketches(Loggable):
         all_constraints = ConstraintSet()
         for node in self.sketches.nodes:
             if isinstance(node, SketchNode) and node.dtv.base_var == proc:
-                constraints = []
                 # if the node is a leaf, capture the capability using fake variables
                 # this could be avoided if we support capability constraints  (Var x.l) in
                 # addition to subtype constraints
-                if next(self.sketches.successors(node), None) is None:
+                if self.sketches.out_degree(node) == 0:
                     fresh_var = fresh_var_factory.fresh_var()
+
                     if node.dtv.path_variance == Variance.CONTRAVARIANT:
-                        constraints.append(
-                            SubtypeConstraint(node.dtv, fresh_var)
-                        )
+                        constraint = SubtypeConstraint(node.dtv, fresh_var)
                     else:
-                        constraints.append(
-                            SubtypeConstraint(fresh_var, node.dtv)
-                        )
-                all_constraints |= ConstraintSet(constraints)
+                        constraint = SubtypeConstraint(fresh_var, node.dtv)
+
+                    all_constraints.add(constraint)
         return all_constraints
 
     def add_constraints(self, constraints: ConstraintSet) -> None:

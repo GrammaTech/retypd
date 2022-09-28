@@ -7,20 +7,24 @@ import pytest
 from retypd import (
     CLattice,
     ConstraintSet,
+    CTypeGenerator,
     DerivedTypeVariable,
     DummyLattice,
-    Program,
     SchemaParser,
     Solver,
     DerefLabel,
+    Program,
     CType,
     CLatticeCTypes,
     BoolType,
     CharType,
+    FunctionType,
     FloatType,
     IntType,
+    PointerType,
     VoidType,
 )
+from test_endtoend import parse_cs_set, parse_cs, parse_var
 
 
 @pytest.mark.commit
@@ -48,34 +52,31 @@ def test_simple_constraints():
     recursive data structures; as such, the fixed point would suffice. However, we compute type
     constraints in the same way as in the presence of recursion.
     """
-    constraints = ConstraintSet()
-    constraints.add(SchemaParser.parse_constraint("p ⊑ q"))
-    constraints.add(SchemaParser.parse_constraint("x ⊑ q.store.σ4@0"))
-    constraints.add(SchemaParser.parse_constraint("p.load.σ4@0 ⊑ y"))
-    f = SchemaParser.parse_variable("f")
-    x = SchemaParser.parse_variable("x")
-    y = SchemaParser.parse_variable("y")
-    program = Program(DummyLattice(), {x, y}, {f: constraints}, {f: {}})
-    solver = Solver(program)
-    (gen_const, sketches) = solver()
-    assert SchemaParser.parse_constraint("x ⊑ y") in gen_const[f]
+    constraints = parse_cs_set(
+        ["p ⊑ q", "x ⊑ q.store.σ4@0", "p.load.σ4@0 ⊑ y"]
+    )
+    f, x, y = SchemaParser.parse_variables(["f", "x", "y"])
+    lattice = DummyLattice()
+    solver = Solver(Program(CLattice(), {}, {}, {}))
+    generated = solver._generate_type_scheme(
+        constraints, {x, y}, lattice.internal_types
+    )
+    assert parse_cs("x ⊑ y") in generated
 
 
 @pytest.mark.commit
 def test_other_simple_constraints():
     """Another simple test from the paper (the program modeled in Figure 14 on p. 26)."""
-    constraints = ConstraintSet()
-    constraints.add(SchemaParser.parse_constraint("y <= p"))
-    constraints.add(SchemaParser.parse_constraint("p <= x"))
-    constraints.add(SchemaParser.parse_constraint("A <= x.store"))
-    constraints.add(SchemaParser.parse_constraint("y.load <= B"))
-    f = SchemaParser.parse_variable("f")
-    A = SchemaParser.parse_variable("A")
-    B = SchemaParser.parse_variable("B")
-    program = Program(DummyLattice(), {A, B}, {f: constraints}, {f: {}})
-    solver = Solver(program)
-    (gen_const, sketches) = solver()
-    assert SchemaParser.parse_constraint("A ⊑ B") in gen_const[f]
+    constraints = parse_cs_set(
+        ["y <= p", "p <= x", "A <= x.store", "y.load <= B"]
+    )
+    f, A, B = SchemaParser.parse_variables(["f", "A", "B"])
+    lattice = DummyLattice()
+    solver = Solver(Program(CLattice(), {}, {}, {}))
+    generated = solver._generate_type_scheme(
+        constraints, {A, B}, lattice.internal_types
+    )
+    assert parse_cs("A ⊑ B") in generated
 
 
 @pytest.mark.commit
@@ -83,15 +84,16 @@ def test_forgets():
     """A simple test to check that paths that include "forgotten" labels reconstruct access
     paths in the correct order.
     """
-    F = SchemaParser.parse_variable("F")
-    l = SchemaParser.parse_variable("l")
-    constraints = {F: ConstraintSet()}
-    constraint = SchemaParser.parse_constraint("l ⊑ F.in_1.load.σ8@0")
-    constraints[F].add(constraint)
-    program = Program(DummyLattice(), {l}, constraints, {F: {}})
-    solver = Solver(program)
-    (gen_const, sketches) = solver()
-    assert constraint in gen_const[F]
+    l, F = SchemaParser.parse_variables(["l", "F"])
+    constraints = ConstraintSet()
+    constraint = parse_cs("l ⊑ F.in_1.load.σ8@0")
+    constraints.add(constraint)
+    lattice = DummyLattice()
+    solver = Solver(Program(CLattice(), {}, {}, {}))
+    generated = solver._generate_type_scheme(
+        constraints, {l, F}, lattice.internal_types
+    )
+    assert constraint in generated
 
 
 @pytest.mark.parametrize(
@@ -142,3 +144,25 @@ def test_atom_to_ctype(name: str, ctype: CType, size: int):
     ctype_rhs = lattice.atom_to_ctype(CLattice._bottom, atom, size)
     assert str(ctype) == str(ctype_lhs)
     assert str(ctype) == str(ctype_rhs)
+
+
+@pytest.mark.commit
+def test_infers_all_inputs():
+    """Test that we infer all the inputs for a function"""
+    F = parse_var("F")
+    constraints = ConstraintSet()
+    constraints.add(parse_cs("F.in_2.in_1 ⊑ int"))
+    lattice = DummyLattice()
+    solver = Solver(Program(CLattice(), {F}, {F: constraints}, {F: {}}))
+    _, sketches = solver()
+
+    gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4, verbose=2)
+    dtv2type = gen()
+    assert isinstance(dtv2type[F], FunctionType)
+    assert dtv2type[F].params[0] is not None
+    assert dtv2type[F].params[1] is not None
+    assert isinstance(dtv2type[F].params[2], PointerType)
+    assert isinstance(dtv2type[F].params[2].target_type, FunctionType)
+    assert dtv2type[F].params[2].target_type.params[0] is not None
+    assert isinstance(dtv2type[F].params[2].target_type.params[1], IntType)
+    assert dtv2type[F].params[2].target_type.params[1] is not None

@@ -129,20 +129,20 @@ class Node:
         )
 
     def __eq__(self, other: Any) -> bool:
-        return (
-            isinstance(other, Node)
-            and self.base == other.base
-            and self.suffix_variance == other.suffix_variance
-            and self._forgotten == other._forgotten
-            and self.side_mark == other.side_mark
-        )
+        if not isinstance(other, Node):
+            return False
+
+        if self._hash != other._hash:
+            return False
+
+        return self._str == other._str
 
     def __lt__(self, other: Node) -> bool:
         if not isinstance(other, Node):
             raise ValueError(
                 f"Cannot compare objects of type Node and {type(other)} "
             )
-        return self._str < other._str
+        return self._hash < other._hash
 
     def __hash__(self) -> int:
         return self._hash
@@ -195,13 +195,19 @@ class Node:
             Node.Forgotten.POST_FORGET,
         )
 
-    def inverse(self) -> Node:
-        """Get a Node identical to this one but with inverted variance and mark."""
-        new_side_mark = SideMark.NO
-        if self.side_mark == SideMark.LEFT:
-            new_side_mark = SideMark.RIGHT
-        elif self.side_mark == SideMark.RIGHT:
-            new_side_mark = SideMark.LEFT
+    def inverse(self, keep_same_mark: bool = False) -> Node:
+        """
+        Get a Node identical to this one but with inverted variance and mark.
+        If keep_same_mark is true, the side mark is not inverted.
+        """
+        if keep_same_mark:
+            new_side_mark = self.side_mark
+        else:
+            new_side_mark = SideMark.NO
+            if self.side_mark == SideMark.LEFT:
+                new_side_mark = SideMark.RIGHT
+            elif self.side_mark == SideMark.RIGHT:
+                new_side_mark = SideMark.LEFT
         return Node(
             self.base,
             Variance.invert(self.suffix_variance),
@@ -219,12 +225,36 @@ class ConstraintGraph:
         self,
         constraints: ConstraintSet,
         interesting_vars: Set[DerivedTypeVariable],
+        keep_graph_before_split: bool = False,
     ) -> None:
         self.graph = networkx.DiGraph()
         for constraint in constraints.subtype:
             self.add_edges(constraint.left, constraint.right, interesting_vars)
         self.saturate()
         self._remove_self_loops()
+        if keep_graph_before_split:
+            self.graph_before_split = self.graph.copy()
+        self._recall_forget_split()
+
+    # Regular language: RECALL*FORGET*  (i.e., FORGET cannot precede RECALL)
+    def _recall_forget_split(self) -> None:
+        """The algorithm, after saturation, only admits paths such that recall edges all precede
+        the first forget edge (if there is such an edge). To enforce this, we modify the graph by
+        splitting each node and the unlabeled and forget edges (but not recall edges!). Forget edges
+        in the original graph are changed to point to the 'forgotten' duplicate of their original
+        target. As a result, no recall edges are reachable after traversing a single forget edge.
+        """
+        for head, tail in list(self.graph.edges):
+            atts = self.graph[head][tail]
+            label = atts.get("label")
+            if label and label.kind == EdgeLabel.Kind.RECALL:
+                continue
+            forget_head = head.split_recall_forget()
+            forget_tail = tail.split_recall_forget()
+            if label and label.kind == EdgeLabel.Kind.FORGET:
+                self.graph.remove_edge(head, tail)
+                self.graph.add_edge(head, forget_tail, **atts)
+            self.graph.add_edge(forget_head, forget_tail, **atts)
 
     def add_edge(self, head: Node, tail: Node, **atts) -> bool:
         """Add an edge to the graph. The optional atts dict should include, if anything, a mapping
@@ -341,13 +371,23 @@ class ConstraintGraph:
                     if capability_l == LoadLabel.instance():
                         label = StoreLabel.instance()
                     if label:
-                        add_forgets(x.inverse(), {(label, origin_z)})
+                        add_forgets(
+                            x.inverse(keep_same_mark=True), {(label, origin_z)}
+                        )
 
     def _remove_self_loops(self) -> None:
         """Loops from a node directly to itself are not useful, so it's useful to remove them."""
         self.graph.remove_edges_from(
             {(node, node) for node in self.graph.nodes}
         )
+
+    @classmethod
+    def from_constraints(
+        cls,
+        constraints: ConstraintSet,
+        interesting_vars: Set[DerivedTypeVariable],
+    ) -> networkx.DiGraph:
+        return cls(constraints, interesting_vars).graph
 
     @staticmethod
     def edge_to_str(graph, edge: Tuple[Node, Node]) -> str:
@@ -390,7 +430,7 @@ def remove_unreachable_states(
     )
     rev_reachable_nodes = set(
         networkx.multi_source_dijkstra_path_length(
-            graph.reverse(), end_nodes
+            graph.reverse(copy=False), end_nodes
         ).keys()
     )
     keep = reachable_nodes & rev_reachable_nodes

@@ -153,3 +153,32 @@ def test_regression4(config):
 
     assert parse_cs("a.in_0.load.σ4@4 ⊑ int") in gen_const[parse_var("a")]
     assert parse_cs("int ⊑ a.in_0.store.σ4@0") in gen_const[parse_var("a")]
+
+
+@pytest.mark.commit
+@all_solver_configs
+def test_case(config):
+    """
+    Test case to ensure that we do not consider paths
+    across lattice types, not even in the saturation algorithm.
+    """
+    constraints = {
+        "F": [
+            "F.in_0 ⊑ A.store.σ8@0",
+            "int64 ⊑ A",
+            "B.load.σ8@0 ⊑ C",
+            "int64 ⊑ B",
+            "C.load.σ1@0*[nullterm] ⊑ int",
+        ]
+    }
+    callgraph = {"F": []}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints,
+        callgraph,
+        lattice=lattice,
+        config=config,
+    )
+
+    F = parse_var("F")
+    assert len(gen_cs[F]) == 0
