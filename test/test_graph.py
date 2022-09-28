@@ -24,7 +24,9 @@ def test_simple():
         [SchemaParser.parse_constraint("f.in_0 <= A.load.σ4@0")]
     )
     graph = ConstraintGraph(
-        cs, {SchemaParser.parse_variable("f")}, keep_graph_before_split=True
+        cs,
+        {SchemaParser.parse_variable("f")},
+        keep_graph_before_split=True,
     ).graph_before_split
     f_co = Node(
         SchemaParser.parse_variable("f"), Variance.COVARIANT, SideMark.RIGHT

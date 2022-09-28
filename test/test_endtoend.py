@@ -27,6 +27,7 @@ from retypd.c_types import (
     ArrayType,
     FunctionType,
 )
+from retypd.graph_solver import GraphSolverConfig
 from retypd.solver import SolverConfig
 
 
@@ -65,19 +66,38 @@ all_solver_configs = pytest.mark.parametrize(
     "config",
     [
         SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=True
+            graph_solver="naive",
+            graph_solver_config=GraphSolverConfig(
+                restrict_graph_to_reachable=True
+            ),
         ),
         SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=True
+            graph_solver="pathexpr",
+            graph_solver_config=GraphSolverConfig(
+                restrict_graph_to_reachable=True
+            ),
         ),
         SolverConfig(
-            use_path_expressions=False, restrict_graph_to_reachable=False
+            graph_solver="naive",
+            graph_solver_config=GraphSolverConfig(
+                restrict_graph_to_reachable=False
+            ),
         ),
         SolverConfig(
-            use_path_expressions=True, restrict_graph_to_reachable=False
+            graph_solver="pathexpr",
+            graph_solver_config=GraphSolverConfig(
+                restrict_graph_to_reachable=False
+            ),
         ),
+        SolverConfig(graph_solver="dfa"),
     ],
-    ids=["naive-reachable", "pathexpr-reachable", "naive-all", "pathexpr-all"],
+    ids=[
+        "naive-reachable",
+        "pathexpr-reachable",
+        "naive-all",
+        "pathexpr-all",
+        "dfa-all",
+    ],
 )
 
 

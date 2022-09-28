@@ -24,24 +24,24 @@
 """
 
 from __future__ import annotations
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Any
-
-from .pathexpr import RExp, scc_decompose_path_seq, solve_paths_from
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 from .graph import (
     EdgeLabel,
     SideMark,
     Node,
     ConstraintGraph,
-    remove_unreachable_states,
+)
+from .graph_solver import (
+    GraphSolverConfig,
+    DFAGraphSolver,
+    PathExprGraphSolver,
+    NaiveGraphSolver,
 )
 from .schema import (
     ConstraintSet,
     DerivedTypeVariable,
     FreshVarFactory,
-    Lattice,
     Program,
-    SubtypeConstraint,
-    Variance,
     LoadLabel,
     StoreLabel,
 )
@@ -85,17 +85,10 @@ class SolverConfig:
     Parameters that change how the type solver behaves.
     """
 
-    # Maximum path length when converts the constraint graph into output constraints
-    max_path_length: int = 2**64
-    # Maximum number of paths to explore per type variable root when generating output constraints
-    max_paths_per_root: int = 2**64
-    # Maximum paths total to explore per SCC
-    max_total_paths: int = 2**64
-    # Use path expressions or naive exploration of the graph.
-    use_path_expressions: bool = True
-    # Restrict graph to reachable nodes from and to endpoints
-    # before doing the path exploration.
-    restrict_graph_to_reachable: bool = True
+    # Use `naive`, `pathexpr`, or `dfa` f
+    graph_solver: str = "dfa"
+    # Graph solver configuration
+    graph_solver_config: GraphSolverConfig = GraphSolverConfig()
     # More precise global handling
     # By default, we propagate globals up the callgraph, inlining them into the sketches as we
     # go, and the global sketches in the final (synthetic) root of the callgraph are the results
@@ -145,49 +138,6 @@ class EquivRelation:
         return set(self._equiv_repr.values())
 
 
-def cross_concatenation(
-    prefix_list: List[List[Any]], postfix_list: List[List[Any]]
-) -> List[List[Any]]:
-    """
-    Compute the cross product concatenation of two lists of lists.
-    """
-    combined = []
-    for prefix in prefix_list:
-        for postfix in postfix_list:
-            combined.append(prefix + postfix)
-    return combined
-
-
-def enumerate_non_looping_paths(path_expr: RExp) -> List[List[EdgeLabel]]:
-    """
-    Given a path expression, return a list of all the paths
-    that do not involve loops.
-    """
-    if path_expr.label == RExp.Label.NULL:
-        return []
-    elif path_expr.label == RExp.Label.EMPTY:
-        return [[]]
-    elif path_expr.label == RExp.Label.NODE:
-        return [[path_expr.data]]
-    # ignore looping paths
-    elif path_expr.label == RExp.Label.STAR:
-        return [[]]
-    elif path_expr.label == RExp.Label.DOT:
-        paths = [[]]
-        for child in path_expr.children:
-            paths = cross_concatenation(
-                paths, enumerate_non_looping_paths(child)
-            )
-        return paths
-    elif path_expr.label == RExp.Label.OR:
-        paths = []
-        for child in path_expr.children:
-            paths.extend(enumerate_non_looping_paths(child))
-        return paths
-    else:
-        assert False
-
-
 # There are two main aspects created by the solver: output constraints and sketches. The output
 # constraints are _intra-procedural_: the constraints for a function f() will not contain
 # constraints from its callees or callers.
@@ -216,6 +166,14 @@ class Solver(Loggable):
         self.program = program
         # TODO possibly make these values shared across a function
         self.config = config
+        if config.graph_solver == "dfa":
+            self.graph_solver = DFAGraphSolver(config.graph_solver_config)
+        elif config.graph_solver == "pathexpr":
+            self.graph_solver = PathExprGraphSolver(config.graph_solver_config)
+        elif config.graph_solver == "naive":
+            self.graph_solver = NaiveGraphSolver(config.graph_solver_config)
+        else:
+            raise ValueError(f"Unknown graph solver {config.graph_solver}")
 
     @staticmethod
     def instantiate_type_scheme(
@@ -245,7 +203,6 @@ class Solver(Loggable):
         cs: ConstraintSet,
         sketch_map: Dict[DerivedTypeVariable, Sketches],
         type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
-        types: Lattice[DerivedTypeVariable],
     ) -> ConstraintSet:
         """
         For every constraint involving a procedure that has already been
@@ -253,20 +210,20 @@ class Solver(Loggable):
         capability constraints based on the sketch.
         """
         fresh_var_factory = FreshVarFactory()
-        callees = set()
+
         # TODO in order to support different instantiations for different calls
         # to the same function, we need to encode function actuals
         # differently than function formals
-        for dtv in cs.all_dtvs():
-            if dtv.base_var in sketch_map:
-                callees.add(dtv.base_var)
+        callees = {
+            dtv.base_var for dtv in cs.all_dtvs() if dtv.base_var in sketch_map
+        }
 
         new_constraints = ConstraintSet()
         # sort to avoid non-determinism
         for callee in sorted(callees):
             new_constraints |= sketch_map[
                 callee
-            ].instantiate_sketch_capabilities(callee, types, fresh_var_factory)
+            ].instantiate_sketch_capabilities(callee, fresh_var_factory)
             new_constraints |= Solver.instantiate_type_scheme(
                 fresh_var_factory, type_schemes[callee]
             )
@@ -305,7 +262,7 @@ class Solver(Loggable):
             """
             Unify two equivalent classes and all the successors
             that can be reached:
-             - Throught the same label
+             - Through the same label
              - Through a 'load' label in one and a 'store' label in the other.
             See UNIFY in Algorithm E.1 and proof of Theorem E.1
             """
@@ -382,7 +339,7 @@ class Solver(Loggable):
     ) -> None:
         """
         Infer shapes takes a set of constraints and populates shapes of the sketches
-        for all DVS in scc.
+        for all DTVs in scc.
 
         This corresponds to Algorithm E.1 'InferShapes' in the original Retypd paper.
         """
@@ -454,168 +411,6 @@ class Solver(Loggable):
             all_paths(quotient_node, visited_nodes)
 
     @staticmethod
-    def _maybe_constraint(
-        origin: Node, dest: Node, string: List[EdgeLabel]
-    ) -> Optional[SubtypeConstraint]:
-        """Generate constraints by adding the forgets in string to origin and the recalls in string
-        to dest. If both of the generated vertices are covariant (the empty string's variance is
-        covariant, so only covariant vertices can represent a type_scheme type variable without an
-        elided portion of its path) and if the two variables are not equal, emit a constraint.
-        """
-        lhs = origin
-        rhs = dest
-        forgets = []
-        recalls = []
-        for label in string:
-            if label.kind == EdgeLabel.Kind.FORGET:
-                forgets.append(label.capability)
-            else:
-                recalls.append(label.capability)
-        for recall in recalls:
-            lhs = lhs.recall(recall)
-        for forget in reversed(forgets):
-            rhs = rhs.recall(forget)
-
-        if (
-            lhs.suffix_variance == Variance.COVARIANT
-            and rhs.suffix_variance == Variance.COVARIANT
-        ):
-            lhs_var = lhs.base
-            rhs_var = rhs.base
-            if lhs_var != rhs_var:
-                return SubtypeConstraint(lhs_var, rhs_var)
-        return None
-
-    def _pathexpr_generate_constraints_from_to(
-        self,
-        graph: networkx.DiGraph,
-        start_nodes: Set[Node],
-        end_nodes: Set[Node],
-    ) -> ConstraintSet:
-        """
-        Generate constraints based on the computation of path expressions.
-        Compute path expressions for each pair of start and end nodes.
-        For each path expression, enumerate non-looping paths.
-        """
-        lattice_types = self.program.types.atomic_types
-        numbering, path_seq = scc_decompose_path_seq(graph, "label")
-        constraints = ConstraintSet()
-        for start_node in start_nodes:
-            path_exprs = solve_paths_from(path_seq, numbering[start_node])
-            for end_node in end_nodes:
-                if (
-                    start_node.base in lattice_types
-                    and end_node.base in lattice_types
-                ):
-                    continue
-                indices = (numbering[start_node], numbering[end_node])
-                path_expr = path_exprs[indices]
-                for path in enumerate_non_looping_paths(path_expr):
-                    constraint = Solver._maybe_constraint(
-                        start_node, end_node, path
-                    )
-                    if constraint:
-                        constraints.add(constraint)
-        return constraints
-
-    def _naive_generate_constraints_from_to(
-        self,
-        graph: networkx.DiGraph,
-        start_nodes: Set[Node],
-        end_nodes: Set[Node],
-    ) -> ConstraintSet:
-        """
-        Generate constraints based on the naive exploration of the graph.
-        """
-        lattice_types = self.program.types.atomic_types
-        constraints = ConstraintSet()
-        npaths = 0
-        # On large procedures, the graph this is exploring can be quite large (hundreds of nodes,
-        # thousands of edges). This can result in an insane number of paths - most of which do not
-        # result in a constraint, and most of the ones that do result in constraints are redundant.
-        def explore(
-            current_node: Node,
-            path: List[Node] = [],
-            string: List[EdgeLabel] = [],
-        ) -> None:
-            """Find all non-empty paths that begin at start_nodes and end at end_nodes. Return
-            the list of labels encountered along the way as well as the current_node and destination.
-            """
-            nonlocal max_paths_per_root
-            nonlocal npaths
-            if len(path) > self.config.max_path_length:
-                return
-            if npaths > max_paths_per_root:
-                return
-            if path and current_node in end_nodes:
-                if (
-                    current_node.base in lattice_types
-                    and path[0] in lattice_types
-                ):
-                    return
-                constraint = self._maybe_constraint(
-                    path[0], current_node, string
-                )
-                if constraint:
-                    constraints.add(constraint)
-                npaths += 1
-                return
-            if current_node in path:
-                npaths += 1
-                return
-
-            path = list(path)
-            path.append(current_node)
-            if current_node in graph:
-                for succ in graph[current_node]:
-                    label = graph[current_node][succ].get("label")
-                    new_string = list(string)
-                    if label:
-                        new_string.append(label)
-                    explore(succ, path, new_string)
-
-        # We evenly distribute the maximum number of paths that we are willing to explore
-        # across all origin nodes here.
-        max_paths_per_root = int(
-            min(
-                self.config.max_paths_per_root,
-                self.config.max_total_paths / float(len(start_nodes) + 1),
-            )
-        )
-        for origin in start_nodes:
-            npaths = 0
-            explore(origin)
-        return constraints
-
-    def _generate_constraints_from_to(
-        self,
-        graph: networkx.DiGraph,
-        start_nodes: Set[Node],
-        end_nodes: Set[Node],
-    ) -> ConstraintSet:
-        """
-        Generate a set of final constraints from a set of start_nodes to a set of
-        end_nodes based on the given graph.
-        Use path expressions or naive exploration depending on the
-        Solver's configuration.
-        """
-        if self.config.restrict_graph_to_reachable:
-            graph, start_nodes, end_nodes = remove_unreachable_states(
-                graph, start_nodes, end_nodes
-            )
-
-        if len(graph) == 0:
-            return ConstraintSet()
-        if self.config.use_path_expressions:
-            return self._pathexpr_generate_constraints_from_to(
-                graph, start_nodes, end_nodes
-            )
-        else:
-            return self._naive_generate_constraints_from_to(
-                graph, start_nodes, end_nodes
-            )
-
-    @staticmethod
     def _generate_type_vars(
         graph: networkx.DiGraph, interesting_nodes: Set[Node]
     ) -> Set[DerivedTypeVariable]:
@@ -683,7 +478,7 @@ class Solver(Loggable):
 
     @staticmethod
     def get_start_end_nodes(
-        graph: networkx.Digraph,
+        graph: networkx.DiGraph,
         start_dtvs: Set[DerivedTypeVariable],
         end_dtvs: Set[DerivedTypeVariable],
     ) -> Tuple[Set[Node], Set[Node]]:
@@ -722,6 +517,49 @@ class Solver(Loggable):
         }
         return constraints.apply_mapping(type_var_map)
 
+    def _filter_derived_lattices(self, cs: ConstraintSet) -> ConstraintSet:
+        """
+        Remove constraints which involve derive type variables from lattice elements
+        For example, int64.in_0 is something that would be removed. These are th byproduct of
+        invalid constraints being fed to Retypd.
+        """
+
+        def is_derived(dtv: DerivedTypeVariable) -> bool:
+            return (
+                DerivedTypeVariable(dtv.base)
+                in self.program.types.internal_types
+                and len(dtv.path) > 0
+            )
+
+        output = ConstraintSet()
+
+        for constraint in cs:
+            if is_derived(constraint.left) or is_derived(constraint.right):
+                continue
+            output.add(constraint)
+
+        return output
+
+    def _solve_constraints_between(
+        self,
+        graph: networkx.DiGraph,
+        start_dtvs: Set[DerivedTypeVariable],
+        end_dtvs: Set[DerivedTypeVariable],
+    ) -> ConstraintSet:
+        """
+        Get graph nodes from start/end DTVs, and solve for constraints that
+        exist between those nodes in the graph
+        """
+        start_nodes, end_nodes = Solver.get_start_end_nodes(
+            graph, start_dtvs, end_dtvs
+        )
+        unfiltered_constraints = (
+            self.graph_solver.generate_constraints_from_to(
+                graph, start_nodes, end_nodes
+            )
+        )
+        return self._filter_derived_lattices(unfiltered_constraints)
+
     def _generate_type_scheme(
         self,
         initial_constraints: ConstraintSet,
@@ -737,27 +575,29 @@ class Solver(Loggable):
             - Type variables capturing recursive types
         """
         interesting_dtvs = non_primitive_end_points | primitive_types
-        graph = ConstraintGraph(initial_constraints, interesting_dtvs).graph
+        graph = ConstraintGraph.from_constraints(
+            initial_constraints,
+            interesting_dtvs,
+        )
         all_interesting_nodes = {
             node for node in graph.nodes if node.base in interesting_dtvs
         }
         type_vars = Solver._generate_type_vars(graph, all_interesting_nodes)
-        interesting_dtvs |= type_vars
 
         if len(type_vars) > 0:
+            interesting_dtvs |= type_vars
+
             # If we have type vars, we recompute the graph
             # considering type vars as interesting
-            graph = ConstraintGraph(
-                initial_constraints, interesting_dtvs
-            ).graph
-            # Uncomment to output graph for debugging
-            # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
+            graph = ConstraintGraph.from_constraints(
+                initial_constraints,
+                interesting_dtvs,
+            )
+        # Uncomment to output graph for debugging
+        # dump_labeled_graph(graph, "graph", f"/tmp/scc_graph")
 
-        start_nodes, end_nodes = Solver.get_start_end_nodes(
+        constraints = self._solve_constraints_between(
             graph, interesting_dtvs, interesting_dtvs
-        )
-        constraints = self._generate_constraints_from_to(
-            graph, start_nodes, end_nodes
         )
         return Solver.substitute_type_vars(constraints, type_vars)
 
@@ -775,33 +615,28 @@ class Solver(Loggable):
          - From non_primitive_end_points to primitive_types.
         """
 
-        graph = ConstraintGraph(
-            initial_constraints, non_primitive_end_points | primitive_types
-        ).graph
+        graph = ConstraintGraph.from_constraints(
+            initial_constraints,
+            non_primitive_end_points | primitive_types,
+        )
         constraints = ConstraintSet()
 
         # from proc and global vars to primitive types
-        start_nodes, end_nodes = Solver.get_start_end_nodes(
+        constraints |= self._solve_constraints_between(
             graph, non_primitive_end_points, primitive_types
-        )
-        constraints |= self._generate_constraints_from_to(
-            graph, start_nodes, end_nodes
         )
 
         # from primitive types to proc and global vars
-        start_nodes, end_nodes = Solver.get_start_end_nodes(
+        constraints |= self._solve_constraints_between(
             graph, primitive_types, non_primitive_end_points
         )
-        constraints |= self._generate_constraints_from_to(
-            graph, start_nodes, end_nodes
-        )
+
         return constraints
 
     def _solve_topo_graph(
         self,
         global_handler: GlobalHandler,
         scc_dag: networkx.DiGraph,
-        constraint_map: Dict[Any, ConstraintSet],
         sketches_map: Dict[DerivedTypeVariable, Sketches],
         type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
     ):
@@ -827,15 +662,18 @@ class Solver(Loggable):
         ):
             global_handler.pre_scc(scc_node)
             scc = scc_dag.nodes[scc_node]["members"]
+            self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
             scc_initial_constraints = ConstraintSet()
+
             for proc in scc:
-                constraints = constraint_map.get(proc, ConstraintSet())
+                self.debug("# Initializing call-sites for %s", proc)
+                constraints = self.program.proc_constraints.get(
+                    proc, ConstraintSet()
+                )
                 constraints |= Solver.instantiate_calls(
-                    constraints, sketches_map, type_schemes, self.program.types
+                    constraints, sketches_map, type_schemes
                 )
                 scc_initial_constraints |= constraints
-
-            self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
 
             self.debug("# Inferring shapes")
             scc_sketches = Sketches(self.program.types, self.verbose)
@@ -930,7 +768,6 @@ class Solver(Loggable):
         self._solve_topo_graph(
             global_handler,
             scc_dag,
-            self.program.proc_constraints,
             sketches_map,
             type_schemes,
         )
