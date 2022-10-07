@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import FrozenSet, List, Optional, Set, Any
+from typing import List, Optional, Set, Any
 
 from .fast_enfa import FastENFA
 from .pathexpr import RExp, scc_decompose_path_seq, solve_paths_from
@@ -136,8 +136,8 @@ class DFAGraphSolver(GraphSolver):
 
             enfa.add_transition(State(from_node), sym, State(to_node))
 
-        enfa.add_start_state(self.START)
-        enfa.add_final_state(self.FINAL)
+        enfa.add_start_state(cls.START)
+        enfa.add_final_state(cls.FINAL)
 
         for start in start_nodes:
             enfa.add_transition(cls.START, Symbol(start), State(start))
@@ -157,7 +157,7 @@ class DFAGraphSolver(GraphSolver):
         Treat the graph as a ε-NFA, then convert to a DFA and subsequent minimal
         DFA. Compute path labels between start/ends over minimized DFA.
         """
-        enfa = self._graph_to_dfa(graph, start_nodes, end_nodes)
+        enfa = self._graph_to_enfa(graph, start_nodes, end_nodes)
         mdfa = enfa.minimize()
         dfa_g = mdfa.to_networkx()
 
@@ -249,9 +249,7 @@ class PathExprGraphSolver(GraphSolver):
                 indices = (numbering[start_node], numbering[end_node])
                 path_expr = path_exprs[indices]
                 for path in self.enumerate_non_looping_paths(path_expr):
-                    constraint = _maybe_constraint(
-                        start_node, end_node, path
-                    )
+                    constraint = _maybe_constraint(start_node, end_node, path)
                     if constraint:
                         constraints.add(constraint)
         return constraints

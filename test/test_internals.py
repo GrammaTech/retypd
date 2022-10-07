@@ -168,6 +168,7 @@ def test_infers_all_inputs():
     assert isinstance(dtv2type[F].params[2].target_type.params[1], IntType)
     assert dtv2type[F].params[2].target_type.params[1] is not None
 
+
 @pytest.mark.commit
 def test_top_down():
     """
@@ -458,9 +459,7 @@ def test_sketches_not_overlapping():
     }
 
     program = Program(CLattice(), {}, constraints, callgraph)
-    config = SolverConfig(
-        use_dfa_simplification=True, top_down_propagation=True
-    )
+    config = SolverConfig(graph_solver="dfa", top_down_propagation=True)
     solver = Solver(program, config)
 
     gen_cs, sketches = solver()

@@ -90,7 +90,7 @@ all_solver_configs = pytest.mark.parametrize(
             ),
         ),
         SolverConfig(graph_solver="dfa"),
-        SolverConfig(graph_solver="dfa", top_down_propation=True),
+        SolverConfig(graph_solver="dfa", top_down_propagation=True),
     ],
     ids=[
         "naive-reachable",

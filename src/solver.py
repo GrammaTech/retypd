@@ -182,7 +182,7 @@ class Solver(Loggable):
             raise ValueError(f"Unknown graph solver {config.graph_solver}")
 
     @staticmethod
-    def specialize_temporaries(
+    def specialize_locals(
         base: DerivedTypeVariable,
         constraints: ConstraintSet,
         interesting_vars: Set[DerivedTypeVariable],
@@ -817,7 +817,7 @@ class Solver(Loggable):
                 constraints = self.program.proc_constraints.get(
                     proc, ConstraintSet()
                 )
-                constraints = Solver.specialize_temporaries(
+                constraints = Solver.specialize_locals(
                     proc,
                     constraints,
                     all_interesting | self.program.types.atomic_types,
@@ -899,10 +899,10 @@ class Solver(Loggable):
             global_handler.post_scc(scc_node, sketches_map)
 
         if not self.config.top_down_propagation:
-            # We're dont after our initial bottom-up phase
+            # We are done after our initial bottom-up phase
             return
 
-        self.debug("# Propgating top-down")
+        self.debug("# Propagating top-down")
         prim_constraints = defaultdict(lambda: ConstraintSet())
 
         for scc_node in show_progress(scc_dag_topo):
