@@ -44,7 +44,6 @@ from .schema import (
     Program,
     LoadLabel,
     StoreLabel,
-    SubtypeConstraint,
     Lattice,
 )
 
@@ -174,33 +173,6 @@ class Solver(Loggable):
             self.graph_solver = NaiveGraphSolver(config.graph_solver_config)
         else:
             raise ValueError(f"Unknown graph solver {config.graph_solver}")
-
-    @staticmethod
-    def specialize_locals(
-        base: DerivedTypeVariable,
-        constraints: ConstraintSet,
-        procs_and_global_vars: Set[DerivedTypeVariable],
-    ) -> ConstraintSet:
-        """
-        Specialize temporary variables to a specific function
-        """
-
-        def fix_dtv(dtv: DerivedTypeVariable) -> DerivedTypeVariable:
-            if DerivedTypeVariable(dtv.base) not in procs_and_global_vars:
-                return DerivedTypeVariable(f"{base}${dtv.base}", dtv.path)
-            else:
-                return dtv
-
-        output_cs = ConstraintSet()
-
-        for constraint in constraints:
-            output_cs.add(
-                SubtypeConstraint(
-                    fix_dtv(constraint.left), fix_dtv(constraint.right)
-                )
-            )
-
-        return output_cs
 
     @staticmethod
     def instantiate_type_scheme(
