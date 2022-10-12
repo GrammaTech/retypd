@@ -63,48 +63,6 @@ class SketchNode:
     def __repr__(self) -> str:
         return f"SketchNode({self})"
 
-    def meet(self, rhs: SketchNode, types: Lattice[DerivedTypeVariable]):
-        """
-        Meet over the lattice of Sketches, defined in Figure 18
-        """
-        assert self.dtv == rhs.dtv
-
-        if self.dtv.path_variance == Variance.COVARIANT:
-            return SketchNode(
-                self.dtv,
-                types.meet(self.lower_bound, rhs.lower_bound),
-                types.meet(self.upper_bound, rhs.upper_bound),
-            )
-        else:
-            return SketchNode(
-                self.dtv,
-                types.join(self.lower_bound, rhs.lower_bound),
-                types.join(self.upper_bound, rhs.upper_bound),
-            )
-
-    def join(self, rhs: SketchNode, types: Lattice[DerivedTypeVariable]):
-        """
-        Join over the lattice of Sketches, defined in Figure 18
-        """
-        assert self.dtv == rhs.dtv
-
-        # TODO: What do these rules mean?
-        #  - v_X(w) if w \in L(X) \ L(y)
-        #  - v_Y(w) if w \in L(Y) \ L(X)
-
-        if self.dtv.path_variance == Variance.COVARIANT:
-            return SketchNode(
-                self.dtv,
-                types.join(self.lower_bound, rhs.lower_bound),
-                types.join(self.upper_bound, rhs.upper_bound),
-            )
-        else:
-            return SketchNode(
-                self.dtv,
-                types.meet(self.lower_bound, rhs.lower_bound),
-                types.meet(self.upper_bound, rhs.upper_bound),
-            )
-
 
 class LabelNode:
     """
@@ -144,22 +102,24 @@ class LabelNode:
 SkNode = Union[SketchNode, LabelNode]
 
 
-class Sketches(Loggable):
-    """The set of sketches from a set of constraints. Intended to be updated incrementally, per the
-    Solver's reverse topological ordering.
+class Sketch(Loggable):
+    """
+    The sketch of a type variable.
     """
 
     def __init__(
         self,
+        root: DerivedTypeVariable,
         types: Lattice[DerivedTypeVariable],
         verbose: LogLevel = LogLevel.QUIET,
     ) -> None:
-        super(Sketches, self).__init__(verbose)
+        super(Sketch, self).__init__(verbose)
         # We maintain the invariant that if a node is in `lookup` then it should also be in
         # `sketches` as a node (even if there are no edges)
         self.sketches = networkx.DiGraph()
         self._lookup: Dict[DerivedTypeVariable, SketchNode] = {}
         self.types = types
+        self.root = self.make_node(root)
 
     def lookup(self, dtv: DerivedTypeVariable) -> Optional[SketchNode]:
         """
@@ -262,66 +222,47 @@ class Sketches(Loggable):
                     f" Label {self.sketches.edges[head, tail]['label']} exists"
                 )
 
-    def _copy_global_recursive(
-        self, node: SketchNode, sketches: Sketches
-    ) -> SketchNode:
-        """
-        Auxiliary method to recusively copy a sketch tree
-        rooted in `node` from `sketches` to `self`.
-        """
-        # TODO: this probably needs to handle atoms properly, using the Lattice. Needs
-        # some thought.
-        our_node = self.ref_node(node)
-        if node in sketches.sketches.nodes:
-            for _, dst in sketches.sketches.out_edges(node):
-                our_dst = dst
-                if not isinstance(dst, LabelNode):
-                    our_dst = self._copy_global_recursive(dst, sketches)
-                self.add_edge(
-                    our_node, our_dst, sketches.sketches[node][dst]["label"]
-                )
-        return our_node
-
-    def copy_globals_from_sketch(
-        self, global_vars: Set[DerivedTypeVariable], sketches: Sketches
-    ):
-        """
-        Copy the sketch trees of global variables from `sketches` to `self`.
-        """
-        global_roots = set()
-        for dtv, node in sketches._lookup.items():
-            if dtv.base_var in global_vars:
-                global_roots.add(dtv.base_var)
-        for g in global_roots:
-            node = sketches.lookup(g)
-            if node is None:
-                continue
-            self._copy_global_recursive(node, sketches)
-
-    def instantiate_sketch_capabilities(
+    def instantiate_sketch(
         self,
         proc: DerivedTypeVariable,
         fresh_var_factory: FreshVarFactory,
+        only_capabilities: bool = False,
     ) -> ConstraintSet:
         """
-        Encode all the capability information present in the sketch
-        using fake variables.
+        Encode all the capability and primitive type information present in the sketch.
         """
         all_constraints = ConstraintSet()
         for node in self.sketches.nodes:
             if isinstance(node, SketchNode) and node.dtv.base_var == proc:
+                constraints = []
+                if not only_capabilities:
+                    if node.lower_bound != self.types.bottom:
+                        constraints.append(
+                            SubtypeConstraint(node.lower_bound, node.dtv)
+                        )
+                    if node.upper_bound != self.types.top:
+                        constraints.append(
+                            SubtypeConstraint(node.dtv, node.upper_bound)
+                        )
+
                 # if the node is a leaf, capture the capability using fake variables
                 # this could be avoided if we support capability constraints  (Var x.l) in
                 # addition to subtype constraints
-                if self.sketches.out_degree(node) == 0:
+                if (
+                    len(constraints) == 0
+                    and self.sketches.out_degree(node) == 0
+                ):
                     fresh_var = fresh_var_factory.fresh_var()
-
                     if node.dtv.path_variance == Variance.CONTRAVARIANT:
-                        constraint = SubtypeConstraint(node.dtv, fresh_var)
+                        constraints.append(
+                            SubtypeConstraint(node.dtv, fresh_var)
+                        )
                     else:
-                        constraint = SubtypeConstraint(fresh_var, node.dtv)
+                        constraints.append(
+                            SubtypeConstraint(fresh_var, node.dtv)
+                        )
 
-                    all_constraints.add(constraint)
+                all_constraints |= ConstraintSet(constraints)
         return all_constraints
 
     def add_constraints(self, constraints: ConstraintSet) -> None:
@@ -358,6 +299,122 @@ class Sketches(Loggable):
                     left_node.upper_bound, right
                 )
                 self.debug("   --> %s", left_node)
+
+    def remove_subtree(self, node: SkNode) -> None:
+        """
+        Remove the subtree with root node from the sketch.
+        """
+        worklist = [node]
+        while len(worklist) > 0:
+            node = worklist.pop()
+            worklist.extend(self.sketches.successors(node))
+            self.sketches.remove_node(node)
+            if isinstance(node, SketchNode):
+                if node.dtv in self._lookup:
+                    del self._lookup[node.dtv]
+
+    def meet(self, other: Sketch) -> None:
+        """
+        Compute in-place meet of self and another sketch
+        """
+        if self.root.dtv != other.root.dtv:
+            raise RetypdError(
+                "Cannot compute a meet of two sketches with different root"
+            )
+
+        worklist = [(self.root, other.root)]
+        met_nodes = set()
+        while len(worklist) > 0:
+            curr_node, other_node = worklist.pop()
+            # Avoid infinite loop in case of label nodes
+            if (curr_node, other_node) in met_nodes:
+                continue
+            met_nodes.add((curr_node, other_node))
+
+            # Deal with primitive type
+            curr_node.lower_bound = self.types.join(
+                curr_node.lower_bound, other_node.lower_bound
+            )
+            curr_node.upper_bound = self.types.meet(
+                curr_node.upper_bound, other_node.upper_bound
+            )
+
+            # Deal with successors
+            curr_succs = {
+                label: succ
+                for _, succ, label in self.sketches.out_edges(
+                    curr_node, data="label"
+                )
+            }
+            for _, other_succ, label in other.sketches.out_edges(
+                other_node, data="label"
+            ):
+                if label not in curr_succs:
+                    # create new node
+                    if isinstance(other_succ, SketchNode):
+                        curr_succ = self.make_node(other_succ.dtv)
+                        curr_succ.upper_bound = other_succ.upper_bound
+                        curr_succ.lower_bound = other_succ.lower_bound
+                    else:  # LabelNode
+                        curr_succ = LabelNode(other_succ.target)
+                        self._add_node(curr_succ)
+                    self.add_edge(curr_node, curr_succ, label)
+                else:
+                    curr_succ = curr_succs[label]
+                # follow label nodes
+                if isinstance(curr_succ, LabelNode):
+                    curr_succ = self.lookup(curr_succ.target)
+                if isinstance(other_succ, LabelNode):
+                    other_succ = other.lookup(other_succ.target)
+                worklist.append((curr_succ, other_succ))
+
+    def join(self, other: Sketch) -> None:
+        """
+        Compute in-place join of self and another sketch
+        """
+
+        if self.root.dtv != other.root.dtv:
+            raise RetypdError(
+                "Cannot compute a join of two sketches with different root"
+            )
+
+        worklist = [(self.root, other.root)]
+        joined_nodes = set()
+        while len(worklist) > 0:
+            curr_node, other_node = worklist.pop()
+            # Avoid infinite loop in case of label nodes
+            if (curr_node, other_node) in joined_nodes:
+                continue
+            joined_nodes.add((curr_node, other_node))
+
+            # Deal with primitive type
+            curr_node.lower_bound = self.types.meet(
+                curr_node.lower_bound, other_node.lower_bound
+            )
+            curr_node.upper_bound = self.types.join(
+                curr_node.upper_bound, other_node.upper_bound
+            )
+
+            # Deal with successors
+            other_succs = {
+                label: succ
+                for _, succ, label in other.sketches.out_edges(
+                    other_node, data="label"
+                )
+            }
+            for _, curr_succ, label in list(
+                self.sketches.out_edges(curr_node, data="label")
+            ):
+                if label not in other_succs:
+                    # remove subtree
+                    self.remove_subtree(curr_succ)
+                else:
+                    other_succ = other_succs[label]
+                    if isinstance(curr_succ, SketchNode) and isinstance(
+                        other_succ, SketchNode
+                    ):
+                        worklist.append((curr_succ, other_succ))
+                    # TODO what to do with LabelNodes?
 
     def to_dot(self, dtv: DerivedTypeVariable) -> str:
         nt = f"{os.linesep}\t"

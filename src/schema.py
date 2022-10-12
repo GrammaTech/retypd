@@ -583,11 +583,6 @@ class Program:
         self.types = types
         self.global_vars = {maybe_to_var(glob) for glob in global_vars}
         self.proc_constraints: Dict[DerivedTypeVariable, ConstraintSet] = {}
-        for name, constraints in maybe_to_bindings(proc_constraints):
-            var = maybe_to_var(name)
-            if var in self.proc_constraints:
-                raise ValueError(f"Procedure doubly bound: {name}")
-            self.proc_constraints[var] = constraints
         if isinstance(callgraph, networkx.DiGraph):
             self.callgraph = callgraph
         else:  # Dict or Iterable[Tuple]
@@ -597,6 +592,56 @@ class Program:
                 self.callgraph.add_node(caller_var)
                 for callee in callees:
                     self.callgraph.add_edge(caller_var, maybe_to_var(callee))
+        for name, constraints in maybe_to_bindings(proc_constraints):
+            var = maybe_to_var(name)
+            if var in self.proc_constraints:
+                raise ValueError(f"Procedure doubly bound: {name}")
+            self.proc_constraints[var] = Program.specialize_locals(
+                var,
+                constraints,
+                self.procs_and_globals | self.types.atomic_types,
+            )
+
+    @staticmethod
+    def specialize_locals(
+        base: DerivedTypeVariable,
+        constraints: ConstraintSet,
+        procs_and_global_vars: Set[DerivedTypeVariable],
+    ) -> ConstraintSet:
+        """
+        Specialize temporary variables to a specific function
+        """
+
+        def fix_dtv(dtv: DerivedTypeVariable) -> DerivedTypeVariable:
+            if DerivedTypeVariable(dtv.base) not in procs_and_global_vars:
+                return DerivedTypeVariable(f"{base}${dtv.base}", dtv.path)
+            else:
+                return dtv
+
+        output_cs = ConstraintSet()
+
+        for constraint in constraints:
+            output_cs.add(
+                SubtypeConstraint(
+                    fix_dtv(constraint.left), fix_dtv(constraint.right)
+                )
+            )
+
+        return output_cs
+
+    @property
+    def procs_and_globals(self):
+        """
+        The set of procedures and global variables in a program.
+        """
+        return self.global_vars | self.procs
+
+    @property
+    def procs(self):
+        """
+        The set of procedures in the program.
+        """
+        return set(self.callgraph.nodes())
 
 
 class FreshVarFactory:

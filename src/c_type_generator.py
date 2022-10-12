@@ -33,7 +33,7 @@ from .schema import (
 )
 from .sketches import (
     SketchNode,
-    Sketches,
+    Sketch,
     LabelNode,
     SkNode,
 )
@@ -70,7 +70,7 @@ class CTypeGenerator(Loggable):
 
     def __init__(
         self,
-        sketch_map: Dict[DerivedTypeVariable, Sketches],
+        sketch_map: Dict[DerivedTypeVariable, Sketch],
         lattice: Lattice,
         lattice_ctypes: LatticeCTypes,
         default_int_size: int,
@@ -137,22 +137,22 @@ class CTypeGenerator(Loggable):
         self.debug("Unioning: %s", unioned_types)
         return UnionType(unioned_types)
 
-    def resolve_label(self, sketches: Sketches, node: SkNode) -> SketchNode:
+    def resolve_label(self, sketch: Sketch, node: SkNode) -> SketchNode:
         if isinstance(node, LabelNode):
             self.info("Resolved label: %s", node)
-            return sketches.lookup(node.target)
+            return sketch.lookup(node.target)
         return node
 
     def _succ_no_loadstore(
         self,
         curr_access_path: List[AccessPathLabel],
-        sketches: Sketches,
+        sketch: Sketch,
         node: SketchNode,
         seen: Set[SketchNode],
     ) -> List[Tuple[List[AccessPathLabel], SketchNode]]:
         """
         Collect a list of SketchNode successors of `node`
-        in the sketch graph `sketches` by traversing load and store
+        in the sketch graph `sketch` by traversing load and store
         labels. Each `SketchNode` successor is accompanied
         by the access path that leads to it.
         The access path will coincide with the node's DTV unless
@@ -161,15 +161,15 @@ class CTypeGenerator(Loggable):
         successors = []
         if node not in seen:
             seen.add(node)
-            for n in sketches.sketches.successors(node):
-                new_label = sketches.sketches[node][n]["label"]
-                n = self.resolve_label(sketches, n)
+            for n in sketch.sketches.successors(node):
+                new_label = sketch.sketches[node][n]["label"]
+                n = self.resolve_label(sketch, n)
                 if n is None:
                     continue
                 if n.dtv.tail in (StoreLabel.instance(), LoadLabel.instance()):
                     successors.extend(
                         self._succ_no_loadstore(
-                            curr_access_path + [new_label], sketches, n, seen
+                            curr_access_path + [new_label], sketch, n, seen
                         )
                     )
                 else:
@@ -192,7 +192,7 @@ class CTypeGenerator(Loggable):
     def c_type_from_nodeset(
         self,
         base_dtv: DerivedTypeVariable,
-        sketches: Sketches,
+        sketch: Sketch,
         ns: Set[SketchNode],
     ) -> Optional[CType]:
         """
@@ -200,7 +200,7 @@ class CTypeGenerator(Loggable):
         set of nodes must be all for the same access path (e.g., foo[0]), but can be different
         _ways_ of accessing it (e.g., foo.load.s8@0 and foo.store.s8@0).
         """
-        ns = set([self.resolve_label(sketches, n) for n in ns])
+        ns = set([self.resolve_label(sketch, n) for n in ns])
         assert None not in ns
 
         # Check cache
@@ -211,7 +211,7 @@ class CTypeGenerator(Loggable):
 
         children = list(
             itertools.chain(
-                *[self._succ_no_loadstore([], sketches, n, set()) for n in ns]
+                *[self._succ_no_loadstore([], sketch, n, set()) for n in ns]
             )
         )
         available_tails = {access_paths[-1] for access_paths, _ in children}
@@ -278,10 +278,10 @@ class CTypeGenerator(Loggable):
                     assert False, "Unreachable type generation state"
 
             ptr_func.target_type.return_type = self.c_type_from_nodeset(
-                base_dtv, sketches, outputs
+                base_dtv, sketch, outputs
             )
             ptr_func.target_type.params = [
-                self.c_type_from_nodeset(base_dtv, sketches, inputs[index])
+                self.c_type_from_nodeset(base_dtv, sketch, inputs[index])
                 if len(inputs[index]) > 0
                 else self.lattice_ctypes.atom_to_ctype(
                     self.lattice.bottom,
@@ -350,7 +350,7 @@ class CTypeGenerator(Loggable):
             fields = []
             for offset, siblings in children_by_offset.items():
                 child_type = self.c_type_from_nodeset(
-                    base_dtv, sketches, siblings
+                    base_dtv, sketch, siblings
                 )
                 fields.append(Field(child_type, offset=offset))
             s.set_fields(fields=fields)
@@ -411,16 +411,16 @@ class CTypeGenerator(Loggable):
             (typically globals or functions). If None (default), emit all types.
         """
         dtv_to_type = {}
-        for dtv, sketches in self.sketch_map.items():
+        for dtv, sketch in self.sketch_map.items():
             if filter_to is not None and dtv not in filter_to:
                 continue
 
-            node = sketches.lookup(dtv)
+            node = sketch.lookup(dtv)
 
             if node is None:
                 continue
 
-            maybe_ptr_func = self.c_type_from_nodeset(dtv, sketches, {node})
+            maybe_ptr_func = self.c_type_from_nodeset(dtv, sketch, {node})
 
             if isinstance(maybe_ptr_func, PointerType) and isinstance(
                 maybe_ptr_func.target_type, FunctionType

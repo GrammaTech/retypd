@@ -1077,7 +1077,7 @@ def test_regression3():
     }
 
     (gen_const, sketches) = compute_sketches(
-        constraints, {"do_callback": {""}}, CLattice()
+        constraints, {"do_callback": {}}, CLattice()
     )
 
     assert gen_const[parse_var("do_callback")] == parse_cs_set(
