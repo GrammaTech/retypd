@@ -157,15 +157,6 @@ class Sketch(Loggable):
         self._lookup[node.dtv] = node
         self.sketches.add_node(node)
 
-    def ref_node(self, node: SkNode) -> SkNode:
-        """Add a reference to the given node (no copy)"""
-        if isinstance(node, LabelNode):
-            return node
-        if node.dtv in self._lookup:
-            return self._lookup[node.dtv]
-        self._add_node(node)
-        return node
-
     def make_node(self, variable: DerivedTypeVariable) -> SketchNode:
         """Make a node from a DTV. Compute its atom from its access path."""
         result = SketchNode(variable, self.types.bottom, self.types.top)
@@ -303,8 +294,7 @@ class Sketch(Loggable):
             curr_node.upper_bound = self.types.meet(
                 curr_node.upper_bound, other_node.upper_bound
             )
-
-            # Deal with successors
+            # Meet of successors: language union
             curr_succs = {
                 label: succ
                 for _, succ, label in self.sketches.out_edges(
@@ -322,7 +312,6 @@ class Sketch(Loggable):
                         curr_succ.lower_bound = other_succ.lower_bound
                     else:  # LabelNode
                         curr_succ = LabelNode(other_succ.target)
-                        self._add_node(curr_succ)
                     self.add_edge(curr_node, curr_succ, label)
                 else:
                     curr_succ = curr_succs[label]
@@ -342,16 +331,9 @@ class Sketch(Loggable):
             raise RetypdError(
                 "Cannot compute a join of two sketches with different root"
             )
-
         worklist = [(self.root, other.root)]
-        joined_nodes = set()
         while len(worklist) > 0:
             curr_node, other_node = worklist.pop()
-            # Avoid infinite loop in case of label nodes
-            if (curr_node, other_node) in joined_nodes:
-                continue
-            joined_nodes.add((curr_node, other_node))
-
             # Deal with primitive type
             curr_node.lower_bound = self.types.meet(
                 curr_node.lower_bound, other_node.lower_bound
@@ -360,7 +342,7 @@ class Sketch(Loggable):
                 curr_node.upper_bound, other_node.upper_bound
             )
 
-            # Deal with successors
+            # Join successors: Language intersection
             other_succs = {
                 label: succ
                 for _, succ, label in other.sketches.out_edges(
@@ -371,7 +353,6 @@ class Sketch(Loggable):
                 self.sketches.out_edges(curr_node, data="label")
             ):
                 if label not in other_succs:
-                    # remove subtree
                     self.remove_subtree(curr_succ)
                 else:
                     other_succ = other_succs[label]

@@ -1267,3 +1267,42 @@ def test_incremental_global_computation():
     assert G_sketch.lookup(
         parse_var("G.load.σ4@8")
     ).upper_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_recursive_top_down_propagation():
+    """The type of f.in_0 is recursive.
+    struct list{
+        list* next;
+        int elem;
+    }
+    The type of g.in_0 is the same as f.in_0
+    when propagated top-down
+    """
+    config = SolverConfig(graph_solver="dfa", top_down_propagation=True)
+    constraints = {
+        "f": [
+            "f.in_0 <= list",
+            "list.load.σ4@0 <= next",
+            "next <= list",
+            "g.in_0 <= f.in_0",
+        ],
+        "g": ["g.in_0.load.σ4@4 <= int"],
+    }
+    callgraph = {"f": ["g"]}
+    lattice = CLattice()
+    (_, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+
+    f_sketch = sketches[DerivedTypeVariable("f")]
+    assert f_sketch.lookup(parse_var("f.in_0.load.σ4@0")) == f_sketch.lookup(
+        parse_var("f.in_0")
+    )
+    g_sketch = sketches[DerivedTypeVariable("g")]
+    assert g_sketch.lookup(parse_var("g.in_0.load.σ4@0")) == g_sketch.lookup(
+        parse_var("g.in_0")
+    )
+    assert g_sketch.lookup(
+        parse_var("g.in_0.load.σ4@4")
+    ).upper_bound == DerivedTypeVariable("int")
