@@ -46,11 +46,9 @@ from .schema import (
     StoreLabel,
     Lattice,
 )
-
 from .sketches import LabelNode, SketchNode, Sketch
-from .loggable import Loggable, LogLevel
+from .loggable import Loggable, LogLevel, show_progress
 import networkx
-import tqdm
 from dataclasses import dataclass
 from graphviz import Digraph
 
@@ -85,13 +83,6 @@ class SolverConfig:
     graph_solver: str = "dfa"
     # Graph solver configuration
     graph_solver_config: GraphSolverConfig = GraphSolverConfig()
-    # More precise global handling
-    # By default, we propagate globals up the callgraph, inlining them into the sketches as we
-    # go, and the global sketches in the final (synthetic) root of the callgraph are the results
-    # However, this can be slow and for large binaries the extra precision may not be worth the
-    # time cost. If this is set to False we do a single unification of globals at the end, instead
-    # of pulling them up the callgraph.
-    precise_globals: bool = True
     # After the initial bottom-up face, an optional pass to take the most general types of those
     # functions and re-propagating to make most specific types at their callsites.
     top_down_propagation: bool = False
@@ -199,6 +190,7 @@ class Solver(Loggable):
 
     @staticmethod
     def instantiate_calls(
+        callees: Set[DerivedTypeVariable],
         cs: ConstraintSet,
         sketch_map: Dict[DerivedTypeVariable, Sketch],
         type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
@@ -212,11 +204,12 @@ class Solver(Loggable):
         # TODO in order to support different instantiations for different calls
         # to the same function, we need to encode function actuals
         # differently than function formals
-        callees = {tv for tv in cs.all_tvs() if tv in sketch_map}
+
+        connected_callees = {tv for tv in cs.all_tvs() & callees}
 
         new_constraints = ConstraintSet()
         # sort to avoid non-determinism
-        for callee in sorted(callees):
+        for callee in sorted(connected_callees):
             new_constraints |= sketch_map[callee].instantiate_sketch(
                 callee, fresh_var_factory, only_capabilities=True
             )
@@ -655,11 +648,10 @@ class Solver(Loggable):
 
         return constraints
 
-    def _solve_topo_graph(
+    def _solve_bottom_up(
         self,
-        fake_root: DerivedTypeVariable,
         callgraph: networkx.DiGraph,
-        scc_dag: networkx.DiGraph,
+        scc_dag_topo: List[FrozenSet[DerivedTypeVariable]],
         sketches_map: Dict[DerivedTypeVariable, Sketch],
         type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
     ):
@@ -674,31 +666,34 @@ class Solver(Loggable):
            - Compute constraints to populate primitive type information in sketches.
         - Add primitive type information to the pre-populated sketches.
         """
-
-        def show_progress(iterable):
-            if self.verbose:
-                return tqdm.tqdm(iterable)
-            return iterable
-
-        scc_dag_topo = list(networkx.topological_sort(scc_dag))
         universal_schemas = {}
 
-        for scc_node in show_progress(reversed(scc_dag_topo)):
-            scc = frozenset(scc_dag.nodes[scc_node]["members"])
-            if fake_root in scc:
-                continue
+        self.debug("# Propagating bottom-up")
+
+        for scc in show_progress(self.verbose, reversed(scc_dag_topo)):
             self.debug("# Processing SCC: %s", "_".join([str(s) for s in scc]))
             scc_initial_constraints = ConstraintSet()
             fresh_var_factory = FreshVarFactory()
 
+            non_scc_callees = set()
             for proc in scc:
                 self.debug("# Collecting constraints for %s", proc)
                 constraints = self.program.proc_constraints.get(
                     proc, ConstraintSet()
                 )
+                non_scc_proc_callees = {
+                    succ
+                    for succ in callgraph.successors(proc)
+                    if succ not in scc
+                }
                 constraints |= Solver.instantiate_calls(
-                    constraints, sketches_map, type_schemes, fresh_var_factory
+                    non_scc_proc_callees,
+                    constraints,
+                    sketches_map,
+                    type_schemes,
+                    fresh_var_factory,
                 )
+                non_scc_callees |= non_scc_proc_callees
                 scc_initial_constraints |= constraints
             # Instantiate global sketches (if they exist)
             involved_globals = (
@@ -725,10 +720,9 @@ class Solver(Loggable):
             # Generate type scheme for all interesting nodes, since the sketches can have
             # other procedures' sketch nodes
             self.debug("# Inferring universal type scheme of scc: %s", scc)
-            callees = {
-                succ for proc in scc for succ in callgraph.successors(proc)
-            }
-            global_procs_and_vars = frozenset(scc | callees | involved_globals)
+            global_procs_and_vars = frozenset(
+                scc | non_scc_proc_callees | involved_globals
+            )
             universal_type_scheme = self._generate_type_scheme(
                 scc_initial_constraints,
                 global_procs_and_vars,
@@ -780,56 +774,65 @@ class Solver(Loggable):
                 )
                 sketches_map[global_var].add_constraints(primitive_constraints)
 
-        if not self.config.top_down_propagation:
-            # We are done after our initial bottom-up phase
-            return
-
+    def _solve_top_down(
+        self,
+        callgraph: networkx.DiGraph,
+        scc_dag_topo: List[FrozenSet[DerivedTypeVariable]],
+        sketches_map: Dict[DerivedTypeVariable, Sketch],
+        type_schemes: Dict[DerivedTypeVariable, ConstraintSet],
+    ):
         self.debug("# Propagating top-down")
-
         actuals_sketch_map: Dict[DerivedTypeVariable, Sketch] = {}
 
-        for scc_node in show_progress(scc_dag_topo):
-            scc = scc_dag.nodes[scc_node]["members"]
+        for scc in show_progress(self.verbose, scc_dag_topo):
+            scc_initial_constraints = ConstraintSet()
             fresh_var_factory = FreshVarFactory()
-            if fake_root in scc:
-                continue
             self.debug(
                 "# Processing top-down SCC: %s",
                 "_".join([str(s) for s in scc]),
             )
 
             # refine parameters
-            for proc in scc:
-                if proc in actuals_sketch_map:
+            # only for non-recursive sccs
+            if len(scc) == 1:
+                proc = list(scc)[0]
+                if (
+                    proc not in callgraph.successors(proc)
+                    and proc in actuals_sketch_map
+                ):
                     sketches_map[proc].meet(actuals_sketch_map[proc])
 
-            scc_initial_constraints = ConstraintSet()
             # We should keep the quotient graph around to save time here.
+            non_scc_callees = set()
             for proc in scc:
                 self.debug("# Collecting constraints for %s", proc)
                 constraints = self.program.proc_constraints.get(
                     proc, ConstraintSet()
                 )
+                non_scc_proc_callees = {
+                    succ
+                    for succ in callgraph.successors(proc)
+                    if succ not in scc
+                }
                 constraints |= Solver.instantiate_calls(
-                    constraints, sketches_map, type_schemes, fresh_var_factory
+                    non_scc_proc_callees,
+                    constraints,
+                    sketches_map,
+                    type_schemes,
+                    fresh_var_factory,
                 )
                 constraints |= sketches_map[proc].instantiate_sketch(
                     proc, fresh_var_factory
                 )
+                non_scc_callees |= non_scc_proc_callees
                 scc_initial_constraints |= constraints
 
-            callees = {
-                succ
-                for proc in scc
-                for succ in callgraph.successors(proc)
-                if succ not in scc
-            }
             callees_sketches_map = self.infer_shapes(
-                callees,
+                non_scc_callees,
                 self.program.types,
                 scc_initial_constraints,
             )
-            for callee in callees:
+            for callee in non_scc_callees:
                 primitive_constraints = self._generate_primitive_constraints(
                     scc_initial_constraints,
                     frozenset({callee}),
@@ -877,16 +880,28 @@ class Solver(Loggable):
         # is that there aren't many paths.
         self.info("Solving functions")
         callgraph = networkx.DiGraph(self.program.callgraph)
-        fake_root = DerivedTypeVariable("$$FAKEROOT$$")
-        for r in find_roots(callgraph):
-            callgraph.add_edge(fake_root, r)
+        fake_root = "$$FAKEROOT$$"
         scc_dag = networkx.condensation(callgraph)
+        roots = list(find_roots(scc_dag))
+        scc_dag.add_node(fake_root, members=[fake_root])
+        for r in roots:
+            scc_dag.add_edge(fake_root, r)
+        scc_dag_topo = [
+            frozenset(scc_dag.nodes[scc_node]["members"])
+            for scc_node in networkx.topological_sort(scc_dag)
+        ][1:]
 
-        self._solve_topo_graph(
-            fake_root,
+        self._solve_bottom_up(
             callgraph,
-            scc_dag,
+            scc_dag_topo,
             sketches_map,
             type_schemes,
         )
+        if self.config.top_down_propagation:
+            self._solve_top_down(
+                callgraph,
+                scc_dag_topo,
+                sketches_map,
+                type_schemes,
+            )
         return (type_schemes, sketches_map)

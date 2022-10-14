@@ -21,6 +21,7 @@
 # endorsement should be inferred.
 
 from enum import Enum
+import tqdm
 
 
 class LogLevel(int, Enum):
@@ -42,3 +43,9 @@ class Loggable:
     def debug(self, *args):
         if self.verbose >= LogLevel.DEBUG:
             print(str(args[0]) % tuple(args[1:]))
+
+
+def show_progress(verbose, iterable):
+    if verbose:
+        return tqdm.tqdm(iterable)
+    return iterable
