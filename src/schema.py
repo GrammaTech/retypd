@@ -324,16 +324,6 @@ class DerivedTypeVariable:
                 return None
         return other.path[len(self._path) :]
 
-    def remove_suffix(
-        self, suffix: Sequence[AccessPathLabel]
-    ) -> Optional[DerivedTypeVariable]:
-        result = DerivedTypeVariable(self._base, self._path)
-        for label in reversed(suffix):
-            if not result.path or result.path[-1] != label:
-                return None
-            result = result.largest_prefix
-        return result
-
     @property
     def tail(self) -> AccessPathLabel:
         """Retrieve the last item in the access path, if any. Return None if
@@ -355,17 +345,6 @@ class DerivedTypeVariable:
         path: List[AccessPathLabel] = list(self._path)
         path.extend(suffix)
         return DerivedTypeVariable(self._base, path)
-
-    def get_single_suffix(
-        self, prefix: DerivedTypeVariable
-    ) -> Optional[AccessPathLabel]:
-        """If :param:`prefix` is a prefix of :param:`self` with exactly one additional
-        :py:class:`AccessPathLabel`, return the additional label. If not, return `None`.
-        """
-        if self.largest_prefix == prefix:
-            return self.tail
-        else:
-            return None
 
     @property
     def base_var(self) -> DerivedTypeVariable:
@@ -425,13 +404,6 @@ class ConstraintSet:
             self.subtype = set(subtype)
         else:
             self.subtype = set()
-
-    def add_subtype(
-        self, left: DerivedTypeVariable, right: DerivedTypeVariable
-    ) -> bool:
-        """Add a subtype constraint"""
-        constraint = SubtypeConstraint(left, right)
-        return self.add(constraint)
 
     def add(self, constraint: SubtypeConstraint) -> bool:
         if constraint in self.subtype:
