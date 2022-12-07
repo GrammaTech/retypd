@@ -64,5 +64,5 @@ from .c_types import (
     UnionType,
 )
 from .graph_solver import GraphSolverConfig
-from .sketches import Sketches
+from .sketches import Sketch
 from .loggable import LogLevel

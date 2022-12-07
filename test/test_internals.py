@@ -12,6 +12,7 @@ from retypd import (
     DummyLattice,
     SchemaParser,
     Solver,
+    SolverConfig,
     DerefLabel,
     Program,
     CType,
@@ -166,3 +167,302 @@ def test_infers_all_inputs():
     assert dtv2type[F].params[2].target_type.params[0] is not None
     assert isinstance(dtv2type[F].params[2].target_type.params[1], IntType)
     assert dtv2type[F].params[2].target_type.params[1] is not None
+
+
+@pytest.mark.commit
+def test_top_down():
+    """
+    Test that top-down propagation can propagate information correctly
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G = SchemaParser.parse_variables(["F", "G"])
+    constraints = {F: ConstraintSet(), G: ConstraintSet()}
+    constraints[F].add(parse_cs("int ⊑ F.in_1.load.σ8@0"))
+    constraints[G].add(parse_cs("int ⊑ x.load.σ8@8"))
+    constraints[G].add(parse_cs("x ⊑ F.in_1"))
+    constraints[G].add(parse_cs("F.in_1 ⊑ G.in_1"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}}), config=config
+    )
+    _, sketches = solver()
+    assert sketches[F].lookup(
+        parse_var("F.in_1.load.σ8@8")
+    ).lower_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_top_down_two_levels():
+    """
+    Validate that top-down propagation can handle two levels of indirection
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
+    constraints = {F: ConstraintSet(), G: ConstraintSet(), H: ConstraintSet()}
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+    constraints[G].add(parse_cs("G.in_1 ⊑ F.in_1"))
+    constraints[H].add(parse_cs("int ⊑ G.in_1"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {G}}),
+        config=config,
+    )
+    _, sketches = solver()
+    assert sketches[G].lookup(
+        parse_var("G.in_1")
+    ).lower_bound == DerivedTypeVariable("int")
+    assert sketches[F].lookup(
+        parse_var("F.in_1")
+    ).lower_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_top_down_three_levels():
+    """
+    Validate that top-down propagation can handle three levels of indirection
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H, I = SchemaParser.parse_variables(["F", "G", "H", "I"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+        H: ConstraintSet(),
+        I: ConstraintSet(),
+    }
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+    constraints[G].add(parse_cs("G.in_1 ⊑ F.in_1"))
+    constraints[G].add(parse_cs("G.in_2 ⊑ F.in_2"))
+    constraints[H].add(parse_cs("H.in_1 ⊑ G.in_1"))
+    constraints[I].add(parse_cs("int ⊑ H.in_1"))
+    constraints[I].add(parse_cs("int ⊑ G.in_2"))
+    constraints[I].add(parse_cs("int ⊑ G.in_1"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {G}, I: {H, G}}),
+        config=config,
+    )
+    _, sketches = solver()
+    assert sketches[F].lookup(
+        parse_var("F.in_1")
+    ).lower_bound == DerivedTypeVariable("int")
+    assert sketches[F].lookup(
+        parse_var("F.in_2")
+    ).lower_bound != DerivedTypeVariable("int")
+    # Both calls constrain G.in_1 to int
+    assert sketches[G].lookup(
+        parse_var("G.in_1")
+    ).lower_bound == DerivedTypeVariable("int")
+    # Only one call constraints G.in_2 to int
+    assert sketches[G].lookup(
+        parse_var("G.in_2")
+    ).lower_bound != DerivedTypeVariable("int")
+    assert sketches[H].lookup(
+        parse_var("H.in_1")
+    ).lower_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_top_down_merge_sketches():
+    """
+    Test that when lattice types are met at an input, they are merged over the lattice correctly
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+        H: ConstraintSet(),
+    }
+
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+
+    constraints[G].add(parse_cs("A ⊑ F.in_1"))
+    constraints[G].add(parse_cs("int ⊑ A"))
+
+    constraints[H].add(parse_cs("A ⊑ F.in_1"))
+    constraints[H].add(parse_cs("char ⊑ A"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {F}}),
+        config=config,
+    )
+    _, sketches = solver()
+
+    assert sketches[F].lookup(
+        parse_var("F.in_1")
+    ).lower_bound == DerivedTypeVariable("char")
+
+
+@pytest.mark.commit
+def test_top_down_merge_sketch_languages():
+    """
+    Test that only the common capabilities are kept for top-down propagation.
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+        H: ConstraintSet(),
+    }
+
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+
+    constraints[G].add(parse_cs("A ⊑ F.in_1"))
+    constraints[G].add(parse_cs("int ⊑ A.load.σ8@0"))
+    constraints[G].add(parse_cs("int ⊑ A.load.σ8@4"))
+    constraints[G].add(parse_cs("F.out ⊑ B"))
+    constraints[G].add(parse_cs("B.load.σ8@4 ⊑ int16"))
+
+    constraints[H].add(parse_cs("A ⊑ F.in_1"))
+    constraints[H].add(parse_cs("int ⊑ A.load.σ8@0"))
+    constraints[H].add(parse_cs("int ⊑ A.load.σ8@8"))
+    constraints[H].add(parse_cs("F.out ⊑ B"))
+    constraints[H].add(parse_cs("B.load.σ8@4 ⊑ int32"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {F}}),
+        config=config,
+    )
+    _, sketches = solver()
+
+    assert sketches[F].lookup(
+        parse_var("F.in_1.load.σ8@0")
+    ).lower_bound == DerivedTypeVariable("int")
+    assert sketches[F].lookup(parse_var("F.in_1.load.σ8@4")) == None
+    assert sketches[F].lookup(parse_var("F.in_1.load.σ8@8")) == None
+    assert sketches[F].lookup(
+        parse_var("F.out.load.σ8@4")
+    ).upper_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_top_down_merge_incompatible_sketches():
+    """
+    Test that when conflicting lattice types are met at an input, they are merged over the lattice
+    to top types (i.e. this function can accept the join of the two)
+    """
+    config = SolverConfig(top_down_propagation=True)
+    F, G, H = SchemaParser.parse_variables(["F", "G", "H"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+        H: ConstraintSet(),
+    }
+
+    constraints[F].add(parse_cs("F.out ⊑ int"))
+
+    constraints[G].add(parse_cs("A ⊑ F.in_1"))
+    constraints[G].add(parse_cs("int ⊑ A.store.σ8@0"))
+
+    constraints[H].add(parse_cs("A ⊑ F.in_1"))
+    constraints[H].add(parse_cs("double ⊑ A.store.σ8@0"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, H: {F}}),
+        config=config,
+    )
+    _, sketches = solver()
+
+    assert sketches[F].lookup(
+        parse_var("F.in_1.store.σ8@0")
+    ).upper_bound == DerivedTypeVariable("┬")
+
+
+@pytest.mark.commit
+def test_overlapping_var_in_scc():
+    """Validate that variables overlapping in SCCs aren't aliased"""
+    config = SolverConfig()
+    F, G = SchemaParser.parse_variables(["F", "G"])
+    constraints = {
+        F: ConstraintSet(),
+        G: ConstraintSet(),
+    }
+
+    constraints[F].add(parse_cs("F.in_1 ⊑ A"))
+    constraints[F].add(parse_cs("A ⊑ int"))
+
+    constraints[G].add(parse_cs("G.in_1 ⊑ A"))
+    constraints[G].add(parse_cs("A ⊑ double"))
+
+    solver = Solver(
+        Program(CLattice(), {}, constraints, {G: {F}, F: {G}}),
+        config=config,
+    )
+    _, sketches = solver()
+
+    assert sketches[F].lookup(
+        parse_var("F.in_1")
+    ).upper_bound == DerivedTypeVariable("int")
+    assert sketches[G].lookup(
+        parse_var("G.in_1")
+    ).upper_bound == DerivedTypeVariable("double")
+
+
+@pytest.mark.commit
+def test_sketches_not_overlapping():
+    """
+    Validate that during top-down propagation, sketches are re-inferred from scratch and that when
+    primitive constraints populate those sketches, all sketch nodes are present. This was derived
+    from libpng originally. Crashes were non-deterministic.
+    """
+    (
+        EmptyFunc,
+        RootFunc,
+        CrashFunc,
+        MiddleFunc,
+        SCCFunc1,
+        SCCFunc2,
+        MiddleFunc2,
+    ) = SchemaParser.parse_variables(
+        [
+            "EmptyFunc",
+            "RootFunc",
+            "CrashFunc",
+            "MiddleFunc",
+            "SCCFunc1",
+            "SCCFunc2",
+            "MiddleFunc2",
+        ]
+    )
+    constraints = {
+        EmptyFunc: ConstraintSet(),
+        RootFunc: ConstraintSet(),
+        CrashFunc: ConstraintSet(),
+        MiddleFunc: ConstraintSet(),
+        SCCFunc1: ConstraintSet(),
+        SCCFunc2: ConstraintSet(),
+        MiddleFunc2: ConstraintSet(),
+    }
+    constraints[RootFunc].add(parse_cs("CrashFunc.out ⊑ MiddleFunc.in_2"))
+    constraints[RootFunc].add(
+        parse_cs("CrashFunc.out ⊑ MiddleFunc.in_2.store.σ8@32")
+    )
+    constraints[SCCFunc1].add(parse_cs("A ⊑ MiddleFunc.in_0"))
+    constraints[SCCFunc2].add(parse_cs("A ⊑ MiddleFunc2.in_1"))
+    constraints[MiddleFunc2].add(parse_cs("A ⊑ MiddleFunc2.in_3.store.σ4@80"))
+    constraints[MiddleFunc2].add(
+        parse_cs("MiddleFunc2.in_3 ⊑ MiddleFunc.in_2")
+    )
+    constraints[MiddleFunc].add(parse_cs("MiddleFunc.in_0 ⊑ int"))
+    constraints[MiddleFunc].add(parse_cs("int ⊑ MiddleFunc.in_0"))
+    constraints[MiddleFunc].add(parse_cs("MiddleFunc.in_2.load.σ8@32 ⊑ A"))
+    constraints[MiddleFunc].add(
+        parse_cs("CrashFunc.out ⊑ MiddleFunc.in_2.store")
+    )
+
+    callgraph = {
+        EmptyFunc: [],
+        RootFunc: [CrashFunc, MiddleFunc],
+        CrashFunc: [],
+        MiddleFunc: [CrashFunc],
+        SCCFunc1: [CrashFunc, SCCFunc2, MiddleFunc, EmptyFunc],
+        SCCFunc2: [SCCFunc1, MiddleFunc2],
+        MiddleFunc2: [MiddleFunc],
+    }
+
+    program = Program(CLattice(), {}, constraints, callgraph)
+    config = SolverConfig(graph_solver="dfa", top_down_propagation=True)
+    solver = Solver(program, config)
+
+    gen_cs, sketches = solver()

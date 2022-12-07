@@ -2,7 +2,7 @@
 """
 
 import pytest
-from typing import Dict, List
+from typing import Dict, List, Set
 
 from retypd import (
     ConstraintSet,
@@ -31,7 +31,7 @@ from retypd.graph_solver import GraphSolverConfig
 from retypd.solver import SolverConfig
 
 
-VERBOSE_TESTS = False
+VERBOSE_TESTS = 2
 parse_var = SchemaParser.parse_variable
 parse_cs = SchemaParser.parse_constraint
 parse_cs_set = SchemaParser.parse_constraint_set
@@ -42,11 +42,15 @@ def compute_sketches(
     callgraph: Dict[str, List[str]],
     lattice: Lattice = DummyLattice(),
     config: SolverConfig = SolverConfig(),
+    global_vars: Set[str] = None,
 ):
     """
     Auxiliary function that parses constraints, callgraph
     and solves the sketches using a default lattice.
     """
+    if global_vars is None:
+        global_vars = set()
+    global_vars = {DerivedTypeVariable(g) for g in global_vars}
     parsed_cs = {}
     for proc, proc_cs in cs.items():
         parsed_cs[DerivedTypeVariable(proc)] = parse_cs_set(proc_cs)
@@ -57,7 +61,7 @@ def compute_sketches(
         ]
         for proc, callees in callgraph.items()
     }
-    program = Program(lattice, {}, parsed_cs, parsed_callgraph)
+    program = Program(lattice, global_vars, parsed_cs, parsed_callgraph)
     solver = Solver(program, verbose=VERBOSE_TESTS, config=config)
     return solver()
 
@@ -90,6 +94,7 @@ all_solver_configs = pytest.mark.parametrize(
             ),
         ),
         SolverConfig(graph_solver="dfa"),
+        SolverConfig(graph_solver="dfa", top_down_propagation=True),
     ],
     ids=[
         "naive-reachable",
@@ -97,6 +102,7 @@ all_solver_configs = pytest.mark.parametrize(
         "naive-all",
         "pathexpr-all",
         "dfa-all",
+        "dfa-all-topdown",
     ],
 )
 
@@ -885,6 +891,37 @@ def test_tight_bounds_out():
 
 
 @pytest.mark.commit
+def test_unbound_and_discrete():
+    """
+    Validate that unbound dereferences colocated with discrete dereferences is typed correctly
+    """
+    constraints = ConstraintSet()
+    constraints.add(parse_cs("F.in_0.load.σ1@0*[nobound] ⊑ int"))
+    constraints.add(parse_cs("F.in_0.load.σ1@0 ⊑ char"))
+    constraints.add(parse_cs("F.in_0.load.σ1@1 ⊑ char"))
+
+    F = parse_var("F")
+    program = Program(DummyLattice(), set(), {F: constraints}, {F: {}})
+    solver = Solver(program)
+    (gen_const, sketches) = solver()
+
+    gen = CTypeGenerator(
+        sketches,
+        CLattice(),
+        CLatticeCTypes(),
+        4,
+        4,
+    )
+    output = gen()
+    f_ft = output[F]
+
+    assert isinstance(f_ft, FunctionType)
+    assert isinstance(f_ft.params[0], PointerType)
+    assert isinstance(f_ft.params[0].target_type, IntType)
+    assert f_ft.params[0].target_type.size == 1
+
+
+@pytest.mark.commit
 def test_regression2():
     """
     Extracted from:
@@ -1044,7 +1081,7 @@ def test_regression3():
     }
 
     (gen_const, sketches) = compute_sketches(
-        constraints, {"do_callback": {""}}, CLattice()
+        constraints, {"do_callback": {}}, CLattice()
     )
 
     assert gen_const[parse_var("do_callback")] == parse_cs_set(
@@ -1069,3 +1106,203 @@ def test_regression3():
     ctype = func_field.ctype
     assert isinstance(ctype, PointerType)
     assert isinstance(ctype.target_type, FunctionType)
+
+
+@all_solver_configs
+@pytest.mark.commit
+def test_mutually_recursive_procs(config):
+    """
+    Mutually recursive procedures
+    """
+    constraints = {
+        "f": [
+            "f.in_2 <= A",
+            "A <= g.in_1",
+            "A.load.σ4@4 <= int",
+        ],
+        "g": [
+            "g.in_1 <= B",
+            "B <= f.in_2",
+            "B.load.σ4@0 <= int",
+        ],
+    }
+    callgraph = {"h": ["g"], "g": ["f"], "f": ["g"]}
+    lattice = CLattice()
+    (gen_cs, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+
+    assert gen_cs[parse_var("g")] == parse_cs_set(
+        [
+            "g.in_1.load.σ4@0 <= int",
+            "g.in_1.load.σ4@4 <= int",
+        ]
+    )
+    assert gen_cs[parse_var("f")] == parse_cs_set(
+        [
+            "f.in_2.load.σ4@0 <= int",
+            "f.in_2.load.σ4@4 <= int",
+        ]
+    )
+    g_sketch = sketches[DerivedTypeVariable("g")]
+    assert g_sketch.lookup(
+        parse_var("g.in_1.load.σ4@0")
+    ).upper_bound == DerivedTypeVariable("int")
+    assert g_sketch.lookup(
+        parse_var("g.in_1.load.σ4@4")
+    ).upper_bound == DerivedTypeVariable("int")
+    f_sketch = sketches[DerivedTypeVariable("f")]
+    assert f_sketch.lookup(
+        parse_var("f.in_2.load.σ4@0")
+    ).upper_bound == DerivedTypeVariable("int")
+    assert f_sketch.lookup(
+        parse_var("f.in_2.load.σ4@4")
+    ).upper_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_mutually_recursive_procs_refine_params():
+    """
+    Top down propagation does not work for mutually recursive procedures.
+
+    The field f.in_1.load.σ4@4 exists when calling f from h
+    but not when calling it from g (which is in the same SCC).
+    """
+    config = SolverConfig(graph_solver="dfa", top_down_propagation=True)
+    constraints = {
+        "h": ["A.load.σ4@4 <= int", "f.in_1 <= A"],
+        "f": [
+            "f.in_1 <= A",
+            "A.load.σ4@0 <= int",
+        ],
+        "g": [],
+    }
+    callgraph = {"h": ["f"], "g": ["f"], "f": ["g"]}
+    lattice = CLattice()
+    _, sketches = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+    f_sketch = sketches[DerivedTypeVariable("f")]
+    assert f_sketch.lookup(
+        parse_var("f.in_1.load.σ4@0")
+    ).upper_bound == DerivedTypeVariable("int")
+    assert f_sketch.lookup(parse_var("f.in_1.load.σ4@4")) is None
+
+
+@pytest.mark.commit
+def test_recursive_proc_refine_params():
+    """
+    Top down propagation does refine a recursive proc.
+
+    The field f.in_1.load.σ4@4 exists when calling f from h
+    but not when calling it from f.
+    """
+    config = SolverConfig(graph_solver="dfa", top_down_propagation=True)
+    constraints = {
+        "h": ["A.load.σ4@4 <= int", "f.in_1 <= A"],
+        "f": [
+            "f.in_1 <= A",
+            "A.load.σ4@0 <= int",
+            "f.in_2 <= B",
+            "B <= g.in_1",
+        ],
+        "g": ["g.in_1 <= int"],
+    }
+    callgraph = {"h": ["f"], "f": ["f", "g"]}
+    lattice = CLattice()
+    _, sketches = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+    f_sketch = sketches[DerivedTypeVariable("f")]
+    assert f_sketch.lookup(
+        parse_var("f.in_1.load.σ4@0")
+    ).upper_bound == DerivedTypeVariable("int")
+    assert f_sketch.lookup(parse_var("f.in_1.load.σ4@4")) is None
+    # We still get information from g
+    assert f_sketch.lookup(
+        parse_var("f.in_2")
+    ).upper_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_incremental_global_computation():
+    """
+    Properties of global variables get computed
+    along several SCCs.
+    """
+    config = SolverConfig(graph_solver="dfa", top_down_propagation=False)
+    constraints = {
+        "h": [
+            "h.in_1 <= A",
+            "A.load.σ4@8 <= int",
+            "G <= A",
+        ],
+        "f": [
+            "f.in_1 <= A",
+            "A.load.σ4@4 <= int",
+            "G <= A",
+        ],
+        "g": [
+            "g.in_1 <= A",
+            "A.load.σ4@0 <= int",
+            "G <= A",
+        ],
+    }
+    callgraph = {"h": ["f"], "f": ["g"]}
+    lattice = CLattice()
+    _, sketches = compute_sketches(
+        constraints,
+        callgraph,
+        lattice=lattice,
+        config=config,
+        global_vars=["G"],
+    )
+    G_sketch = sketches[DerivedTypeVariable("G")]
+    assert G_sketch.lookup(
+        parse_var("G.load.σ4@0")
+    ).upper_bound == DerivedTypeVariable("int")
+    assert G_sketch.lookup(
+        parse_var("G.load.σ4@4")
+    ).upper_bound == DerivedTypeVariable("int")
+    assert G_sketch.lookup(
+        parse_var("G.load.σ4@8")
+    ).upper_bound == DerivedTypeVariable("int")
+
+
+@pytest.mark.commit
+def test_recursive_top_down_propagation():
+    """The type of f.in_0 is recursive.
+    struct list{
+        list* next;
+        int elem;
+    }
+    The type of g.in_0 is the same as f.in_0
+    when propagated top-down
+    """
+    config = SolverConfig(graph_solver="dfa", top_down_propagation=True)
+    constraints = {
+        "f": [
+            "f.in_0 <= list",
+            "list.load.σ4@0 <= next",
+            "next <= list",
+            "g.in_0 <= f.in_0",
+        ],
+        "g": ["g.in_0.load.σ4@4 <= int"],
+    }
+    callgraph = {"f": ["g"]}
+    lattice = CLattice()
+    (_, sketches) = compute_sketches(
+        constraints, callgraph, lattice=lattice, config=config
+    )
+
+    f_sketch = sketches[DerivedTypeVariable("f")]
+    assert f_sketch.lookup(parse_var("f.in_0.load.σ4@0")) == f_sketch.lookup(
+        parse_var("f.in_0")
+    )
+    g_sketch = sketches[DerivedTypeVariable("g")]
+    assert g_sketch.lookup(parse_var("g.in_0.load.σ4@0")) == g_sketch.lookup(
+        parse_var("g.in_0")
+    )
+    assert g_sketch.lookup(
+        parse_var("g.in_0.load.σ4@4")
+    ).upper_bound == DerivedTypeVariable("int")

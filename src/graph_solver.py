@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import List, Optional, Set, Any
+
 from .fast_enfa import FastENFA
 from .pathexpr import RExp, scc_decompose_path_seq, solve_paths_from
 from .graph import (
@@ -37,7 +38,9 @@ class GraphSolverConfig:
 
 
 def _maybe_constraint(
-    origin: Node, dest: Node, string: List[EdgeLabel]
+    origin: Node,
+    dest: Node,
+    string: List[EdgeLabel],
 ) -> Optional[SubtypeConstraint]:
     """Generate constraints by adding the forgets in string to origin and the recalls in string
     to dest. If both of the generated vertices are covariant (the empty string's variance is
@@ -53,6 +56,7 @@ def _maybe_constraint(
             forgets.append(label.capability)
         else:
             recalls.append(label.capability)
+
     for recall in recalls:
         lhs = lhs.recall(recall)
     for forget in reversed(forgets):
@@ -112,8 +116,9 @@ class DFAGraphSolver(GraphSolver):
     START = State("$$START$$")
     FINAL = State("$$FINAL$$")
 
-    def _graph_to_dfa(
-        self,
+    @classmethod
+    def _graph_to_enfa(
+        cls,
         graph: networkx.DiGraph,
         start_nodes: Set[Node],
         end_nodes: Set[Node],
@@ -131,14 +136,14 @@ class DFAGraphSolver(GraphSolver):
 
             enfa.add_transition(State(from_node), sym, State(to_node))
 
-        enfa.add_start_state(self.START)
-        enfa.add_final_state(self.FINAL)
+        enfa.add_start_state(cls.START)
+        enfa.add_final_state(cls.FINAL)
 
         for start in start_nodes:
-            enfa.add_transition(self.START, Symbol(start), State(start))
+            enfa.add_transition(cls.START, Symbol(start), State(start))
 
         for end in end_nodes:
-            enfa.add_transition(State(end), Symbol(end), self.FINAL)
+            enfa.add_transition(State(end), Symbol(end), cls.FINAL)
 
         return enfa
 
@@ -152,7 +157,7 @@ class DFAGraphSolver(GraphSolver):
         Treat the graph as a ε-NFA, then convert to a DFA and subsequent minimal
         DFA. Compute path labels between start/ends over minimized DFA.
         """
-        enfa = self._graph_to_dfa(graph, start_nodes, end_nodes)
+        enfa = self._graph_to_enfa(graph, start_nodes, end_nodes)
         mdfa = enfa.minimize()
         dfa_g = mdfa.to_networkx()
 
