@@ -426,6 +426,7 @@ class CTypeGenerator(Loggable):
                 maybe_ptr_func.target_type, FunctionType
             ):
                 # Consumers expect the function itself, not a pointer to it
+                maybe_ptr_func.target_type.name = dtv.base
                 dtv_to_type[dtv] = maybe_ptr_func.target_type
             else:
                 dtv_to_type[dtv] = maybe_ptr_func
