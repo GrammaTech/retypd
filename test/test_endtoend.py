@@ -148,6 +148,14 @@ def test_recursive(config):
         parse_var("F.in_0.load.σ4@4")
     ).upper_bound == parse_var("#FileDescriptor")
 
+    types = CTypeGenerator(
+        sketches, DummyLattice(), DummyLatticeCTypes(), 4, 4
+    )()
+    assert types[F].name == "F"
+    assert isinstance(types[F].params[0], PointerType)
+    assert isinstance(types[F].params[0].target_type, StructType)
+    assert len(types[F].params[0].target_type.fields) == 2
+
 
 @all_solver_configs
 @pytest.mark.commit
@@ -228,10 +236,12 @@ def test_recursive_through_procedures():
 
     gen = CTypeGenerator(sketches, lattice, CLatticeCTypes(), 4, 4)
     dtv2type = gen()
+    assert dtv2type[DerivedTypeVariable("g")].name == "g"
     rec_struct_ptr = dtv2type[DerivedTypeVariable("g")].params[0]
     rec_struct = rec_struct_ptr.target_type
     assert len(rec_struct.fields) == 2
     # the field 0 is a pointer to the same struct
+    assert "struct_" in rec_struct.fields[0].ctype.target_type.name
     assert rec_struct.fields[0].ctype.target_type.name == rec_struct.name
     assert isinstance(rec_struct.fields[1].ctype, IntType)
 

@@ -12,7 +12,7 @@ test_module:
     - pip install .
     - pytest -m commit --cov=retypd --cov-config=.coveragerc test/
   tags:
-    - kubernetes
+    - shared
   rules:
     - if: '$CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_REF_PATH'
 
@@ -26,7 +26,7 @@ export_module:
     - sed "s/password = <access token>/password = $GL_PKG_API_TOKEN/" $CI_PROJECT_DIR/.pypirc > ~/.pypirc
     - python3 -m twine upload --verbose --repository repypi $CI_PROJECT_DIR/dist/*.whl
   tags:
-    - kubernetes
+    - shared
   rules:
     - if: '$CI_COMMIT_BRANCH == "master"'
     - if: '$CI_COMMIT_REF_NAME =~ /^release-.*/'
